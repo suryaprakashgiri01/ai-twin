@@ -5,6 +5,7 @@ description = "Tier-aware model selection, retries and fallbacks over LangChain 
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic>=2.9",
+    "pyyaml>=6.0,<7",
     "structlog>=24.1",
 ]
 
