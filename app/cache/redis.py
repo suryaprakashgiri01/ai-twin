@@ -22,6 +22,16 @@ def conversation_seq_key(conversation_id: str) -> str:
     return f"conv:{conversation_id}:seq"
 
 
+def rate_visitor_key(visitor_hash: str, window: str) -> str:
+    """Sorted set of one visitor's message times in a sliding window (`min` or `day`)."""
+    return f"rl:v:{visitor_hash}:{window}"
+
+
+def rate_global_key(day: str) -> str:
+    """Counter of every public message on one UTC day (`YYYYMMDD`)."""
+    return f"rl:global:{day}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

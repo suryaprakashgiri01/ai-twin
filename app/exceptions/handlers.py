@@ -18,7 +18,13 @@ from app.exceptions.codes import CODE_BY_HTTP_STATUS, ErrorCode
 logger = structlog.get_logger(__name__)
 
 
-def _envelope(code: ErrorCode, message: str, status: int, details: Any = None) -> JSONResponse:
+def _envelope(
+    code: ErrorCode,
+    message: str,
+    status: int,
+    details: Any = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
     trace.get_current_span().set_attribute("error.code", code.value)
     body: dict[str, Any] = {
         "code": code.value,
@@ -27,14 +33,14 @@ def _envelope(code: ErrorCode, message: str, status: int, details: Any = None) -
     }
     if details is not None:
         body["details"] = details
-    return JSONResponse(status_code=status, content={"error": body})
+    return JSONResponse(status_code=status, content={"error": body}, headers=headers)
 
 
 async def app_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)
     log = logger.error if exc.status_code >= 500 else logger.warning
     log("request failed", error_code=exc.code.value, error_message=exc.message)
-    return _envelope(exc.code, exc.message, exc.status_code, exc.details)
+    return _envelope(exc.code, exc.message, exc.status_code, exc.details, exc.headers or None)
 
 
 async def validation_error_handler(_request: Request, exc: Exception) -> JSONResponse:

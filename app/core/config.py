@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
 
+    # --- public agent ----------------------------------------------------------
+    # Per visitor (salted hash of the address the portfolio server forwards) and in total.
+    public_messages_per_minute: int = Field(default=8, ge=1, le=1000)
+    public_messages_per_day: int = Field(default=60, ge=1, le=100_000)
+    # Protects the free model quotas: every visitor together, per UTC day.
+    public_daily_message_cap: int = Field(default=1500, ge=1, le=1_000_000)
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False

@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api.routes import health
+from app.api.routes import health, public
 from app.api.routes.admin import build_admin_router
 from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
@@ -75,6 +75,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(public.router)
     # The public deployment has no admin surface at all, not merely a locked one.
     if settings.deployment_profile == "vault":
         app.include_router(build_admin_router())
