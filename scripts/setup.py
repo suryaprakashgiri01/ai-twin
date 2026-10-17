@@ -1,4 +1,5 @@
-"""First-time setup: `.env`, dependencies, git hooks, local stack: `python -m scripts.setup`.
+"""First-time setup: `.env`, dependencies, git hooks, local models, local stack:
+`python -m scripts.setup`.
 
 Idempotent: an existing `.env` is kept, so re-running never rotates working secrets. Keys added
 to `.env.example` since it was written are appended (secrets generated), existing values untouched.
@@ -12,7 +13,7 @@ import secrets
 from collections.abc import Callable
 from pathlib import Path
 
-from scripts import up
+from scripts import models, up
 from scripts._common import ENV_EXAMPLE, ENV_FILE, ROOT, info, ok, read_env, run, warn
 
 PLACEHOLDER = "CHANGE_ME"
@@ -127,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     if (ROOT / ".git").exists():
         run(["uv", "run", "pre-commit", "install"])
         ok("pre-commit hooks installed")
+    # Redaction needs the spaCy model; a failed download is reported, not fatal.
+    models.main([])
 
     if args.no_stack:
         return 0
