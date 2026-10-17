@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, cast
 
 from fakeredis import FakeAsyncRedis
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessageChunk, BaseMessage, UsageMetadata
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from pydantic import Field
 
 from app.agents.generation import AnswerGenerator, ChatGenerator
 from app.agents.graphs.owner import (
@@ -18,6 +24,7 @@ from app.agents.graphs.owner import (
     build_owner_graph,
     initial_state,
 )
+from app.agents.streaming import StreamingGenerator
 from app.agents.tools.profile import ProfileTool
 from app.agents.tools.records import RecordGroup, RecordItem, RecordsQuery, RecordsResult
 from app.kb.retrieval.rerank import FusedOrderReranker
@@ -49,6 +56,39 @@ def hit(doc: str, tier: Tier, text: str, ordinal: int = 0) -> Hit:
 
 def route_json(route: str, query: str, records: dict[str, Any] | None = None) -> str:
     return json.dumps({"route": route, "query": query, "records": records})
+
+
+class StreamModel(BaseChatModel):
+    """Streams scripted chunks: one play per call; a string is a chunk, an exception is raised,
+    a float sleeps that many seconds."""
+
+    plays: list[list[Any]]
+    calls: int = 0
+    seen: list[list[BaseMessage]] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self) -> str:
+        return "scripted-stream"
+
+    def _generate(
+        self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any
+    ) -> ChatResult:
+        raise NotImplementedError
+
+    async def _astream(
+        self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        self.seen.append(list(messages))
+        play = self.plays[min(self.calls, len(self.plays) - 1)]
+        self.calls += 1
+        for step in play:
+            if isinstance(step, BaseException):
+                raise step
+            if isinstance(step, float):
+                await asyncio.sleep(step)
+                continue
+            usage = UsageMetadata(input_tokens=1, output_tokens=1, total_tokens=2)
+            yield ChatGenerationChunk(message=AIMessageChunk(content=step, usage_metadata=usage))
 
 
 @dataclass
@@ -178,7 +218,10 @@ def make_agent(
     hits: list[Hit] | None = None,
     generator: AnswerGenerator | None = None,
     settings: OwnerSettings | None = None,
+    streams: dict[str, list[list[Any]]] | None = None,
+    idle_timeout: float = 5.0,
 ) -> Agent:
+    """`streams` swaps generator models for streaming ones and uses `StreamingGenerator`."""
     specs = [spec("router", roles=["router"], max_tier="confidential")]
     scripts: dict[str, list[Any]] = {"router": router or [ValueError("no router script")]}
     if cloud is not None:
@@ -188,7 +231,11 @@ def make_agent(
         specs.append(spec("local", roles=["generator"], max_tier="confidential", tags=["local"]))
         scripts["local"] = local
     factory = Factory(scripts)
+    for model_id, plays in (streams or {}).items():
+        factory.models[model_id] = StreamModel(plays=plays)  # type: ignore[assignment]
     orch = orchestrator(inventory(*specs), factory, max_attempts=1)
+    if streams is not None:
+        generator = StreamingGenerator(orch, idle_timeout_seconds=idle_timeout)
     redis = FakeAsyncRedis(decode_responses=True)
     store = MemoryConversationStore()
     conversations = ConversationService(redis, store, visitor_salt="salt", retry_base_delay=0)
