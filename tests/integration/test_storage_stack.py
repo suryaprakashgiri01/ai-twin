@@ -10,6 +10,7 @@ from app.cache.redis import conversation_key, conversation_seq_key
 from app.core.config import Settings
 from app.core.resources import Resources, open_resources
 from app.db.documents import AuditEntry, Conversation, Message, utcnow
+from app.db.migrations import discover
 from app.services.conversations import MongoConversationStore, Turn
 from app.services.model_overrides import OverrideIn
 from app.vector.qdrant import COLLECTIONS, ensure_collections
@@ -30,10 +31,9 @@ async def test_second_start_changes_nothing(resources: Resources, settings: Sett
 
     async with open_resources(settings) as again:
         assert await _indexes(again, settings) == first
-        assert (
-            await again.mongo[settings.mongodb_database]["schema_migrations"].count_documents({})
-            == 1
-        )
+        assert await again.mongo[settings.mongodb_database]["schema_migrations"].count_documents(
+            {}
+        ) == len(discover())
         assert await ensure_collections(again.qdrant, "vault", settings.embedding_dim) == []
     for name in COLLECTIONS["vault"]:
         assert await resources.qdrant.collection_exists(name)

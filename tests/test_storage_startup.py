@@ -99,7 +99,7 @@ async def test_lifespan_opens_resources_and_exposes_them() -> None:
 
 def test_migrations_are_discovered_in_version_order() -> None:
     migrations = discover()
-    assert [m.version for m in migrations][:1] == ["0001"]
+    assert [m.version for m in migrations][:2] == ["0001", "0002"]
     assert migrations == sorted(migrations, key=lambda m: m.version)
 
 
