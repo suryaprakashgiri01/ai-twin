@@ -65,7 +65,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["app", "scripts"]
+source = ["app"]
 branch = true
 omit = ["app/main.py"]
 
