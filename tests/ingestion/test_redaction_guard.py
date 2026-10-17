@@ -72,6 +72,21 @@ def test_unlabelled_or_invalid_numbers_are_kept(redactor: Redactor, text: str) -
     assert redactor.redact(text).text == text
 
 
+class GuessingDetector:
+    """Stands in for spaCy NER labelling an identifier as a PERSON (seen with real PDFs)."""
+
+    def spans(self, text: str) -> list[tuple[int, int, str, float]]:
+        start = text.index(persona.PAN)
+        return [(start, start + len(persona.PAN), "PERSON", 0.85)]
+
+
+def test_identifier_rules_win_over_ner_guesses() -> None:
+    redactor = Redactor(GuessingDetector(), allowlist=[])
+    result = redactor.redact(f"PAN: {persona.PAN}")
+    assert result.text == "PAN: [PAN]"
+    assert result.report == {"PAN": 1}
+
+
 def test_verhoeff() -> None:
     assert verhoeff_check_digit("236") == "3"
     assert verhoeff_valid("2363")
@@ -109,11 +124,16 @@ def test_real_model_redacts_person_names() -> None:
     except RuntimeError:
         pytest.skip("spaCy en_core_web_md not installed (run setup)")
     redactor = Redactor(detector, allowlist=[persona.PUBLIC_EMAIL, persona.NAME])
-    text = f"{persona.NAME} paired with Rahul Sharma on the outage. " + persona.sensitive_note()
+    text = (
+        f"{persona.NAME} paired with Rahul Sharma on the outage. "
+        + persona.sensitive_note()
+        + f"\nKavya Testpal - Resume\nPAN: {persona.PAN}"
+    )
     result = redactor.redact(text)
     assert "Rahul Sharma" not in result.text
     assert "[PERSON]" in result.text
     assert persona.NAME in result.text
+    assert "PAN: [PAN]" in result.text
     for raw in persona.RAW_VALUES:
         assert raw not in result.text
 

@@ -19,7 +19,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import structlog
 
@@ -103,7 +103,9 @@ _GAP = r"[\s:#.\-]{0,6}(?:is\s+|no\.?\s*|number\s*|num\s*)?[\s:#.\-]{0,4}"
 class Rule:
     entity: str
     pattern: re.Pattern[str]
-    score: float = 0.85
+    # Above spaCy NER's 0.85, so a precise identifier pattern wins an overlap with a guessed
+    # PERSON/ORG span and keeps its own placeholder type.
+    score: float = 0.95
     # Match only counts when this returns True for the value (e.g. a checksum).
     check: Any = None
 
@@ -171,6 +173,15 @@ def load_nlp(model_path: Path | None) -> Any:
     raise RuntimeError(
         f"spaCy model {SPACY_MODEL} not found; run the setup script (make setup / dev.ps1 setup)"
     )
+
+
+Span = tuple[int, int, str, float]
+
+
+class Detector(Protocol):
+    def spans(self, text: str) -> list[Span]:
+        """(start, end, entity, score) for every identifier found."""
+        ...
 
 
 class PresidioDetector:
@@ -242,7 +253,7 @@ def _resolve(spans: Sequence[tuple[int, int, str, float]]) -> list[tuple[int, in
 
 
 class Redactor:
-    def __init__(self, detector: PresidioDetector | None, allowlist: Iterable[str] = ()) -> None:
+    def __init__(self, detector: Detector | None, allowlist: Iterable[str] = ()) -> None:
         self._detector = detector
         self._allow = {a.strip().lower() for a in allowlist if a.strip()}
 
