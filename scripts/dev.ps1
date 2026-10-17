@@ -4,6 +4,7 @@
 #   ./scripts/dev.ps1 cleanup --apply
 #   ./scripts/dev.ps1 keys create owner --scope admin
 #   ./scripts/dev.ps1 models --embeddings
+#   ./scripts/dev.ps1 ollama start   (status | install | start | stop | pull [model] | smoke)
 #   ./scripts/dev.ps1 import vault/exports/<archive>.atv --apply
 #   ./scripts/dev.ps1 seed --apply            (remove: seed --remove --apply)
 param(
@@ -13,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed")
 
 switch ($Command) {
     "help" {

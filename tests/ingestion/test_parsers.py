@@ -132,3 +132,18 @@ def test_ocr_failure_is_parse_failed() -> None:
     with pytest.raises(IngestError) as caught:
         dispatch.parse(persona.png_bytes(), "x.png", ocr=broken)
     assert caught.value.code == IngestErrorCode.PARSE_FAILED
+
+
+def test_markitdown_import_leaves_the_environment_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from app.kb.ingestion.parsers.office import without_new_env
+
+    monkeypatch.setenv("KEPT_VAR", "1")
+
+    def load() -> str:
+        os.environ["DOTENV_PROBE_KEY"] = "secret"
+        return "ok"
+
+    assert without_new_env(load) == "ok"
+    assert "DOTENV_PROBE_KEY" not in os.environ and os.environ["KEPT_VAR"] == "1"

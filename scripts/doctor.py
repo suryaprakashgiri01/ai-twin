@@ -1,7 +1,8 @@
 """Check this machine is ready to run ai-twin: `python -m scripts.doctor`.
 
 Reports tools, the compose runtime, the container engine, `.env` completeness (key names
-only, never values) and port availability. Exits 1 when something blocks `setup` or `up`.
+only, never values), port availability, local models and the native Ollama server. Exits 1 when
+something blocks `setup` or `up`, or OLLAMA_BASE_URL points off this machine.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
-from scripts import models
+from scripts import models, ollama
 from scripts._common import (
     ENV_EXAMPLE,
     ENV_FILE,
@@ -142,6 +143,29 @@ def check_ports(env: dict[str, str], stack_running: bool) -> list[Finding]:
     return findings
 
 
+def check_ollama(env: dict[str, str], api: ollama.Api | None = None) -> list[Finding]:
+    """Native Ollama: the only real model that may read confidential text."""
+    if not env.get("OLLAMA_BASE_URL"):
+        return [Finding("ok", "Ollama not configured (confidential sources will be withheld)")]
+    try:
+        target = ollama.target(env)
+    except ollama.OllamaError as exc:
+        return [Finding("fail", str(exc))]
+    if not target.loopback:
+        return [Finding("fail", f"OLLAMA_BASE_URL host {target.host} is not this machine")]
+    api = api or ollama.Api(target)
+    version = api.version()
+    if version is None:
+        return [
+            Finding("warn", f"Ollama not answering at {target.url}; run: {ollama.hint('start')}")
+        ]
+    if not ollama.has_model(api.models(), target.model):
+        return [
+            Finding("warn", f"Ollama model {target.model} not pulled; run: {ollama.hint('pull')}")
+        ]
+    return [Finding("ok", f"Ollama {version} with {target.model}")]
+
+
 def collect() -> list[Finding]:
     env = read_env(ENV_FILE)
     findings = [check_python(), check_uv(), check_compose(), check_engine()]
@@ -153,6 +177,7 @@ def collect() -> list[Finding]:
     )
     findings += check_ports(env, running)
     findings += check_ingestion_deps(env)
+    findings += check_ollama(env)
     return findings
 
 

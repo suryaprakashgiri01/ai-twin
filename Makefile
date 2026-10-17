@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models up down status logs cleanup check run test keys export import seed
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -32,6 +32,9 @@ logs: ## Container logs (ARGS="service --follow")
 
 cleanup: ## Dry run; ARGS="--apply" deletes containers, volumes, caches
 	$(PY) scripts.cleanup $(ARGS)
+
+ollama: ## Native Ollama: ARGS="status" | "install" | "start" | "stop" | "pull [model]" | "smoke"
+	$(PY) scripts.ollama $(ARGS)
 
 keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
 	$(PY) scripts.keys $(ARGS)
