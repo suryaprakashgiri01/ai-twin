@@ -157,6 +157,9 @@ HEURISTICS: tuple[HeuristicRule, ...] = (
             r"\b(act|behave|respond|pretend|roleplay|role-play|play)\b[^.\n]{0,20}"
             r"\b(as|like|to be)\b[^.\n]{0,15}\b(the |an? )?(system|developer|administrator|"
             r"admin|root|operator|unfiltered|uncensored|jailbroken|unrestricted|dan)\b",
+            r"(?<!did )(?<!do )(?<!have )\byou(?: will|'ll)? (play|be|act as|pretend to be|"
+            r"become) (the |an? )?(system|developer|administrator|admin|root|operator|"
+            r"unrestricted|unfiltered|jailbroken)\b",
             r"\byou are now\b[^.\n]{0,20}\b(system|developer|admin|dan|unrestricted|"
             r"unfiltered|jailbroken|evil)\b",
             r"\b(developer|god|dan|jailbreak|debug|sudo|admin) mode\b",

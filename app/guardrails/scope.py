@@ -127,7 +127,9 @@ META = _rx(
 OWNER_WORK = _rx(
     r"\b(project|projects|job|jobs|team|company|employer|internship|startup|hackathon|"
     r"thesis|client|clients)\b",
-    r"\b(did|have|do) you (use|used|choose|chose|pick|picked|prefer|work with|worked with)\b",
+    # Past tense: "did you use X" is about the owner's work; "do you use X" may be about the
+    # assistant itself and is left to the rules and the classifier.
+    r"\b(did|have) you (use|used|choose|chose|pick|picked|work with|worked with)\b",
     r"\byour (experience|background|career|work)\b",
 )
 # Names the assistant or site itself: then a `meta_probe` verdict stands.
