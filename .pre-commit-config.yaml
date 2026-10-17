@@ -1,0 +1,39 @@
+# Installed by the setup script. Run over everything with: uv run pre-commit run --all-files
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Runs in the project venv so it sees exactly the installed dependencies.
+      - id: mypy
+        name: mypy --strict
+        entry: uv run mypy app scripts tests
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # Secrets must never reach a public repo.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: detect-private-key
