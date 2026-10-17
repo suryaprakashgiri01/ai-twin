@@ -56,6 +56,12 @@ class Turn(BaseModel):
     trace_id: str | None = None
     tokens: int | None = None
     latency_ms: float | None = None
+    # Owner-agent metadata: the route taken, cited document ids, a partial answer, and how
+    # many sources were withheld for tier reasons.
+    route: str | None = None
+    citations: list[str] = Field(default_factory=list)
+    incomplete: bool = False
+    withheld: int = 0
     created_at: datetime = Field(default_factory=lambda: _to_millis(utcnow()))
 
     @field_validator("created_at")

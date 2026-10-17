@@ -279,6 +279,13 @@ class Message(Document):
     trace_id: str | None = None
     tokens: int | None = None
     latency_ms: float | None = None
+    route: str | None = None
+    # Document ids cited by an assistant turn.
+    citations: list[str] = Field(default_factory=list)
+    # True when generation failed after streaming started; `content` is the partial answer.
+    incomplete: bool = False
+    # Sources left out because no eligible model could see their tier.
+    withheld: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime | None = None
 
