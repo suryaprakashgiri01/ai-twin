@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from app.kb.retrieval.retriever import Hit
 from llm_orchestrator import Tier
@@ -30,6 +30,10 @@ class Source(BaseModel):
     title: str
     category: str
     tier: Tier
+
+    @field_serializer("tier")
+    def _tier_label(self, tier: Tier) -> str:
+        return tier.label
 
 
 class ContextChunk(BaseModel):

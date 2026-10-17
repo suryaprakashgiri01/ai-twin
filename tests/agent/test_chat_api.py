@@ -118,6 +118,7 @@ async def test_sse_order_meta_first_done_last(api: ChatApi) -> None:
     assert meta["route"] == "kb_search" and meta["max_tier"] == "confidential"
     sources = dict(events)["sources"]
     assert sources["citations"] == ["priv"]
+    assert sources["sources"][0]["tier"] == "private"
     assert done["citations"] == ["priv"] and done["tier"] == "private"
     assert done["withheld"] == 1 and done["model"] == "cloud" and done["seq"] == 2
     assert done["conversation_id"] == meta["conversation_id"]
