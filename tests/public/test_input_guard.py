@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 
@@ -18,6 +18,7 @@ from app.guardrails.input import (
 from llm_orchestrator import AllModelsFailedError, Role, Tier
 from llm_orchestrator.classify import Classification
 from tests.llm_orchestrator.fakes import Factory, inventory, orchestrator, spec
+from tests.public.fakes import FakeGuardModel
 
 BENIGN = (
     "Which database did you use in the observability project?",
@@ -27,19 +28,6 @@ BENIGN = (
     "Tell me about your experience with Kafka 👩‍💻",
     "Are you open to backend roles in Bengaluru?",
 )
-
-
-@dataclass
-class FakeGuardModel:
-    scores: list[float | Exception] = field(default_factory=lambda: [0.01])
-    seen: list[str] = field(default_factory=list)
-
-    async def score(self, text: str) -> float:
-        self.seen.append(text)
-        step = self.scores[min(len(self.seen) - 1, len(self.scores) - 1)]
-        if isinstance(step, Exception):
-            raise step
-        return step
 
 
 @dataclass

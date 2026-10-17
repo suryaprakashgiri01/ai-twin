@@ -88,6 +88,7 @@ class ConversationSummary(BaseModel):
 
 class ConversationMeta(ConversationSummary):
     channel: Channel
+    visitor_hash: str | None = None
 
 
 class ConversationDetail(ConversationSummary):
@@ -110,6 +111,7 @@ class MongoConversationIndex:
         return ConversationMeta(
             id=found.id,
             channel=found.channel,
+            visitor_hash=found.visitor_hash,
             created_at=found.created_at,
             updated_at=found.updated_at,
             message_count=found.message_count,
@@ -321,7 +323,9 @@ class OwnerChatService:
         if meta is None or meta.channel != "owner":
             raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
         turns = await self._index.turns(conversation_id, limit)
-        return ConversationDetail(**meta.model_dump(exclude={"channel"}), turns=turns)
+        return ConversationDetail(
+            **meta.model_dump(exclude={"channel", "visitor_hash"}), turns=turns
+        )
 
 
 def build_owner_chat(

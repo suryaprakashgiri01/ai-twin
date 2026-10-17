@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-
 import pytest
 
 from app.guardrails.scope import (
@@ -18,27 +15,10 @@ from app.guardrails.scope import (
 )
 from app.services.profile import ProfileIn
 from llm_orchestrator import AllModelsFailedError, Role, Tier
-from llm_orchestrator.classify import Classification
 from tests.ingestion.fakes import MemoryProfileStore
+from tests.public.fakes import ScriptedClassifier
 
 OBSERVABILITY = "Which database did you use in the observability project?"
-
-
-@dataclass
-class ScriptedClassifier:
-    label: str | Exception = "about_owner"
-    seen: list[str] = field(default_factory=list)
-
-    async def classify(
-        self, text: str, *, question: str, labels: Mapping[str, str], tier: Tier
-    ) -> Classification:
-        self.seen.append(text)
-        assert tier == Tier.PUBLIC and set(labels) == set(INTENT_LABELS)
-        if isinstance(self.label, Exception):
-            raise self.label
-        return Classification(
-            label=self.label, probabilities={self.label: 1.0}, confidence=0.9, model="fake"
-        )
 
 
 @pytest.mark.parametrize(

@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     # Scores from here up to the threshold are borderline: Jev gives a second opinion
     # when FF_JEV_ENABLED is on.
     prompt_guard_borderline: float = Field(default=0.2, ge=0, lt=1)
+    public_context_tokens: int = Field(default=1500, ge=200, le=16000)
+    # Earlier answered turns a public answer may read.
+    public_history_turns: int = Field(default=4, ge=0, le=20)
+    # Synced canary hashes (deploy-public provisions it); the vault reads MongoDB instead.
+    public_canary_hashes_path: Path | None = None
 
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.

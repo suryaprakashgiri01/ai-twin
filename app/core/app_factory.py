@@ -15,11 +15,13 @@ from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
 from app.core.resources import Resources, ResourcesFactory, open_resources
 from app.exceptions.handlers import register_exception_handlers
+from app.kb.embedding import FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 from app.services.owner_chat import build_owner_chat
+from app.services.public_chat import build_public_chat
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +47,14 @@ def create_app(
                 # One embedder for indexing and search, so its models load once.
                 app.state.owner_chat = build_owner_chat(
                     settings, resources, app.state.llm, ingestion.pipeline.embedder
+                )
+                app.state.public_chat = build_public_chat(
+                    settings, resources, app.state.llm, ingestion.pipeline.embedder
+                )
+            elif isinstance(resources, Resources):
+                embedder = FastEmbedder(settings.models_dir / "fastembed")
+                app.state.public_chat = build_public_chat(
+                    settings, resources, app.state.llm, embedder
                 )
             logger.info(
                 "service started",

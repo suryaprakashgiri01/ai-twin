@@ -33,6 +33,7 @@ from app.kb.canaries import new_marker
 from llm_orchestrator import AllModelsFailedError, Role, Tier
 from llm_orchestrator.classify import Classification
 from tests.llm_orchestrator.fakes import Factory, inventory, orchestrator, spec
+from tests.public.fakes import FakeJudge
 
 SYSTEM = (
     "You are the AI twin of the portfolio owner and you answer in the first person. Answer only "
@@ -42,18 +43,6 @@ SYSTEM = (
 CONTEXT = "[1] Observability platform\nI built the observability pipeline on ClickHouse."
 EMAIL = "kavya.testpal@example.com"
 MARKER = new_marker()
-
-
-@dataclass
-class FakeJudge:
-    verdict: bool | Exception = True
-    calls: int = 0
-
-    async def supported(self, *, question: str, context: str, answer: str) -> bool:
-        self.calls += 1
-        if isinstance(self.verdict, Exception):
-            raise self.verdict
-        return self.verdict
 
 
 class BrokenHashes:
