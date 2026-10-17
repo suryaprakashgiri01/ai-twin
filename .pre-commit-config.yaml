@@ -15,7 +15,7 @@ repos:
       # Runs in the project venv so it sees exactly the installed dependencies.
       - id: mypy
         name: mypy --strict
-        entry: uv run mypy app scripts tests
+        entry: uv run mypy app scripts tests packages/llm-orchestrator/src
         language: system
         types: [python]
         pass_filenames: false
