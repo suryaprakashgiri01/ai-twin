@@ -31,6 +31,7 @@ from pathlib import Path  # noqa: E402
 
 import httpx  # noqa: E402
 from cryptography.fernet import Fernet  # noqa: E402
+from fakeredis import FakeAsyncRedis  # noqa: E402
 
 from app.db.documents import IngestMeta, SourceFields  # noqa: E402
 from app.kb.ingestion.fetch.github import GitHubFetcher, parse_allowlist  # noqa: E402
@@ -198,6 +199,7 @@ async def api(harness: Harness) -> AsyncIterator[Api]:
         vectors=harness.index,
         profile=MemoryProfileStore(),
         records=MemoryRecordStore(),
+        redis=FakeAsyncRedis(decode_responses=True),
     )
     app.state.ingestion = Ingestion(service=harness.service, pipeline=harness.pipeline)
     key = (await issue_key(keys, "owner", ["admin"]))[1]

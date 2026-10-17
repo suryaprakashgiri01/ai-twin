@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.answer_cache import public_version
 from tests.ingestion import persona
 from tests.ingestion.conftest import Api
 
@@ -177,3 +178,21 @@ async def test_patch_validation_and_unknown_documents(api: Api) -> None:
     assert full["redaction_report"] == {}
     api.app.state.ingestion = None
     assert (await call(api, "GET", f"/documents/{document_id}")).status_code == 503
+
+
+async def test_publish_unpublish_and_delete_bump_the_public_version(api: Api) -> None:
+    redis = api.app.state.resources.redis
+    assert await public_version(redis) == 0
+    document_id = await ingest(api, BODY, "project")
+    await call(api, "PATCH", f"/documents/{document_id}", json={"tier": "public"})
+    await call(api, "POST", f"/documents/{document_id}/approve")
+    assert await public_version(redis) == 0  # nothing public changed yet
+    assert (await call(api, "POST", f"/documents/{document_id}/publish")).status_code == 200
+    assert await public_version(redis) == 1
+    await call(api, "PATCH", f"/documents/{document_id}", json={"title": "Renamed"})
+    assert await public_version(redis) == 2
+    await call(api, "POST", f"/documents/{document_id}/unpublish")
+    assert await public_version(redis) == 3
+    await call(api, "POST", f"/documents/{document_id}/publish")
+    await call(api, "DELETE", f"/documents/{document_id}")
+    assert await public_version(redis) == 5

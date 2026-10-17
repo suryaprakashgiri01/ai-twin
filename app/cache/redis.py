@@ -22,6 +22,40 @@ def conversation_seq_key(conversation_id: str) -> str:
     return f"conv:{conversation_id}:seq"
 
 
+def rate_visitor_key(visitor_hash: str, window: str) -> str:
+    """Sorted set of one visitor's message times in a sliding window (`min` or `day`)."""
+    return f"rl:v:{visitor_hash}:{window}"
+
+
+def rate_global_key(day: str) -> str:
+    """Counter of every public message on one UTC day (`YYYYMMDD`)."""
+    return f"rl:global:{day}"
+
+
+# Bumped on every publish and unpublish, so cached public answers from before go stale.
+KB_PUBLIC_VERSION_KEY = "kb_public_version"
+
+
+def answer_cache_key(version: int, question_hash: str) -> str:
+    """One guarded public answer, for a normalised question at one `kb_public_version`."""
+    return f"ac:{version}:{question_hash}"
+
+
+def resume_downloads_key(day: str) -> str:
+    """Resume downloads on one UTC day (`YYYYMMDD`)."""
+    return f"resume:downloads:{day}"
+
+
+def resume_visitors_key(day: str) -> str:
+    """HyperLogLog of the visitor hashes that downloaded the resume on one UTC day."""
+    return f"resume:visitors:{day}"
+
+
+def security_burst_key(scope: str) -> str:
+    """Set once per window so a burst of the same security event is recorded once."""
+    return f"sec:burst:{scope}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

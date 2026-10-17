@@ -21,6 +21,7 @@ from app.services.audit import AuditLog, MongoAuditLog
 from app.services.conversations import ConversationService, MongoConversationStore
 from app.services.model_overrides import MongoOverrideStore, OverrideStore
 from app.services.profile import MongoProfileStore, MongoRecordStore, ProfileStore, RecordStore
+from app.services.security_events import MongoSecurityEvents, SecurityEventWriter
 from app.storage.blobs import BlobStore
 from app.vector.qdrant import open_qdrant
 
@@ -39,6 +40,7 @@ class Resources:
     vectors: VectorIndex
     profile: ProfileStore
     records: RecordStore
+    security_events: SecurityEventWriter
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -80,4 +82,5 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
             vectors=QdrantIndex(qdrant),
             profile=MongoProfileStore(),
             records=MongoRecordStore(),
+            security_events=MongoSecurityEvents(),
         )

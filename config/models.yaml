@@ -29,6 +29,16 @@ models:
     free_tier: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
     tags: [quality]
 
+  # Llama Prompt Guard 2 (22M): scores public visitor text for injection; replies with a number.
+  - id: groq-prompt-guard-2
+    provider: groq
+    model: meta-llama/llama-prompt-guard-2-22m
+    roles: [guard]
+    max_tier: public
+    context_window: 512
+    trains_on_inputs: false
+    tags: [fast]
+
   # --- Cerebras: inference inputs and outputs not retained; fallback ------------------------
   - id: cerebras-qwen-27b
     provider: cerebras
@@ -106,3 +116,5 @@ roles:
   classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
   generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-local, mock]
   judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-local, mock]
+  # No fallback: without the guard model the input guard keeps its rule layers and says so.
+  guard: [groq-prompt-guard-2]

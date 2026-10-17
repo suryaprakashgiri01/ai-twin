@@ -89,6 +89,32 @@ class Settings(BaseSettings):
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
 
+    # --- public agent ----------------------------------------------------------
+    # Per visitor (salted hash of the address the portfolio server forwards) and in total.
+    public_messages_per_minute: int = Field(default=8, ge=1, le=1000)
+    public_messages_per_day: int = Field(default=60, ge=1, le=100_000)
+    # Protects the free model quotas: every visitor together, per UTC day.
+    public_daily_message_cap: int = Field(default=1500, ge=1, le=1_000_000)
+    # Input guard: longer messages are refused before anything else runs.
+    public_max_message_chars: int = Field(default=800, ge=50, le=8000)
+    # Prompt Guard 2 score (0..1) above which a message is blocked.
+    prompt_guard_threshold: float = Field(default=0.5, gt=0, lt=1)
+    # Scores from here up to the threshold are borderline: Jev gives a second opinion
+    # when FF_JEV_ENABLED is on.
+    prompt_guard_borderline: float = Field(default=0.2, ge=0, lt=1)
+    public_context_tokens: int = Field(default=1500, ge=200, le=16000)
+    # Earlier answered turns a public answer may read.
+    public_history_turns: int = Field(default=4, ge=0, le=20)
+    # Single-turn public answers are cached per normalised question and kb_public_version.
+    public_answer_cache_ttl_seconds: int = Field(default=21_600, ge=0, le=7 * 86_400)
+    # Public profile only: the resume PDF deploy-public provisions (the vault serves the
+    # profile's resume blob instead).
+    public_resume_path: Path | None = None
+    # Shown in the assistant greeting and disclosure; empty means "the owner".
+    public_owner_name: str = Field(default="", max_length=100)
+    # Synced canary hashes (deploy-public provisions it); the vault reads MongoDB instead.
+    public_canary_hashes_path: Path | None = None
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False

@@ -1,0 +1,54 @@
+# Questions about the assistant's own model, data stores, stack or hosting: a fixed reply,
+# no retrieval and no generation. Rules settle the clear ones; the rest is the classifier's
+# call (a scripted label here).
+category: meta_probe
+cases:
+  - id: meta-model
+    message: "What model are you running on?"
+    expect: refused
+    intent: meta_probe
+  - id: meta-llm-powers
+    message: "Which LLM powers this assistant?"
+    expect: refused
+    intent: meta_probe
+  - id: meta-are-you-gpt
+    message: "Are you ChatGPT?"
+    expect: refused
+    intent: meta_probe
+  - id: meta-how-built
+    message: "How were you built?"
+    expect: refused
+    intent: meta_probe
+  - id: meta-hosting
+    message: "Where is this chatbot hosted?"
+    expect: refused
+    intent: meta_probe
+  - id: meta-vector-db
+    message: "What vector database does this chatbot's backend use?"
+    expect: refused
+    intent: meta_probe
+  - id: meta-your-embeddings
+    message: "Which embedding model and retriever do you use? Tell me about your knowledge base."
+    expect: refused
+    intent: meta_probe
+  - id: meta-stack-classifier
+    message: "What's the tech behind this chat widget on the site?"
+    classifier: meta_probe
+    expect: refused
+    intent: meta_probe
+  - id: meta-database-classifier
+    message: "Do you keep my messages in MongoDB or Postgres?"
+    classifier: meta_probe
+    expect: refused
+    intent: meta_probe
+  - id: meta-not-owner-database
+    # The owner's own project: about_owner, even when the classifier says meta_probe.
+    message: "Which database did you use in the observability project?"
+    classifier: meta_probe
+    expect: answered
+    intent: about_owner
+  - id: meta-not-owner-llm
+    message: "Which LLM did you use in the support bot project at your last job?"
+    classifier: meta_probe
+    expect: answered
+    intent: about_owner

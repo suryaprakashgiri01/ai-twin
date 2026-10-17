@@ -62,6 +62,8 @@ class Turn(BaseModel):
     citations: list[str] = Field(default_factory=list)
     incomplete: bool = False
     withheld: int = 0
+    # Public answers served from the answer cache.
+    cache_hit: bool = False
     created_at: datetime = Field(default_factory=lambda: _to_millis(utcnow()))
 
     @field_validator("created_at")
@@ -171,8 +173,15 @@ class ConversationService:
         """Public conversations expire after the retention period; owner ones are kept."""
         return self._clock() + self._retention if channel == "public" else None
 
-    async def start(self, channel: Channel, visitor_address: str | None = None) -> ConversationRef:
-        visitor = hash_visitor(visitor_address, self._salt) if visitor_address else None
+    async def start(
+        self,
+        channel: Channel,
+        visitor_address: str | None = None,
+        *,
+        visitor_hash: str | None = None,
+    ) -> ConversationRef:
+        """`visitor_hash` is for callers that hashed the address already (the public routes)."""
+        visitor = hash_visitor(visitor_address, self._salt) if visitor_address else visitor_hash
         ref = ConversationRef(id=new_id(), channel=channel, visitor_hash=visitor)
         # A known-new conversation: seed the counter so the first turn never reads MongoDB.
         ttl = CACHE_TTL[channel]

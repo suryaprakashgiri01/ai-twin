@@ -44,7 +44,13 @@ def test_default_inventory_path_is_the_repo_file() -> None:
 
 async def test_keyless_app_starts_with_zero_models() -> None:
     body = await _readyz(_settings())
-    assert body["models"] == {"router": 0, "classifier": 0, "generator": 0, "judge": 0}
+    assert body["models"] == {
+        "router": 0,
+        "classifier": 0,
+        "generator": 0,
+        "judge": 0,
+        "guard": 0,
+    }
 
 
 async def test_keys_and_endpoints_enable_models() -> None:
@@ -54,8 +60,14 @@ async def test_keys_and_endpoints_enable_models() -> None:
         llm_mock_enabled=True,
     )
     body = await _readyz(settings)
-    # Groq (1 per role) + Ollama + mock.
-    assert body["models"] == {"router": 3, "classifier": 3, "generator": 3, "judge": 3}
+    # Groq (1 per role) + Ollama + mock; the guard role has Prompt Guard on Groq only.
+    assert body["models"] == {
+        "router": 3,
+        "classifier": 3,
+        "generator": 3,
+        "judge": 3,
+        "guard": 1,
+    }
 
 
 def test_settings_map_to_provider_secrets() -> None:

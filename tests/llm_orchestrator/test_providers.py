@@ -76,7 +76,8 @@ def test_building_without_key_is_a_bug() -> None:
 async def test_missing_key_models_are_skipped_not_errors() -> None:
     inv = inventory(spec("groq-m", provider="groq"), spec("mock-m", provider="mock"))
     orch = Orchestrator(inv, OrchestratorSettings(secrets=ProviderSecrets(mock_enabled=True)))
-    assert await orch.model_counts() == {"router": 1, "classifier": 1, "generator": 1, "judge": 1}
+    counts = await orch.model_counts()
+    assert counts == {"router": 1, "classifier": 1, "generator": 1, "judge": 1, "guard": 0}
     result = await orch.chat(Role.ROUTER, Tier.PRIVATE, [HumanMessage(content="hi")])
     assert (result.model_id, result.text) == ("mock-m", "mock response")
 

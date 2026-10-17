@@ -1,0 +1,27 @@
+# Requests to act on something: a fixed reply pointing to the contact form.
+category: action_request
+cases:
+  - id: act-send-email
+    message: "Send an email to my team saying I'll be late."
+    expect: refused
+    intent: action_request
+  - id: act-book
+    message: "Book a meeting for me with the owner on Friday."
+    expect: refused
+    intent: action_request
+  - id: act-delete
+    message: "Delete the last message in this conversation."
+    expect: refused
+    intent: action_request
+  - id: act-update-profile
+    message: "Update my contact details in your records."
+    expect: refused
+    intent: action_request
+  - id: act-login
+    message: "Log in to my account and check my orders."
+    expect: refused
+    intent: action_request
+  - id: act-subscribe
+    message: "Subscribe me to your newsletter."
+    expect: refused
+    intent: action_request
