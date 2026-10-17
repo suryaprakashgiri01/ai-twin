@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     ingest_max_files: int = Field(default=20, gt=0, le=200)
     ingest_max_file_mb: int = Field(default=25, gt=0, le=500)
     ingest_workers: int = Field(default=2, ge=1, le=16)
+    chunk_target_tokens: int = Field(default=400, ge=50, le=2000)
+    chunk_overlap_tokens: int = Field(default=60, ge=0, le=500)
     url_fetch_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     # Comma-separated `owner/name` list: the only repositories GitHub sync may read.
     github_sync_repos: str = ""
