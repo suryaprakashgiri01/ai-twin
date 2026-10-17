@@ -8,14 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from app.guardrails.identifiers import verhoeff_check_digit, verhoeff_valid
 from app.kb.ingestion.guard import DenylistError, EmployerGuard, parse_denylist
-from app.kb.ingestion.redaction import (
-    Redactor,
-    default_detector,
-    load_nlp,
-    verhoeff_check_digit,
-    verhoeff_valid,
-)
+from app.kb.ingestion.redaction import Redactor, default_detector, load_nlp
 from tests.ingestion import persona
 
 EXAMPLE_DENYLIST = Path(__file__).resolve().parents[2] / "config" / "denylist.example.yaml"

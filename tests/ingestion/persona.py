@@ -20,7 +20,7 @@ ROLL_NUMBER = "2013CS0420"
 
 def aadhaar() -> str:
     """A well-formed (Verhoeff-valid) but fake Aadhaar number."""
-    from app.kb.ingestion.redaction import verhoeff_check_digit
+    from app.guardrails.identifiers import verhoeff_check_digit
 
     base = "23456789012"
     digits = base + verhoeff_check_digit(base)
