@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from app.core.config import Settings
 from app.db.client import MongoClient, init_mongo
 from app.db.documents import DOCUMENT_MODELS
+from app.db.migrations import run_migrations
 
 
 @dataclass
@@ -23,6 +24,7 @@ ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
 async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
     mongo = await init_mongo(settings, DOCUMENT_MODELS)
     try:
+        await run_migrations(mongo[settings.mongodb_database])
         yield Resources(mongo=mongo)
     finally:
         await mongo.close()
