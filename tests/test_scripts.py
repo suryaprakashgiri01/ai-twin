@@ -170,3 +170,16 @@ def test_missing_override_binary_fails_with_the_hint(
     assert exc.value.code == 1
     err = capsys.readouterr()
     assert "'podman' is not on PATH" in err.err and "Docker Desktop" in err.out
+
+
+def test_a_program_that_cannot_start_is_named(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def winerror_2(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr("subprocess.run", winerror_2)
+    with pytest.raises(SystemExit) as exc:
+        _common.run(["uv", "--version"])
+    assert exc.value.code == 127
+    assert "Could not start 'uv'" in capsys.readouterr().err

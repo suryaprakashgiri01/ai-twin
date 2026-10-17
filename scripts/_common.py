@@ -94,14 +94,25 @@ def run(
     env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command without a shell, so quoting behaves the same on every OS."""
-    return subprocess.run(
-        _resolved(argv),
-        check=check,
-        text=True,
-        capture_output=capture,
-        cwd=ROOT,
-        env={**os.environ, **(env or {})},
-    )
+    try:
+        return subprocess.run(
+            _resolved(argv),
+            check=check,
+            text=True,
+            capture_output=capture,
+            cwd=ROOT,
+            env={**os.environ, **(env or {})},
+        )
+    except FileNotFoundError:
+        missing(argv[0])
+        raise SystemExit(127) from None
+
+
+def missing(program: str) -> None:
+    """Name the program Windows could not start (WinError 2) instead of a bare traceback."""
+    fail(f"Could not start '{program}': it is not on PATH.")
+    print(f"  Check: where.exe {program}   (macOS: command -v {program})")
+    print(f"  For docker / podman, also check {COMPOSE_OVERRIDE_KEY} in .env.")
 
 
 def _works(argv: Sequence[str]) -> bool:
@@ -202,14 +213,18 @@ def compose_exec_binary(
 ) -> None:
     """`compose exec -T` with raw byte streams (dumps and restores), no shell on the host."""
     prefix = require_compose()
-    subprocess.run(
-        _resolved([*_compose_argv(prefix), "exec", "-T", service, *command]),
-        check=True,
-        stdin=stdin,
-        stdout=stdout,
-        cwd=ROOT,
-        env={**os.environ, **compose_env(prefix)},
-    )
+    try:
+        subprocess.run(
+            _resolved([*_compose_argv(prefix), "exec", "-T", service, *command]),
+            check=True,
+            stdin=stdin,
+            stdout=stdout,
+            cwd=ROOT,
+            env={**os.environ, **compose_env(prefix)},
+        )
+    except FileNotFoundError:
+        missing(prefix[0])
+        raise SystemExit(127) from None
 
 
 def parse_ps_json(text: str) -> list[dict[str, Any]]:
