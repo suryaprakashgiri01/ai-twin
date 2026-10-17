@@ -13,7 +13,10 @@ dependencies = [
     "colorama>=0.4; sys_platform == 'win32'",   # coloured console logs on Windows terminals
     "httpx>=0.27",
     "pymongo>=4.13",                            # PyMongo Async API (AsyncMongoClient)
+    "beanie>=2.0",                              # ODM on the PyMongo Async API (Motor is deprecated)
     "redis>=5.2",                               # works against Valkey too
+    "qdrant-client>=1.15",
+    "cryptography>=44",                         # Fernet: blob store and vault archives
     "opentelemetry-api>=1.34,<2",               # trace ids on log lines; exporters come later
     "llm-orchestrator",                         # workspace member: packages/llm-orchestrator
 ]
@@ -33,6 +36,7 @@ dev = [
     "mypy>=1.13",
     "pre-commit>=4.0",
     "types-pyyaml>=6.0",
+    "fakeredis>=2.26",
 ]
 
 [build-system]

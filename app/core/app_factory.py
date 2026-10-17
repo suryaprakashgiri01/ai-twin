@@ -12,6 +12,7 @@ from app.api.routes import health
 from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
+from app.core.resources import ResourcesFactory, open_resources
 from app.exceptions.handlers import register_exception_handlers
 from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
@@ -23,19 +24,23 @@ def create_app(
     settings: Settings | None = None,
     health_checks: Sequence[DependencyCheck] | None = None,
     llm: LLMServices | None = None,
+    resources_factory: ResourcesFactory | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(level=settings.log_level, log_format=settings.log_format)
+    open_storage = resources_factory or open_resources
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        logger.info(
-            "service started",
-            env=settings.app_env,
-            profile=settings.deployment_profile,
-            version=settings.service_version,
-        )
-        yield
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        async with open_storage(settings) as resources:
+            app.state.resources = resources
+            logger.info(
+                "service started",
+                env=settings.app_env,
+                profile=settings.deployment_profile,
+                version=settings.service_version,
+            )
+            yield
         logger.info("service stopped")
 
     app = FastAPI(
