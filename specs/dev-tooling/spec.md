@@ -13,6 +13,11 @@ Status: draft · Owner: Surya Prakash Giri · Ticket: none (personal repo; `task
 3. The fake-persona data used for manual end-to-end checks (notes, a confidential offer, records) is only
    described in the git-ignored `dev-notes/`, so a fresh clone has no way to create it.
 
+4. On a clone with a filled `.env`, `make check` fails `test_readyz_works_before_storage_opens` after the
+   ingestion tests: `magika` (a `markitdown` dependency) calls `load_dotenv(find_dotenv())` on import, copying
+   every `.env` value (provider keys too) into `os.environ`, which `Settings(_env_file=None)` still reads. CI has
+   no `.env`, so it stays green.
+
 ## Goals
 1. Every subprocess the dev scripts start is resolved with `shutil.which` first (which honours `PATHEXT`), so
    `.exe`, `.cmd` and `.bat` all run. A compose command whose binary is not on `PATH` (including an
@@ -26,6 +31,9 @@ Status: draft · Owner: Surya Prakash Giri · Ticket: none (personal repo; `task
 4. `python -m scripts.seed --remove --apply` deletes exactly what the seed created, read from a manifest in
    `vault/seed.json`; real documents and records are never touched. Records are also matched by a fixed marker
    in their `notes`, so they can be removed without the manifest.
+
+5. `app` sets `PYTHON_DOTENV_DISABLED=1` (unless already set), so library `load_dotenv()` calls are no-ops.
+   Settings keep reading `.env` through pydantic-settings, which does not use `load_dotenv`.
 
 ## Non-goals
 - Changing integration tests: they already create and drop their own `ai_twin_it` database and do not depend
@@ -41,3 +49,5 @@ Status: draft · Owner: Surya Prakash Giri · Ticket: none (personal repo; `task
    once, waits for the jobs, creates the records and writes the manifest; `--remove --apply` deletes the
    manifest's documents and the marked records and deletes the manifest.
 5. Unit tests cover 1–4 with fakes; one real run on macOS/podman is recorded in dev-notes.
+6. A library `load_dotenv()` leaves `os.environ` unchanged; `Settings(_env_file=...)` still reads the file;
+   the ingestion tests followed by the readyz test pass.
