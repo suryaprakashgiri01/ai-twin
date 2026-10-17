@@ -38,6 +38,11 @@ CACHE_TTL: dict[Channel, timedelta] = {
 DRAIN_SECONDS = 5.0
 
 
+def _to_millis(value: datetime) -> datetime:
+    """MongoDB keeps milliseconds; truncating up front keeps cache and database copies equal."""
+    return value.replace(microsecond=value.microsecond // 1000 * 1000)
+
+
 class Turn(BaseModel):
     """One message in a conversation. `seq` is assigned by `append_turn`."""
 
@@ -51,13 +56,12 @@ class Turn(BaseModel):
     trace_id: str | None = None
     tokens: int | None = None
     latency_ms: float | None = None
-    created_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=lambda: _to_millis(utcnow()))
 
     @field_validator("created_at")
     @classmethod
     def _millis(cls, value: datetime) -> datetime:
-        # MongoDB keeps milliseconds; truncating here keeps cache and database copies equal.
-        return value.replace(microsecond=value.microsecond // 1000 * 1000)
+        return _to_millis(value)
 
 
 @dataclass(frozen=True)
