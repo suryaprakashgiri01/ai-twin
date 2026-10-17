@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     github_sync_repos: str = ""
     github_token: SecretStr | None = None
 
+    # --- retrieval and owner agent ----------------------------------------------
+    retrieval_prefetch: int = Field(default=30, ge=1, le=200)
+    retrieval_top_k: int = Field(default=6, ge=1, le=50)
+    # Cross-encoder cut-off on a 0..1 (sigmoid) scale; weaker hits are dropped.
+    rerank_min_score: float = Field(default=0.01, ge=0, le=1)
+    owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
+    owner_history_turns: int = Field(default=8, ge=0, le=40)
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False

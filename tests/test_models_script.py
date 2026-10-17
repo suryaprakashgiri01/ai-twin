@@ -63,10 +63,23 @@ def test_models_dir_resolution() -> None:
     assert models.models_dir({"MODELS_DIR": "/abs/m"}) == Path("/abs/m")
 
 
-def test_doctor_reports_missing_spacy_model(tmp_path: Path) -> None:
+def _finding(tmp_path: Path, word: str) -> doctor.Finding:
     findings = doctor.check_ingestion_deps({"MODELS_DIR": str(tmp_path)})
-    assert findings[-1].level == "warn"
-    assert "scripts.models" in findings[-1].message
+    return next(f for f in findings if word in f.message)
+
+
+def test_doctor_reports_missing_spacy_model(tmp_path: Path) -> None:
+    finding = _finding(tmp_path, "spaCy")
+    assert finding.level == "warn"
+    assert "scripts.models" in finding.message
     models.spacy_path(tmp_path).mkdir(parents=True)
     (models.spacy_path(tmp_path) / "config.cfg").write_text("x")
-    assert doctor.check_ingestion_deps({"MODELS_DIR": str(tmp_path)})[-1].level == "ok"
+    assert _finding(tmp_path, "spaCy").level == "ok"
+
+
+def test_doctor_reports_missing_reranker(tmp_path: Path) -> None:
+    finding = _finding(tmp_path, "reranker")
+    assert finding.level == "warn"
+    assert "--embeddings" in finding.message
+    (tmp_path / "fastembed" / "models--Xenova--ms-marco-MiniLM-L-6-v2").mkdir(parents=True)
+    assert _finding(tmp_path, "reranker").level == "ok"
