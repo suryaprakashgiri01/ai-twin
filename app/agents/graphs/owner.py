@@ -23,8 +23,10 @@ from pydantic import BaseModel
 from app.agents.generation import AnswerGenerator, Generation, MidStreamError
 from app.agents.prompts import owner as prompts
 from app.agents.routing import (
+    GuardResult,
     Route,
     RouteDecision,
+    guard_records,
     heuristic_route,
     looks_like_records,
     records_query,
@@ -183,7 +185,15 @@ class OwnerNodes:
         question = state["question"]
         history = visible_history(state["history"], state["max_tier"], self.settings.history_turns)
         tier = max([floor_tier(state["max_tier"]), *(turn_tier(t) for t in history)])
-        decision, source, model_id = await self._decide(question, history, tier, state)
+        previous = next((t.content for t in reversed(history) if t.role == "user"), None)
+        decision, source, model_id = await self._decide(question, previous, history, tier, state)
+        # Only the model's decision is checked; the keyword router already reads the question.
+        guarded = (
+            guard_records(decision, question, previous, self.deps.today())
+            if source == "model"
+            else GuardResult(decision)
+        )
+        decision = guarded.decision
         records = decision.records
         route: Route = decision.route
         if route == "records" and records is None:
@@ -199,6 +209,8 @@ class OwnerNodes:
             history_turns=len(history),
             rewritten=decision.query.strip() != question.strip(),
             query_chars=len(decision.query),
+            guard=guarded.guard,
+            dropped=list(guarded.dropped),
         )
         return {
             "route": route,
@@ -209,7 +221,12 @@ class OwnerNodes:
         }
 
     async def _decide(
-        self, question: str, history: list[Turn], tier: Tier, state: OwnerState
+        self,
+        question: str,
+        previous: str | None,
+        history: list[Turn],
+        tier: Tier,
+        state: OwnerState,
     ) -> tuple[RouteDecision, Literal["model", "heuristic"], str | None]:
         system = prompts.ROUTE_V1.format(today=self.deps.today().isoformat())
         messages = [
@@ -229,7 +246,6 @@ class OwnerNodes:
             return result.value, "model", result.model_id
         except OrchestratorError as exc:
             logger.warning("router fell back to keywords", error_type=type(exc).__name__)
-        previous = next((t.content for t in reversed(history) if t.role == "user"), None)
         return heuristic_route(question, previous, self.deps.today()), "heuristic", None
 
     # --- gather ----------------------------------------------------------------------------
