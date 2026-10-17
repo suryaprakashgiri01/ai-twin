@@ -19,11 +19,15 @@ Prerequisites: [uv](https://docs.astral.sh/uv/) and Docker or Podman with a comp
 | Run the API | `make run` | `./scripts/dev.ps1 run` |
 | Stack status / logs | `make status` / `make logs` | `./scripts/dev.ps1 status` / `logs` |
 | Quality gate | `make check` | `./scripts/dev.ps1 check` |
+| Admin API keys | `make keys ARGS="create owner --scope admin"` | `./scripts/dev.ps1 keys create owner --scope admin` |
+| Encrypted vault export | `make export` | `./scripts/dev.ps1 export` |
+| Vault import (dry run; add `--apply`) | `make import ARGS="vault/exports/X.atv"` | `./scripts/dev.ps1 import vault/exports/X.atv` |
 | Remove containers, data, caches | `make cleanup ARGS="--apply"` | `./scripts/dev.ps1 cleanup --apply` |
 
 Then open http://127.0.0.1:8000/docs. `GET /healthz` is liveness; `GET /readyz` checks MongoDB, Redis (Valkey)
 and Qdrant, and reports how many models each role can use (informational). Model providers are
 configured in `.env` and `config/models.yaml`; a provider with no key is simply disabled.
+Admin routes (`/admin/v1/...`, `X-API-Key`) exist only with `DEPLOYMENT_PROFILE=vault`.
 
 ## Docs
 

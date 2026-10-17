@@ -36,6 +36,10 @@ Scope: the public assistant, the local vault and the publish path between them. 
 | Secrets committed to the public repo | gitleaks in pre-commit and CI; `.env` and `vault/` git-ignored |
 | Vault reachable from the network | Compose ports bind to 127.0.0.1; database and cache require passwords |
 | Lead form spam / email injection | Turnstile, rate limits, HTML-escaped email bodies |
+| Stolen admin API key or `api_keys` dump | Keys are `atw_` + 256 random bits; only SHA-256 stored; scoped; revocable (`keys revoke`); admin routes absent from the public profile |
+| Raw files read from disk or a backup | Blob store is Fernet-encrypted under `BLOB_ENCRYPTION_KEY`; content-addressed, integrity-checked on read |
+| Vault archive lost or altered in transit | Passphrase-derived key (scrypt) + authenticated Fernet frames with order/truncation checks; SHA-256 per part; import refuses before restoring anything |
+| Visitor tracking | Visitors known only by HMAC-SHA256(salt, address); public conversations expire after 90 days |
 | Log leakage | Secret-named keys redacted; documents and visitor messages not logged at INFO |
 
 ## Detection and response

@@ -13,7 +13,7 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT / "deploy" / "compose.yml"
@@ -159,14 +159,39 @@ def require_compose() -> tuple[str, ...]:
     return prefix
 
 
+def _compose_argv(prefix: Sequence[str]) -> list[str]:
+    argv = [*prefix, "-f", str(COMPOSE_FILE)]
+    if ENV_FILE.exists():
+        argv += ["--env-file", str(ENV_FILE)]
+    return argv
+
+
 def compose(
     *args: str, check: bool = True, capture: bool = False
 ) -> subprocess.CompletedProcess[str]:
     prefix = require_compose()
-    argv = [*prefix, "-f", str(COMPOSE_FILE)]
-    if ENV_FILE.exists():
-        argv += ["--env-file", str(ENV_FILE)]
-    return run([*argv, *args], check=check, capture=capture, env=compose_env(prefix))
+    return run(
+        [*_compose_argv(prefix), *args], check=check, capture=capture, env=compose_env(prefix)
+    )
+
+
+def compose_exec_binary(
+    service: str,
+    command: Sequence[str],
+    *,
+    stdin: BinaryIO | None = None,
+    stdout: BinaryIO | None = None,
+) -> None:
+    """`compose exec -T` with raw byte streams (dumps and restores), no shell on the host."""
+    prefix = require_compose()
+    subprocess.run(
+        [*_compose_argv(prefix), "exec", "-T", service, *command],
+        check=True,
+        stdin=stdin,
+        stdout=stdout,
+        cwd=ROOT,
+        env={**os.environ, **compose_env(prefix)},
+    )
 
 
 def parse_ps_json(text: str) -> list[dict[str, Any]]:

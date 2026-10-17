@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor up down status logs cleanup check run test
+.PHONY: help setup doctor up down status logs cleanup check run test keys export import
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -29,6 +29,15 @@ logs: ## Container logs (ARGS="service --follow")
 
 cleanup: ## Dry run; ARGS="--apply" deletes containers, volumes, caches
 	$(PY) scripts.cleanup $(ARGS)
+
+keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
+	$(PY) scripts.keys $(ARGS)
+
+export: ## Encrypted vault archive under vault/exports/ (prompts for a passphrase)
+	$(PY) scripts.export $(ARGS)
+
+import: ## Dry run of ARGS="vault/exports/X.atv"; add --apply to restore
+	$(PY) scripts.import_ $(ARGS)
 
 check: ## Quality gate: ruff, mypy strict, pytest + coverage
 	$(PY) scripts.check

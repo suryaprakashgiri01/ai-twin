@@ -2,6 +2,8 @@
 #   ./scripts/dev.ps1 setup
 #   ./scripts/dev.ps1 logs mongodb --follow
 #   ./scripts/dev.ps1 cleanup --apply
+#   ./scripts/dev.ps1 keys create owner --scope admin
+#   ./scripts/dev.ps1 import vault/exports/<archive>.atv --apply
 param(
     [Parameter(Position = 0)][string]$Command = "help",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
@@ -9,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "up", "down", "status", "logs", "cleanup", "check")
+$scripts = @("setup", "doctor", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import")
 
 switch ($Command) {
     "help" {
@@ -26,7 +28,9 @@ switch ($Command) {
         if ($scripts -notcontains $Command) {
             Write-Error "Unknown command '$Command'. Try: ./scripts/dev.ps1 help"
         }
-        uv run python -m "scripts.$Command" @Rest
+        # `import` is a Python keyword, so its module is `import_`.
+        $module = if ($Command -eq "import") { "import_" } else { $Command }
+        uv run python -m "scripts.$module" @Rest
     }
 }
 exit $LASTEXITCODE
