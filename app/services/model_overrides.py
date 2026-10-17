@@ -1,19 +1,26 @@
 """Owner overrides of the model registry, persisted in `model_overrides`.
 
 Two shapes share the collection: a model override (`_id` = model id; `enabled` and/or
-`max_tier`) and a role chain (`_id` = `role:<role>`; `chain` only). The orchestrator applies
-them on top of `config/models.yaml`; wiring that up is the first task of ingestion.
+`max_tier`) and a role chain (`_id` = `role:<role>`; `chain` only). `OrchestratorOverrides`
+adapts whichever store the app holds to the orchestrator's read protocol, so a PUT applies to the
+next model call with no restart.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Literal, Protocol
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.documents import ModelOverride, utcnow
 from app.exceptions import AppError, ErrorCode
+from llm_orchestrator import Inventory, InventoryError, Role
+from llm_orchestrator import ModelOverride as LLMOverride
+
+logger = structlog.get_logger(__name__)
 
 ROLE_PREFIX = "role:"
 OverrideTier = Literal["public", "private", "confidential"]
@@ -37,6 +44,23 @@ class OverrideIn(BaseModel):
             raise AppError(ErrorCode.VALIDATION_ERROR, "`chain` is only valid for role:<role>")
         if self.enabled is None and self.max_tier is None:
             raise AppError(ErrorCode.VALIDATION_ERROR, "Set `enabled` and/or `max_tier`")
+
+    def check_against(self, override_id: str, inventory: Inventory) -> None:
+        """Raise VALIDATION_ERROR for an unknown model or role, a bad chain, or a widened tier."""
+        self.check_for(override_id)
+        try:
+            if override_id.startswith(ROLE_PREFIX):
+                inventory.check_chain(_role(override_id), self.chain or [])
+            else:
+                inventory.check_override(
+                    override_id, LLMOverride(enabled=self.enabled, max_tier=self.max_tier)
+                )
+        except (InventoryError, ValueError) as exc:
+            raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+
+
+def _role(override_id: str) -> Role:
+    return Role(override_id.removeprefix(ROLE_PREFIX))
 
 
 class Override(OverrideIn):
@@ -75,3 +99,37 @@ class MongoOverrideStore:
         doc = ModelOverride(id=override_id, updated_at=utcnow(), **body.model_dump())
         await doc.save()  # full replace: fields left out of the body are cleared
         return _override(doc)
+
+
+class OrchestratorOverrides:
+    """The orchestrator's `OverrideStore`, read from the app's store on every call.
+
+    `source` returns the store, or None before storage is open (then there are no overrides).
+    A row that no longer fits the inventory is skipped here; the orchestrator clamps the rest.
+    """
+
+    def __init__(self, source: Callable[[], OverrideStore | None]) -> None:
+        self._source = source
+
+    async def _rows(self) -> list[Override]:
+        store = self._source()
+        return await store.list() if store is not None else []
+
+    async def model_overrides(self) -> Mapping[str, LLMOverride]:
+        result: dict[str, LLMOverride] = {}
+        for row in await self._rows():
+            if row.id.startswith(ROLE_PREFIX):
+                continue
+            result[row.id] = LLMOverride(enabled=row.enabled, max_tier=row.max_tier)
+        return result
+
+    async def role_chains(self) -> Mapping[Role, Sequence[str]]:
+        result: dict[Role, Sequence[str]] = {}
+        for row in await self._rows():
+            if not row.id.startswith(ROLE_PREFIX) or not row.chain:
+                continue
+            try:
+                result[_role(row.id)] = list(row.chain)
+            except ValueError:
+                logger.warning("override for unknown role skipped", override_id=row.id)
+        return result

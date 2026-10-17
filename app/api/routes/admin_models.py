@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 
 from app.auth.dependencies import Principal, require_scopes
+from app.core.llm import LLMServices
 from app.services.audit import AuditLog
 from app.services.model_overrides import Override, OverrideIn, OverrideStore
 
@@ -33,8 +34,10 @@ async def put_override(
     model_id: str, body: OverrideIn, principal: AdminKey, request: Request
 ) -> Override:
     """`model_id` is a model id (`enabled`, `max_tier`) or `role:<role>` (`chain`). The body
-    replaces the stored override; the change is written to the audit log."""
-    body.check_for(model_id)
+    replaces the stored override, is checked against `config/models.yaml` (a tier can only be
+    lowered) and applies to the next model call. The change is written to the audit log."""
+    llm: LLMServices = request.app.state.llm
+    body.check_against(model_id, llm.orchestrator.inventory)
     store = _store(request)
     before = await store.get(model_id)
     after = await store.put(model_id, body)

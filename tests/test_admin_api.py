@@ -140,35 +140,39 @@ async def test_override_put_is_validated_stored_and_audited(
     headers = {"X-API-Key": await _key(fakes, "admin", name="owner")}
     url = "/admin/v1/models/overrides"
 
-    first = await client.put(f"{url}/fake:7b", json={"enabled": False}, headers=headers)
+    first = await client.put(f"{url}/groq-llama-8b", json={"enabled": False}, headers=headers)
     second = await client.put(
-        f"{url}/fake:7b", json={"enabled": True, "max_tier": "private"}, headers=headers
+        f"{url}/groq-llama-8b", json={"enabled": True, "max_tier": "public"}, headers=headers
     )
     assert first.status_code == second.status_code == 200
-    assert second.json()["max_tier"] == "private"
+    assert second.json()["max_tier"] == "public"
 
     listed = await client.get(url, headers=headers)
-    assert [o["id"] for o in listed.json()] == ["fake:7b"]
+    assert [o["id"] for o in listed.json()] == ["groq-llama-8b"]
 
     assert len(fakes.audit.entries) == 2
     entry: dict[str, Any] = fakes.audit.entries[1]
     assert entry["actor"] == "key:owner"
     assert entry["action"] == "model_override.put"
-    assert entry["target"] == "fake:7b"
+    assert entry["target"] == "groq-llama-8b"
     assert entry["before"]["enabled"] is False
-    assert entry["after"]["max_tier"] == "private"
+    assert entry["after"]["max_tier"] == "public"
 
 
 @pytest.mark.parametrize(
     ("model_id", "body"),
     [
-        ("fake:7b", {"max_tier": "restricted"}),
-        ("fake:7b", {"max_tier": "secret"}),
-        ("fake:7b", {}),
-        ("fake:7b", {"chain": ["a"]}),
-        ("fake:7b", {"enabled": True, "surprise": 1}),
-        ("role:owner_chat", {"enabled": True}),
-        ("role:owner_chat", {"chain": []}),
+        ("groq-llama-8b", {"max_tier": "restricted"}),
+        ("groq-llama-8b", {"max_tier": "secret"}),
+        ("groq-llama-8b", {}),
+        ("groq-llama-8b", {"chain": ["mock"]}),
+        ("groq-llama-8b", {"enabled": True, "surprise": 1}),
+        ("groq-llama-8b", {"max_tier": "confidential"}),  # above the file's ceiling
+        ("not-in-inventory", {"enabled": False}),
+        ("role:classifier", {"enabled": True}),
+        ("role:classifier", {"chain": []}),
+        ("role:classifier", {"chain": ["groq-gpt-oss-120b"]}),  # does not serve the role
+        ("role:owner_chat", {"chain": ["mock"]}),  # no such role
     ],
 )
 async def test_override_put_rejects_bad_shapes(
@@ -189,7 +193,9 @@ async def test_role_chain_override(setup: tuple[httpx.AsyncClient, Fakes, Clock]
     client, fakes, _ = setup
     headers = {"X-API-Key": await _key(fakes, "admin")}
     response = await client.put(
-        "/admin/v1/models/overrides/role:owner_chat", json={"chain": ["a", "b"]}, headers=headers
+        "/admin/v1/models/overrides/role:classifier",
+        json={"chain": ["mock", "ollama-local"]},
+        headers=headers,
     )
     assert response.status_code == 200
-    assert response.json()["chain"] == ["a", "b"]
+    assert response.json()["chain"] == ["mock", "ollama-local"]

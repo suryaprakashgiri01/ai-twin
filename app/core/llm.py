@@ -10,6 +10,7 @@ from llm_orchestrator import (
     Inventory,
     Orchestrator,
     OrchestratorSettings,
+    OverrideStore,
     ProviderSecrets,
 )
 from llm_orchestrator.classify import Classifier, FlaggedClassifier, JevClassifier, LLMClassifier
@@ -19,7 +20,7 @@ from llm_orchestrator.classify import Classifier, FlaggedClassifier, JevClassifi
 class LLMServices:
     orchestrator: Orchestrator
     classifier: Classifier
-    overrides: InMemoryOverrideStore
+    overrides: OverrideStore
 
 
 def provider_secrets(settings: Settings) -> ProviderSecrets:
@@ -34,10 +35,10 @@ def provider_secrets(settings: Settings) -> ProviderSecrets:
     )
 
 
-def build_llm(settings: Settings) -> LLMServices:
+def build_llm(settings: Settings, overrides: OverrideStore | None = None) -> LLMServices:
+    """`overrides` is read on every call; the app passes its MongoDB-backed adapter."""
     inventory = Inventory.from_yaml(settings.model_inventory_path)
-    # In memory until kb-storage's MongoDB store is wired in by ingestion.
-    overrides = InMemoryOverrideStore(inventory)
+    overrides = overrides or InMemoryOverrideStore(inventory)
     orchestrator = Orchestrator.from_config(
         inventory,
         OrchestratorSettings(
