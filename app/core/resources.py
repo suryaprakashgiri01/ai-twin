@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from qdrant_client import AsyncQdrantClient
 from redis.asyncio import Redis
 
+from app.auth.keys import ApiKeyStore, MongoApiKeyStore
 from app.cache.redis import open_redis
 from app.core.config import Settings
 from app.db.client import MongoClient, init_mongo
@@ -26,6 +27,7 @@ class Resources:
     qdrant: AsyncQdrantClient
     conversations: ConversationService
     blobs: BlobStore
+    api_keys: ApiKeyStore
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -55,5 +57,10 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
         blobs = BlobStore(settings.blob_dir, settings.blob_encryption_key.get_secret_value())
 
         yield Resources(
-            mongo=mongo, redis=redis, qdrant=qdrant, conversations=conversations, blobs=blobs
+            mongo=mongo,
+            redis=redis,
+            qdrant=qdrant,
+            conversations=conversations,
+            blobs=blobs,
+            api_keys=MongoApiKeyStore(),
         )
