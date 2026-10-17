@@ -91,7 +91,11 @@ async def test_retriever_factory_fixes_the_collection_list(
     monkeypatch.setattr(public_graph, "Retriever", Recorder)
     settings = Settings(_env_file=None, app_env="test", llm_mock_enabled=True)
     resources = SimpleNamespace(
-        qdrant=object(), profile=object(), conversations=object(), redis=FakeAsyncRedis()
+        qdrant=object(),
+        profile=object(),
+        conversations=object(),
+        redis=FakeAsyncRedis(),
+        security_events=object(),
     )
     build_public_chat(
         settings, cast(Resources, resources), build_llm(settings), MapEmbedder(), FileResume(None)

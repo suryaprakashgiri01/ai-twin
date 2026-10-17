@@ -20,6 +20,7 @@ from app.services.public_chat import PublicChatRequest, PublicChatResponse, Publ
 from app.services.rate_limit import Limits, RateLimiter
 from tests.conftest import FakeCheck
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
+from tests.public.fakes import MemorySecurityEvents
 
 
 class EchoChat:
@@ -58,6 +59,7 @@ def public_app(
         audit=MemoryAuditLog(),
         overrides=MemoryOverrideStore(),
         redis=FakeAsyncRedis(decode_responses=True),
+        security_events=MemorySecurityEvents(),
     )
     chat = EchoChat()
     app.state.public_chat = chat

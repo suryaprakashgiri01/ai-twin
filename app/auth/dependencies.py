@@ -27,6 +27,8 @@ API_KEY_HEADER = "X-API-Key"
 TOUCH_INTERVAL = timedelta(minutes=1)
 
 _header = APIKeyHeader(name=API_KEY_HEADER, auto_error=False, description="ai-twin API key")
+# For dependencies that wrap `require_scopes` and need the same header scheme.
+api_key_header = _header
 
 
 @dataclass(frozen=True)

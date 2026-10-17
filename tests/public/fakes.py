@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -99,6 +99,33 @@ class FakeJudge:
 
 
 @dataclass
+class MemorySecurityEvents:
+    events: list[dict[str, Any]] = field(default_factory=list)
+
+    async def record(
+        self,
+        kind: str,
+        severity: str,
+        *,
+        rules: Sequence[str] = (),
+        visitor_hash: str | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.events.append(
+            {
+                "kind": kind,
+                "severity": severity,
+                "rules": list(rules),
+                "visitor_hash": visitor_hash,
+                "details": dict(details or {}),
+            }
+        )
+
+    def kinds(self) -> list[str]:
+        return [e["kind"] for e in self.events]
+
+
+@dataclass
 class FakePublicSearcher:
     hits: list[Hit] = field(default_factory=list)
     calls: list[dict[str, Any]] = field(default_factory=list)
@@ -144,6 +171,7 @@ class Public:
     searcher: FakePublicSearcher
     judge: FakeJudge
     profile: MemoryProfileStore
+    events: MemorySecurityEvents
     conversations: ConversationService
     store: MemoryConversationStore
     redis: FakeAsyncRedis
@@ -198,6 +226,7 @@ def make_public(
     classifier = ScriptedClassifier(label)
     judge = judge or FakeJudge()
     profile = MemoryProfileStore()
+    events = MemorySecurityEvents()
 
     async def resume_available() -> bool:
         return has_resume
@@ -219,6 +248,7 @@ def make_public(
             allowlist=[EMAIL],
             judge=judge,
         ),
+        events=events,
         settings=PublicSettings(),
     )
     service = PublicChatService(
@@ -236,6 +266,7 @@ def make_public(
         search,
         judge,
         profile,
+        events,
         conversations,
         store,
         redis,

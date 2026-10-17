@@ -27,7 +27,7 @@ from qdrant_client import AsyncQdrantClient
 
 from app.agents.prompts import public as prompts
 from app.guardrails.input import BLOCKED_REPLY, InputGuard
-from app.guardrails.output import OutputGuard
+from app.guardrails.output import OutputGuard, OutputVerdict
 from app.guardrails.scope import (
     FIXED_INTENTS,
     FIXED_REPLIES,
@@ -41,6 +41,7 @@ from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import DocumentFilter, Hit, Retriever
 from app.services.conversations import Turn
+from app.services.security_events import Detail, SecurityEventWriter
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
 
 logger = structlog.get_logger(__name__)
@@ -85,6 +86,7 @@ class PublicDeps:
     reranker: Reranker
     orchestrator: Orchestrator
     output_guard: OutputGuard
+    events: SecurityEventWriter
     settings: PublicSettings = field(default_factory=PublicSettings)
 
 
@@ -143,6 +145,17 @@ class PublicNodes:
         update: dict[str, Any] = {"text": verdict.text, "input_guard": verdict.summary()}
         if not verdict.allowed:
             update |= {"intent": BLOCKED_INTENT, "answer": BLOCKED_REPLY}
+            await self.deps.events.record(
+                "input_blocked",
+                "low" if verdict.layer == "length" else "medium",
+                rules=verdict.rules,
+                visitor_hash=state["visitor_hash"],
+                details={
+                    "layer": verdict.layer,
+                    "score": verdict.score,
+                    "conversation_id": state["conversation_id"],
+                },
+            )
         _step("input_guard", started, allowed=verdict.allowed, rules=list(verdict.rules))
         return update
 
@@ -159,6 +172,14 @@ class PublicNodes:
                 "corrected": decision.corrected,
             },
         }
+        if intent == "meta_probe":
+            await self.deps.events.record(
+                "meta_probe",
+                "low",
+                rules=[f"scope:{decision.source}"],
+                visitor_hash=state["visitor_hash"],
+                details={"conversation_id": state["conversation_id"]},
+            )
         if intent in FIXED_INTENTS:
             update["answer"] = FIXED_REPLIES[intent]
         elif intent in PROFILE_INTENTS:
@@ -224,8 +245,32 @@ class PublicNodes:
         if not verdict.passed:
             # The visitor sees only the safe fallback; the blocked answer goes nowhere.
             update |= {"answer": prompts.NO_CONTEXT, "sources": []}
+        await self._record_output(state, verdict)
         _step("output_guard", started, passed=verdict.passed, rule=verdict.rule)
         return update
+
+    async def _record_output(self, state: PublicState, verdict: OutputVerdict) -> None:
+        details: dict[str, Detail] = {
+            "check": verdict.check,
+            "conversation_id": state["conversation_id"],
+        }
+        if not verdict.passed and verdict.rule is not None:
+            canary = verdict.check == "canary"
+            await self.deps.events.record(
+                "canary_hit" if canary else "output_blocked",
+                "critical" if canary else verdict.severity or "high",
+                rules=[verdict.rule],
+                visitor_hash=state["visitor_hash"],
+                details=details,
+            )
+        elif "grounding_fail_open" in verdict.notes:
+            await self.deps.events.record(
+                "grounding_fail_open",
+                "low",
+                rules=["grounding_fail_open"],
+                visitor_hash=state["visitor_hash"],
+                details=details,
+            )
 
 
 def _after_input(state: PublicState) -> str:

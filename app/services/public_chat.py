@@ -396,6 +396,7 @@ def build_public_chat(
         ),
         orchestrator=orchestrator,
         output_guard=output_guard,
+        events=resources.security_events,
         settings=PublicSettings(
             top_k=settings.retrieval_top_k,
             context_tokens=settings.public_context_tokens,

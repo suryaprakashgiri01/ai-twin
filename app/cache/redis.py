@@ -51,6 +51,11 @@ def resume_visitors_key(day: str) -> str:
     return f"resume:visitors:{day}"
 
 
+def security_burst_key(scope: str) -> str:
+    """Set once per window so a burst of the same security event is recorded once."""
+    return f"sec:burst:{scope}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

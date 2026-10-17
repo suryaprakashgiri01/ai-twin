@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Security
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from app.auth.dependencies import Principal, require_scopes
+from app.auth.dependencies import Principal, api_key_header, require_scopes
 from app.auth.visitor import Visitor, resolve_visitor
 from app.core.config import Settings
 from app.exceptions import AppError, ErrorCode
@@ -19,13 +19,46 @@ from app.services.assistant import AssistantInfo, assistant_info
 from app.services.public_chat import PublicChat, PublicChatRequest, PublicChatResponse
 from app.services.rate_limit import Limits, RateLimiter
 from app.services.resume import ResumeProvider, count_download
+from app.services.security_events import SecurityEventWriter, first_in_window
 
 PUBLIC_PREFIX = "/v1"
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 router = APIRouter(prefix=PUBLIC_PREFIX, tags=["public"])
 
-PublicKey = Annotated[Principal, Depends(require_scopes("public:read"))]
+AUTH_FAILURES = frozenset({ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_INVALID, ErrorCode.FORBIDDEN})
+# A burst of the same failure is recorded once per this many seconds.
+AUTH_EVENT_WINDOW = 60
+
+_require_public_read = require_scopes("public:read")
+
+
+def _events(request: Request) -> SecurityEventWriter | None:
+    return getattr(request.app.state.resources, "security_events", None)
+
+
+async def public_key(
+    request: Request, api_key: Annotated[str | None, Security(api_key_header)] = None
+) -> Principal:
+    """`require_scopes("public:read")`, recording failures as security events."""
+    try:
+        return await _require_public_read(request, api_key)
+    except AppError as exc:
+        events = _events(request)
+        if (
+            exc.code in AUTH_FAILURES
+            and events is not None
+            and await first_in_window(
+                request.app.state.resources.redis, f"auth:{exc.code.value}", AUTH_EVENT_WINDOW
+            )
+        ):
+            await events.record(
+                "auth_failed", "medium", rules=[exc.code.value], details={"path": request.url.path}
+            )
+        raise
+
+
+PublicKey = Annotated[Principal, Depends(public_key)]
 
 
 def limits(settings: Settings) -> Limits:
@@ -48,6 +81,17 @@ async def rate_limited_visitor(
     limiter = RateLimiter(request.app.state.resources.redis, limits(settings))
     decision = await limiter.hit(who.hash)
     if not decision.allowed:
+        events = _events(request)
+        burst = f"rl:{who.hash}:{decision.window}"
+        if events is not None and await first_in_window(
+            request.app.state.resources.redis, burst, max(decision.retry_after, 1)
+        ):
+            await events.record(
+                "rate_limited",
+                "medium",
+                rules=[f"rate_limit:{decision.window}"],
+                visitor_hash=who.hash,
+            )
         raise AppError(
             ErrorCode.RATE_LIMITED,
             "Too many messages; try again later",
