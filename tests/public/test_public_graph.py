@@ -25,6 +25,7 @@ from app.exceptions import AppError
 from app.guardrails.input import BLOCKED_REPLY
 from app.guardrails.scope import FIXED_REPLIES
 from app.services.public_chat import PublicChatRequest, build_public_chat, token_pieces
+from app.services.resume import FileResume
 from llm_orchestrator import Tier
 from tests.agent.fakes import (
     FakeDocs,
@@ -92,7 +93,9 @@ async def test_retriever_factory_fixes_the_collection_list(
     resources = SimpleNamespace(
         qdrant=object(), profile=object(), conversations=object(), redis=FakeAsyncRedis()
     )
-    build_public_chat(settings, cast(Resources, resources), build_llm(settings), MapEmbedder())
+    build_public_chat(
+        settings, cast(Resources, resources), build_llm(settings), MapEmbedder(), FileResume(None)
+    )
     assert len(built) == 1
     assert dict(built[0]["collections"]) == {"kb_public": Tier.PUBLIC}
 

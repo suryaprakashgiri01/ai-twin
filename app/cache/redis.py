@@ -41,6 +41,16 @@ def answer_cache_key(version: int, question_hash: str) -> str:
     return f"ac:{version}:{question_hash}"
 
 
+def resume_downloads_key(day: str) -> str:
+    """Resume downloads on one UTC day (`YYYYMMDD`)."""
+    return f"resume:downloads:{day}"
+
+
+def resume_visitors_key(day: str) -> str:
+    """HyperLogLog of the visitor hashes that downloaded the resume on one UTC day."""
+    return f"resume:visitors:{day}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     public_history_turns: int = Field(default=4, ge=0, le=20)
     # Single-turn public answers are cached per normalised question and kb_public_version.
     public_answer_cache_ttl_seconds: int = Field(default=21_600, ge=0, le=7 * 86_400)
+    # Public profile only: the resume PDF deploy-public provisions (the vault serves the
+    # profile's resume blob instead).
+    public_resume_path: Path | None = None
+    # Shown in the assistant greeting and disclosure; empty means "the owner".
+    public_owner_name: str = Field(default="", max_length=100)
     # Synced canary hashes (deploy-public provisions it); the vault reads MongoDB instead.
     public_canary_hashes_path: Path | None = None
 

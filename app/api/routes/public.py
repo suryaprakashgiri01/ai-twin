@@ -9,14 +9,16 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from app.auth.dependencies import Principal, require_scopes
 from app.auth.visitor import Visitor, resolve_visitor
 from app.core.config import Settings
 from app.exceptions import AppError, ErrorCode
+from app.services.assistant import AssistantInfo, assistant_info
 from app.services.public_chat import PublicChat, PublicChatRequest, PublicChatResponse
 from app.services.rate_limit import Limits, RateLimiter
+from app.services.resume import ResumeProvider, count_download
 
 PUBLIC_PREFIX = "/v1"
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -86,3 +88,34 @@ async def chat(
         )
     response = await service.answer(prepared)
     return JSONResponse(response.model_dump(mode="json"))
+
+
+def _resume(request: Request) -> ResumeProvider:
+    provider: ResumeProvider | None = getattr(request.app.state, "resume", None)
+    if provider is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No resume is available")
+    return provider
+
+
+@router.get(
+    "/resume",
+    summary="The owner's current resume",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}, 404: {"description": "No resume"}},
+)
+async def resume(request: Request, who: Annotated[Visitor, Depends(visitor)]) -> Response:
+    """The vault serves the profile's resume blob; the public deployment, `PUBLIC_RESUME_PATH`.
+    Each download is counted, with the visitor known only by their salted hash."""
+    found = await _resume(request).open()
+    if found is None:
+        raise AppError(ErrorCode.NOT_FOUND, "No resume is available")
+    await count_download(request.app.state.resources.redis, who.hash)
+    disposition = {"Content-Disposition": f'attachment; filename="{found.filename}"'}
+    if found.path is not None:
+        return FileResponse(found.path, media_type=found.content_type, headers=disposition)
+    return Response(found.data, media_type=found.content_type, headers=disposition)
+
+
+@router.get("/assistant", summary="Greeting, AI-twin disclosure, privacy note, availability")
+async def assistant(request: Request, _principal: PublicKey) -> AssistantInfo:
+    return await assistant_info(request.app.state.settings, request.app.state.resources.profile)

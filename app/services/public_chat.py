@@ -49,6 +49,7 @@ from app.kb.retrieval.retriever import MongoDocumentFilter
 from app.services.answer_cache import AnswerCache, CachedAnswer
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.owner_chat import ConversationIndex, MongoConversationIndex
+from app.services.resume import ResumeProvider
 from llm_orchestrator import Tier
 from llm_orchestrator.classify import Classifier, FlaggedClassifier
 
@@ -352,12 +353,12 @@ def canary_source(settings: Settings) -> CanaryHashSource:
     return StaticCanaryHashes()
 
 
-async def _no_resume() -> bool:
-    return False
-
-
 def build_public_chat(
-    settings: Settings, resources: Resources, llm: LLMServices, embedder: Embedder
+    settings: Settings,
+    resources: Resources,
+    llm: LLMServices,
+    embedder: Embedder,
+    resume: ResumeProvider,
 ) -> PublicChatService:
     orchestrator, classifier = llm.orchestrator, llm.classifier
     input_guard = InputGuard(
@@ -383,7 +384,7 @@ def build_public_chat(
     deps = PublicDeps(
         input_guard=input_guard,
         router=ScopeRouter(classifier),
-        templates=ProfileTemplates(resources.profile, _no_resume),
+        templates=ProfileTemplates(resources.profile, resume.available),
         retriever=public_retriever(
             resources.qdrant,
             embedder,
