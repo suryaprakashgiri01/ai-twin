@@ -18,6 +18,39 @@ DOB = "14/03/1995"
 ROLL_NUMBER = "2013CS0420"
 
 
+def aadhaar() -> str:
+    """A well-formed (Verhoeff-valid) but fake Aadhaar number."""
+    from app.kb.ingestion.redaction import verhoeff_check_digit
+
+    base = "23456789012"
+    digits = base + verhoeff_check_digit(base)
+    return f"{digits[:4]} {digits[4:8]} {digits[8:]}"
+
+
+def sensitive_note() -> str:
+    """A note carrying every identifier type the redactor must remove."""
+    return note(
+        f"PAN: {PAN}. Aadhaar {aadhaar()}.",
+        f"Salary account no. {BANK_ACCOUNT}, IFSC {IFSC}.",
+        f"UAN: {UAN}. Passport number {PASSPORT}.",
+        f"DOB: {DOB}. University roll no: {ROLL_NUMBER}.",
+        f"Personal mail {PRIVATE_EMAIL}, phone +91 98765 43210.",
+    )
+
+
+RAW_VALUES = (
+    PAN,
+    IFSC,
+    BANK_ACCOUNT,
+    PASSPORT,
+    UAN,
+    DOB,
+    ROLL_NUMBER,
+    PRIVATE_EMAIL,
+    "98765 43210",
+)
+
+
 def note(*extra: str) -> str:
     return "\n".join(
         [

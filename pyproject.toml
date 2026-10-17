@@ -96,8 +96,7 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
-    "integration: needs the compose stack (deselect with -m 'not integration')",
-    "models: needs downloaded local models (spaCy en_core_web_md, fastembed); deselect with -m 'not models'",
+    "integration: needs the compose stack or downloaded local models (deselect with -m 'not integration')",
 ]
 filterwarnings = [
     # pymupdf's SWIG bindings, raised at import on Python 3.12.
