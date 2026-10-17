@@ -15,6 +15,7 @@ from app.db.client import MongoClient, init_mongo
 from app.db.documents import DOCUMENT_MODELS
 from app.db.migrations import run_migrations
 from app.services.conversations import ConversationService, MongoConversationStore
+from app.storage.blobs import BlobStore
 from app.vector.qdrant import open_qdrant
 
 
@@ -24,6 +25,7 @@ class Resources:
     redis: Redis
     qdrant: AsyncQdrantClient
     conversations: ConversationService
+    blobs: BlobStore
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -50,4 +52,8 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
         qdrant = await open_qdrant(settings)
         stack.push_async_callback(qdrant.close)
 
-        yield Resources(mongo=mongo, redis=redis, qdrant=qdrant, conversations=conversations)
+        blobs = BlobStore(settings.blob_dir, settings.blob_encryption_key.get_secret_value())
+
+        yield Resources(
+            mongo=mongo, redis=redis, qdrant=qdrant, conversations=conversations, blobs=blobs
+        )
