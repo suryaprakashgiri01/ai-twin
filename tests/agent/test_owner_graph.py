@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from datetime import date
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from structlog.testing import capture_logs
 
 from app.agents.prompts.owner import NOT_IN_VAULT
 from app.agents.routing import heuristic_route
@@ -98,7 +97,9 @@ async def test_empty_context_answers_not_in_the_vault() -> None:
     assert state["sources"] == [] and state["incomplete"] is False
 
 
-async def test_follow_up_is_rewritten_from_history_and_logged_without_text() -> None:
+async def test_follow_up_is_rewritten_from_history_and_logged_without_text(
+    owner_logs: list[MutableMapping[str, Any]],
+) -> None:
     first = "which project used raft?"
     rewritten = "which project did I build before the raft project?"
     agent = make_agent(
@@ -107,10 +108,11 @@ async def test_follow_up_is_rewritten_from_history_and_logged_without_text() -> 
         hits=[hit("priv", Tier.PRIVATE, PRIV_TEXT)],
     )
     state, _ = await agent.run(first)
-    with capture_logs() as logs:
-        follow, _ = await agent.run(
-            "and the one before that?", conversation_id=state["conversation_id"]
-        )
+    owner_logs.clear()
+    follow, _ = await agent.run(
+        "and the one before that?", conversation_id=state["conversation_id"]
+    )
+    logs = owner_logs
     assert follow["query"] == rewritten
     assert agent.searcher.calls[-1]["query"] == rewritten
     router_prompt = prompt_text(agent.factory.models["router"].seen[-1])
@@ -198,15 +200,17 @@ async def test_confidential_history_is_hidden_from_a_private_request() -> None:
     assert "Base pay" not in prompt_text(agent.factory.models["router"].seen[-1])
 
 
-async def test_no_question_context_or_answer_in_logs() -> None:
+async def test_no_question_context_or_answer_in_logs(
+    owner_logs: list[MutableMapping[str, Any]],
+) -> None:
     q = "QUESTION-MARKER what did I learn?"
     agent = make_agent(
         router=[route_json("kb_search", q)],
         cloud=["ANSWER-MARKER raft [1]."],
         hits=[hit("priv", Tier.PRIVATE, PRIV_TEXT)],
     )
-    with capture_logs() as logs:
-        await agent.run(q)
+    await agent.run(q)
+    logs = owner_logs
     dumped = str(logs)
     for marker in ("QUESTION-MARKER", "ANSWER-MARKER", PRIV_TEXT):
         assert marker not in dumped
