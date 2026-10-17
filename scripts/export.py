@@ -17,13 +17,33 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.storage.blobs import BlobIntegrityError, BlobStore
 from scripts import _vault
-from scripts._common import compose_exec_binary, detect_compose, info, ok, warn
+from scripts._common import compose_exec_binary, detect_compose, fail, info, ok, warn
 
 
 def default_archive(now: datetime | None = None) -> Path:
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
     return _vault.EXPORTS_DIR / f"ai-twin-vault-{stamp}.atv"
+
+
+def blob_key_problem(source: Path, key: str) -> str | None:
+    """Why the archived blobs could not be opened on import, or None when they can."""
+    shas = [p.name for p in sorted(source.glob("??/*")) if len(p.name) == 64]
+    if not shas:
+        return None
+    if not key:
+        return (
+            f"{len(shas)} blob(s) but BLOB_ENCRYPTION_KEY is empty; "
+            "restore the .env they were written with"
+        )
+    try:
+        store = BlobStore(source, key)
+        for sha in shas:
+            store.decrypt_file(store.path_for(sha), sha)
+    except (ValueError, BlobIntegrityError) as exc:
+        return f"blobs do not open with BLOB_ENCRYPTION_KEY ({exc}); restore the matching .env"
+    return None
 
 
 def stage_blobs(source: Path, staging: Path, key: str) -> list[str]:
@@ -73,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = _vault.load_settings()
+    key = settings.blob_encryption_key.get_secret_value()
+    # Checked before anything is dumped: an archive whose blobs cannot be decrypted is useless.
+    problem = blob_key_problem(_vault.blob_root(settings), key)
+    if problem:
+        fail(f"Export refused: {problem}")
+        return 1
     passphrase = _vault.read_passphrase(confirm=True)
     archive: Path = args.out or default_archive()
     qdrant = _vault.Qdrant(settings)
@@ -91,7 +117,6 @@ def main(argv: list[str] | None = None) -> int:
                 qdrant.snapshot_to(name, staging / _vault.QDRANT_DIR / f"{name}.snapshot")
             info(f"Qdrant {qdrant.version()}: {len(points)} collection(s)")
 
-            key = settings.blob_encryption_key.get_secret_value()
             blobs = stage_blobs(_vault.blob_root(settings), staging, key)
             info(f"Blobs: {len(blobs)}")
 

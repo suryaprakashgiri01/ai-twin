@@ -183,3 +183,15 @@ def test_short_passphrase_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_default_archive_name_is_timestamped() -> None:
     assert export.default_archive().name.startswith("ai-twin-vault-")
     assert export.default_archive().suffix == ".atv"
+
+
+def test_export_refuses_blobs_without_a_usable_key(tmp_path: Path) -> None:
+    key = Fernet.generate_key()
+    blobs = BlobStore(tmp_path / "blobs", key)
+    assert export.blob_key_problem(blobs.root, "") is None  # nothing stored yet
+    blobs.put(b"fake resume", "text/plain")
+    assert export.blob_key_problem(blobs.root, key.decode()) is None
+    empty = export.blob_key_problem(blobs.root, "")
+    assert empty is not None and "BLOB_ENCRYPTION_KEY is empty" in empty
+    wrong = export.blob_key_problem(blobs.root, Fernet.generate_key().decode())
+    assert wrong is not None and "do not open" in wrong
