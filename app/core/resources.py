@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
+from qdrant_client import AsyncQdrantClient
 from redis.asyncio import Redis
 
 from app.cache.redis import open_redis
@@ -14,12 +15,14 @@ from app.db.client import MongoClient, init_mongo
 from app.db.documents import DOCUMENT_MODELS
 from app.db.migrations import run_migrations
 from app.services.conversations import ConversationService, MongoConversationStore
+from app.vector.qdrant import open_qdrant
 
 
 @dataclass
 class Resources:
     mongo: MongoClient
     redis: Redis
+    qdrant: AsyncQdrantClient
     conversations: ConversationService
 
 
@@ -44,4 +47,7 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
         )
         stack.push_async_callback(conversations.drain)
 
-        yield Resources(mongo=mongo, redis=redis, conversations=conversations)
+        qdrant = await open_qdrant(settings)
+        stack.push_async_callback(qdrant.close)
+
+        yield Resources(mongo=mongo, redis=redis, qdrant=qdrant, conversations=conversations)
