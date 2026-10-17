@@ -19,6 +19,7 @@ Prerequisites: [uv](https://docs.astral.sh/uv/) and Docker or Podman with a comp
 | Run the API | `make run` | `./scripts/dev.ps1 run` |
 | Stack status / logs | `make status` / `make logs` | `./scripts/dev.ps1 status` / `logs` |
 | Quality gate | `make check` | `./scripts/dev.ps1 check` |
+| Local LLM (native Ollama: install, start, pull, smoke) | `make ollama ARGS="start"` | `./scripts/dev.ps1 ollama start` |
 | Admin API keys | `make keys ARGS="create owner --scope admin"` | `./scripts/dev.ps1 keys create owner --scope admin` |
 | Encrypted vault export | `make export` | `./scripts/dev.ps1 export` |
 | Vault import (dry run; add `--apply`) | `make import ARGS="vault/exports/X.atv"` | `./scripts/dev.ps1 import vault/exports/X.atv` |
