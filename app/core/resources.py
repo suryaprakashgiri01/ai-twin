@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
+from redis.asyncio import Redis
+
+from app.cache.redis import open_redis
 from app.core.config import Settings
 from app.db.client import MongoClient, init_mongo
 from app.db.documents import DOCUMENT_MODELS
 from app.db.migrations import run_migrations
+from app.services.conversations import ConversationService, MongoConversationStore
 
 
 @dataclass
 class Resources:
     mongo: MongoClient
+    redis: Redis
+    conversations: ConversationService
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -22,9 +28,20 @@ ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
 
 @asynccontextmanager
 async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
-    mongo = await init_mongo(settings, DOCUMENT_MODELS)
-    try:
+    async with AsyncExitStack() as stack:
+        mongo = await init_mongo(settings, DOCUMENT_MODELS)
+        stack.push_async_callback(mongo.close)
         await run_migrations(mongo[settings.mongodb_database])
-        yield Resources(mongo=mongo)
-    finally:
-        await mongo.close()
+
+        redis = await open_redis(settings)
+        stack.push_async_callback(redis.aclose)
+        conversations = ConversationService(
+            redis,
+            MongoConversationStore(),
+            visitor_salt=settings.visitor_hash_salt.get_secret_value(),
+            cache_turns=settings.conversation_cache_turns,
+            public_retention_days=settings.public_conversation_retention_days,
+        )
+        stack.push_async_callback(conversations.drain)
+
+        yield Resources(mongo=mongo, redis=redis, conversations=conversations)
