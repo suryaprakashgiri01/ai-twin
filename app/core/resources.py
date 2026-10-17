@@ -15,7 +15,9 @@ from app.core.config import Settings
 from app.db.client import MongoClient, init_mongo
 from app.db.documents import DOCUMENT_MODELS
 from app.db.migrations import run_migrations
+from app.services.audit import AuditLog, MongoAuditLog
 from app.services.conversations import ConversationService, MongoConversationStore
+from app.services.model_overrides import MongoOverrideStore, OverrideStore
 from app.storage.blobs import BlobStore
 from app.vector.qdrant import open_qdrant
 
@@ -28,6 +30,8 @@ class Resources:
     conversations: ConversationService
     blobs: BlobStore
     api_keys: ApiKeyStore
+    overrides: OverrideStore
+    audit: AuditLog
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -63,4 +67,6 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
             conversations=conversations,
             blobs=blobs,
             api_keys=MongoApiKeyStore(),
+            overrides=MongoOverrideStore(),
+            audit=MongoAuditLog(),
         )
