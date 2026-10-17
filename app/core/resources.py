@@ -20,6 +20,7 @@ from app.kb.vectors import QdrantIndex, VectorIndex
 from app.services.audit import AuditLog, MongoAuditLog
 from app.services.conversations import ConversationService, MongoConversationStore
 from app.services.model_overrides import MongoOverrideStore, OverrideStore
+from app.services.profile import MongoProfileStore, MongoRecordStore, ProfileStore, RecordStore
 from app.storage.blobs import BlobStore
 from app.vector.qdrant import open_qdrant
 
@@ -36,6 +37,8 @@ class Resources:
     audit: AuditLog
     kb: KbStore
     vectors: VectorIndex
+    profile: ProfileStore
+    records: RecordStore
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -75,4 +78,6 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
             audit=MongoAuditLog(),
             kb=MongoKbStore(),
             vectors=QdrantIndex(qdrant),
+            profile=MongoProfileStore(),
+            records=MongoRecordStore(),
         )

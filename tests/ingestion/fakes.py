@@ -151,3 +151,53 @@ class FakeEmbedder:
             dense = [digest[i % len(digest)] / 255 for i in range(DENSE_DIM)]
             result.append(Embedding(dense=dense, sparse_indices=[1, 2], sparse_values=[0.5, 0.5]))
         return result
+
+
+class MemoryProfileStore:
+    def __init__(self) -> None:
+        from app.services.profile import ProfileOut
+
+        self.profile = ProfileOut(
+            availability="not looking",
+            notice_period=None,
+            preferred_roles=[],
+            locations=[],
+            resume_document_id=None,
+            resume_blob=None,
+            updated_at=utcnow(),
+        )
+
+    async def get(self) -> Any:
+        return self.profile
+
+    async def put(self, body: Any, resume_blob: Any) -> Any:
+        self.profile = self.profile.model_copy(
+            update={**body.model_dump(), "resume_blob": resume_blob, "updated_at": utcnow()}
+        )
+        return self.profile
+
+
+class MemoryRecordStore:
+    def __init__(self) -> None:
+        self.rows: dict[str, Any] = {}
+
+    async def list(self, kind: str | None) -> list[Any]:
+        rows = [r for r in self.rows.values() if kind is None or r.kind == kind]
+        return sorted(rows, key=lambda r: r.date, reverse=True)
+
+    async def create(self, body: Any) -> Any:
+        from app.services.profile import RecordOut
+
+        record = RecordOut(id=str(PydanticObjectId()), **body.model_dump())
+        self.rows[record.id] = record
+        return record
+
+    async def update(self, record_id: PydanticObjectId, changes: dict[str, Any]) -> Any:
+        record = self.rows.get(str(record_id))
+        if record is None:
+            return None
+        self.rows[record.id] = record.model_copy(update=changes)
+        return self.rows[record.id]
+
+    async def delete(self, record_id: PydanticObjectId) -> bool:
+        return self.rows.pop(str(record_id), None) is not None

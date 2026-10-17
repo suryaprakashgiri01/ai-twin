@@ -40,7 +40,13 @@ from app.kb.ingestion.jobs import IngestionService, WorkerPool  # noqa: E402
 from app.kb.ingestion.labelling import Labeller  # noqa: E402
 from app.kb.ingestion.pipeline import Pipeline  # noqa: E402
 from app.storage.blobs import BlobStore  # noqa: E402
-from tests.ingestion.fakes import FakeEmbedder, MemoryIndex, MemoryKbStore  # noqa: E402
+from tests.ingestion.fakes import (  # noqa: E402
+    FakeEmbedder,
+    MemoryIndex,
+    MemoryKbStore,
+    MemoryProfileStore,
+    MemoryRecordStore,
+)
 from tests.ingestion.test_chunk_label import SpyClassifier, orchestrator  # noqa: E402
 
 EXAMPLE_DENYLIST = Path(__file__).resolve().parents[2] / "config" / "denylist.example.yaml"
@@ -190,6 +196,8 @@ async def api(harness: Harness) -> AsyncIterator[Api]:
         blobs=harness.blobs,
         kb=harness.store,
         vectors=harness.index,
+        profile=MemoryProfileStore(),
+        records=MemoryRecordStore(),
     )
     app.state.ingestion = Ingestion(service=harness.service, pipeline=harness.pipeline)
     key = (await issue_key(keys, "owner", ["admin"]))[1]
