@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 from app.kb.retrieval.retriever import Hit
 from llm_orchestrator import Tier
@@ -34,6 +34,12 @@ class Source(BaseModel):
     @field_serializer("tier")
     def _tier_label(self, tier: Tier) -> str:
         return tier.label
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def _parse_tier(cls, value: object) -> Tier:
+        # Serialised sources (the answer cache) carry the label, not the number.
+        return Tier.parse(value)
 
 
 class ContextChunk(BaseModel):

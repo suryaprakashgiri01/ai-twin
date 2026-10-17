@@ -32,6 +32,15 @@ def rate_global_key(day: str) -> str:
     return f"rl:global:{day}"
 
 
+# Bumped on every publish and unpublish, so cached public answers from before go stale.
+KB_PUBLIC_VERSION_KEY = "kb_public_version"
+
+
+def answer_cache_key(version: int, question_hash: str) -> str:
+    """One guarded public answer, for a normalised question at one `kb_public_version`."""
+    return f"ac:{version}:{question_hash}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

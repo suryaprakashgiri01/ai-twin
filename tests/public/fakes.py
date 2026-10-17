@@ -20,6 +20,7 @@ from app.guardrails.scope import INTENT_LABELS, ProfileTemplates, ScopeRouter
 from app.kb.canaries import new_marker
 from app.kb.retrieval.rerank import FusedOrderReranker
 from app.kb.retrieval.retriever import Hit
+from app.services.answer_cache import AnswerCache
 from app.services.conversations import ConversationService, Turn
 from app.services.owner_chat import ConversationMeta, ConversationSummary
 from app.services.public_chat import PublicChatRequest, PublicChatService
@@ -187,6 +188,7 @@ def make_public(
     guard_scores: list[float | Exception] | None = None,
     searcher: Any = None,
     has_resume: bool = True,
+    cache_ttl: int = 3600,
 ) -> Public:
     factory = Factory({"gen": generator or [ANSWER]})
     orch = orchestrator(
@@ -219,7 +221,12 @@ def make_public(
         ),
         settings=PublicSettings(),
     )
-    service = PublicChatService(build_public_graph(deps), conversations, PublicMemoryIndex(store))
+    service = PublicChatService(
+        build_public_graph(deps),
+        conversations,
+        PublicMemoryIndex(store),
+        AnswerCache(redis, cache_ttl),
+    )
     return Public(
         service,
         factory,

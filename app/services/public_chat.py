@@ -46,6 +46,7 @@ from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
 from app.kb.retrieval.retriever import MongoDocumentFilter
+from app.services.answer_cache import AnswerCache, CachedAnswer
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.owner_chat import ConversationIndex, MongoConversationIndex
 from llm_orchestrator import Tier
@@ -130,6 +131,29 @@ class Outcome:
             tokens=state.get("input_tokens", 0) + state.get("output_tokens", 0),
         )
 
+    @classmethod
+    def from_cache(cls, cached: CachedAnswer, question: str) -> Outcome:
+        return cls(
+            intent=cached.intent,
+            answer=cached.answer,
+            sources=cached.sources,
+            guards={**cached.guards, "cache": "hit"},
+            text=question,
+            model_id=cached.model,
+            cache_hit=True,
+        )
+
+
+def cacheable(state: dict[str, Any]) -> bool:
+    """Guarded answers only: passed the output guard with grounding checked, or the fixed
+    no-context reply. Refusals cost nothing to repeat and are never cached."""
+    if state.get("intent") != "about_owner":
+        return False
+    guard = state.get("output_guard")
+    if guard is None:
+        return bool(state.get("answer") == prompts.NO_CONTEXT)
+    return bool(guard["passed"]) and guard["grounding"] in ("supported", "skipped")
+
 
 class PublicChatService:
     def __init__(
@@ -137,10 +161,12 @@ class PublicChatService:
         graph: PublicGraph,
         conversations: ConversationService,
         index: ConversationIndex,
+        cache: AnswerCache | None = None,
     ) -> None:
         self._graph = graph
         self._conversations = conversations
         self._index = index
+        self._cache = cache
 
     async def prepare(self, request: PublicChatRequest, visitor: Visitor) -> PublicPrepared:
         """Everything that can fail with a plain error response, before any event is sent."""
@@ -169,20 +195,17 @@ class PublicChatService:
         """The event stream; the decided outcome is also appended to `decided`."""
         started = time.perf_counter()
         try:
-            state: dict[str, Any] = dict(
-                initial_state(
-                    conversation_id=prepared.conversation_id,
-                    question=prepared.request.message,
-                    history=prepared.history,
-                    visitor_hash=prepared.visitor.hash,
-                )
-            )
-            async for item in self._graph.astream(cast(Any, state), stream_mode="updates"):
-                for node, update in cast(dict[str, Any], item).items():
-                    state.update(update or {})
-                    if node == "scope" or (node == "input_guard" and "intent" in (update or {})):
-                        yield "meta", self._meta(prepared, state["intent"])
-            outcome = Outcome.from_state(state)
+            version, cached = await self._lookup(prepared)
+            if cached is not None:
+                yield "meta", self._meta(prepared, cached.intent)
+                outcome = Outcome.from_cache(cached, prepared.request.message)
+            else:
+                state: dict[str, Any] = {}
+                async for event in self._run_graph(prepared, state):
+                    yield event
+                outcome = Outcome.from_state(state)
+                if version is not None and cacheable(state):
+                    await self._store(version, prepared, outcome)
             outcome.latency_ms = round((time.perf_counter() - started) * 1000, 1)
             await self._persist(prepared, outcome)
             decided.append(outcome)
@@ -195,6 +218,41 @@ class PublicChatService:
             return
         for event in self._deliver(prepared, outcome):
             yield event
+
+    async def _run_graph(
+        self, prepared: PublicPrepared, state: dict[str, Any]
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        """Run the graph into `state`, announcing the intent as soon as it is known."""
+        state.update(
+            initial_state(
+                conversation_id=prepared.conversation_id,
+                question=prepared.request.message,
+                history=prepared.history,
+                visitor_hash=prepared.visitor.hash,
+            )
+        )
+        async for item in self._graph.astream(cast(Any, dict(state)), stream_mode="updates"):
+            for node, update in cast(dict[str, Any], item).items():
+                state.update(update or {})
+                if node == "scope" or (node == "input_guard" and "intent" in (update or {})):
+                    yield "meta", self._meta(prepared, state["intent"])
+
+    async def _lookup(self, prepared: PublicPrepared) -> tuple[int | None, CachedAnswer | None]:
+        """Only a conversation's first message can be answered from (or stored in) the cache."""
+        if not prepared.single_turn or self._cache is None or not self._cache.enabled:
+            return None, None
+        return await self._cache.lookup(prepared.request.message)
+
+    async def _store(self, version: int, prepared: PublicPrepared, outcome: Outcome) -> None:
+        assert self._cache is not None
+        cached = CachedAnswer(
+            intent=outcome.intent,
+            answer=outcome.answer,
+            sources=outcome.sources,
+            model=outcome.model_id,
+            guards=outcome.guards,
+        )
+        await self._cache.store(version, prepared.request.message, cached)
 
     @staticmethod
     def _meta(prepared: PublicPrepared, intent: str) -> dict[str, Any]:
@@ -250,6 +308,7 @@ class PublicChatService:
                 tokens=outcome.tokens or None,
                 latency_ms=outcome.latency_ms,
                 citations=[s.document_id for s in outcome.sources],
+                cache_hit=outcome.cache_hit,
             ),
         )
         outcome.seq = assistant.seq
@@ -259,6 +318,7 @@ class PublicChatService:
             seq=assistant.seq,
             intent=outcome.intent,
             sources=len(outcome.sources),
+            cache_hit=outcome.cache_hit,
             latency_ms=outcome.latency_ms,
         )
 
@@ -342,5 +402,8 @@ def build_public_chat(
         ),
     )
     return PublicChatService(
-        build_public_graph(deps), resources.conversations, MongoConversationIndex()
+        build_public_graph(deps),
+        resources.conversations,
+        MongoConversationIndex(),
+        AnswerCache(resources.redis, settings.public_answer_cache_ttl_seconds),
     )

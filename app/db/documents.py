@@ -286,6 +286,8 @@ class Message(Document):
     incomplete: bool = False
     # Sources left out because no eligible model could see their tier.
     withheld: int = 0
+    # A public answer served from the answer cache.
+    cache_hit: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime | None = None
 

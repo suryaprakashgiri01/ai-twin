@@ -18,6 +18,7 @@ from app.db.documents import Tier as TierName
 from app.exceptions import AppError, ErrorCode
 from app.kb.publishing import Publisher
 from app.kb.store import DocumentView
+from app.services.answer_cache import bump_public_version
 from app.services.audit import AuditLog
 
 router = APIRouter(tags=["admin: review"])
@@ -95,7 +96,12 @@ def _publisher(request: Request) -> Publisher:
     if ingestion is None:
         raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Ingestion is not running")
     resources = request.app.state.resources
-    return Publisher(store=resources.kb, vectors=resources.vectors, pipeline=ingestion.pipeline)
+    return Publisher(
+        store=resources.kb,
+        vectors=resources.vectors,
+        pipeline=ingestion.pipeline,
+        on_public_change=lambda: bump_public_version(resources.redis),
+    )
 
 
 async def _audit(

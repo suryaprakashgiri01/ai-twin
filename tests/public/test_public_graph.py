@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import httpx
 import pytest
+from fakeredis import FakeAsyncRedis
 from pydantic import SecretStr
 from qdrant_client import AsyncQdrantClient
 
@@ -88,7 +89,9 @@ async def test_retriever_factory_fixes_the_collection_list(
 
     monkeypatch.setattr(public_graph, "Retriever", Recorder)
     settings = Settings(_env_file=None, app_env="test", llm_mock_enabled=True)
-    resources = SimpleNamespace(qdrant=object(), profile=object(), conversations=object())
+    resources = SimpleNamespace(
+        qdrant=object(), profile=object(), conversations=object(), redis=FakeAsyncRedis()
+    )
     build_public_chat(settings, cast(Resources, resources), build_llm(settings), MapEmbedder())
     assert len(built) == 1
     assert dict(built[0]["collections"]) == {"kb_public": Tier.PUBLIC}
@@ -266,7 +269,7 @@ async def test_chat_route_streams_and_answers_json() -> None:
             await client.post("/v1/chat?stream=false", json={"message": Q}, headers=headers)
         ).json()
         assert body["answer"] == ANSWER and body["citations"] == ["pub1"]
-        assert body["intent"] == "about_owner" and body["cache_hit"] is False
+        assert body["intent"] == "about_owner" and body["cache_hit"] is True  # same question
         missing = await client.post(
             "/v1/chat", json={"message": Q, "conversation_id": "e" * 32}, headers=headers
         )

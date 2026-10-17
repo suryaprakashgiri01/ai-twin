@@ -62,6 +62,8 @@ class Turn(BaseModel):
     citations: list[str] = Field(default_factory=list)
     incomplete: bool = False
     withheld: int = 0
+    # Public answers served from the answer cache.
+    cache_hit: bool = False
     created_at: datetime = Field(default_factory=lambda: _to_millis(utcnow()))
 
     @field_validator("created_at")

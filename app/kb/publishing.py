@@ -7,6 +7,7 @@ matching collection and resets approval, since approval was given at the old tie
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,6 +33,13 @@ class Publisher:
     store: KbStore
     vectors: VectorIndex
     pipeline: Pipeline
+    # Runs after kb_public changed (publish, unpublish, a published document edited or deleted):
+    # the app bumps `kb_public_version` so cached public answers go stale.
+    on_public_change: Callable[[], Awaitable[object]] | None = None
+
+    async def _public_changed(self) -> None:
+        if self.on_public_change is not None:
+            await self.on_public_change()
 
     async def get(self, document_id: PydanticObjectId) -> DocumentView:
         doc = await self.store.get_document(document_id)
@@ -65,6 +73,7 @@ class Publisher:
         await self.vectors.set_payload(source, str(doc.id), {"published": True})
         await self.store.update_chunks(doc.id, published=True)
         await self.store.update_document(doc.id, published=True, published_at=utcnow())
+        await self._public_changed()
         return await self.get(doc.id), len(points)
 
     async def unpublish(self, document_id: PydanticObjectId) -> DocumentView:
@@ -80,6 +89,7 @@ class Publisher:
             )
         await self.store.update_chunks(doc.id, published=False)
         await self.store.update_document(doc.id, published=False, published_at=None)
+        await self._public_changed()
 
     async def update(self, document_id: PydanticObjectId, changes: dict[str, Any]) -> DocumentView:
         doc = await self.get(document_id)
@@ -90,6 +100,8 @@ class Publisher:
             if payload and doc.tier != "restricted":
                 for collection in {collection_for(doc.tier), PUBLIC_COLLECTION}:
                     await self.vectors.set_payload(collection, str(doc.id), payload)
+                if doc.published:
+                    await self._public_changed()
         if tier is not None and tier != doc.tier:
             await self._relabel(await self.get(doc.id), tier)
         return await self.get(doc.id)
@@ -187,3 +199,5 @@ class Publisher:
         await self.store.update_document(
             doc.id, deleted_at=utcnow(), published=False, published_at=None
         )
+        if doc.published:
+            await self._public_changed()
