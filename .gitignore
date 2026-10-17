@@ -25,3 +25,9 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Local-only: personal vault data, dev notes, generated code graph, personal Claude settings
+vault/
+dev-notes/
+graphify-out/
+.claude/settings.local.json
