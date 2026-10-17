@@ -6,6 +6,7 @@
 #   ./scripts/dev.ps1 models --embeddings
 #   ./scripts/dev.ps1 ollama start   (status | install | start | stop | pull [model] | smoke)
 #   ./scripts/dev.ps1 import vault/exports/<archive>.atv --apply
+#   ./scripts/dev.ps1 seed --apply            (remove: seed --remove --apply)
 param(
     [Parameter(Position = 0)][string]$Command = "help",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
@@ -13,15 +14,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed")
 
 switch ($Command) {
     "help" {
         Write-Host "Commands: $($scripts -join ', '), run, test"
     }
     "run" {
-        $env:RELOAD = "true"
-        uv run python -m app.main
+        uv run python -m app.main --reload
     }
     "test" {
         uv run pytest @Rest

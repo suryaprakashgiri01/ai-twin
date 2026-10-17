@@ -67,8 +67,39 @@ def read_env(path: Path = ENV_FILE) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip()
+        values[key.strip()] = unquote(value.strip())
     return values
+
+
+def unquote(value: str) -> str:
+    """`"docker compose"` → `docker compose`, as docker compose and pydantic-settings read it."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def resolve(argv: Sequence[str]) -> list[str] | None:
+    """`argv` with its program replaced by the full path `shutil.which` finds, or None.
+
+    Windows `CreateProcess` only appends `.exe` to a bare name, so `.cmd` / `.bat` shims (and
+    anything missing) fail with WinError 2. `shutil.which` honours `PATHEXT`.
+    """
+    program = shutil.which(argv[0]) if argv else None
+    if program and os.name == "nt" and not _windows_executable(program):
+        # Docker Desktop ships an extensionless `docker` shell script beside docker.exe; some
+        # Python 3.12 releases return it, and CreateProcess cannot start it.
+        program = None
+    return [program, *argv[1:]] if program else None
+
+
+def _windows_executable(path: str) -> bool:
+    exts = (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").upper().split(";")
+    return os.path.splitext(path)[1].upper() in exts
+
+
+def _resolved(argv: Sequence[str]) -> list[str]:
+    # Unresolvable programs keep their name so the OS error still names what is missing.
+    return resolve(argv) or list(argv)
 
 
 def run(
@@ -79,14 +110,25 @@ def run(
     env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command without a shell, so quoting behaves the same on every OS."""
-    return subprocess.run(
-        list(argv),
-        check=check,
-        text=True,
-        capture_output=capture,
-        cwd=ROOT,
-        env={**os.environ, **(env or {})},
-    )
+    try:
+        return subprocess.run(
+            _resolved(argv),
+            check=check,
+            text=True,
+            capture_output=capture,
+            cwd=ROOT,
+            env={**os.environ, **(env or {})},
+        )
+    except FileNotFoundError:
+        missing(argv[0])
+        raise SystemExit(127) from None
+
+
+def missing(program: str) -> None:
+    """Name the program Windows could not start (WinError 2) instead of a bare traceback."""
+    fail(f"Could not start '{program}': it is not on PATH.")
+    print(f"  Check: where.exe {program}   (macOS: command -v {program})")
+    print(f"  For docker / podman, also check {COMPOSE_OVERRIDE_KEY} in .env.")
 
 
 def _works(argv: Sequence[str]) -> bool:
@@ -94,7 +136,7 @@ def _works(argv: Sequence[str]) -> bool:
         return False
     try:
         result = subprocess.run(
-            [*argv, "version"], capture_output=True, text=True, timeout=15, check=False
+            _resolved([*argv, "version"]), capture_output=True, text=True, timeout=15, check=False
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -123,7 +165,7 @@ def podman_docker_host() -> str | None:
     if os.environ.get("DOCKER_HOST") or shutil.which("docker") or not shutil.which("podman"):
         return None
     result = subprocess.run(
-        ["podman", "machine", "inspect"], capture_output=True, text=True, check=False
+        _resolved(["podman", "machine", "inspect"]), capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
         return None
@@ -145,6 +187,9 @@ def compose_env(prefix: Sequence[str]) -> dict[str, str]:
 
 def require_compose() -> tuple[str, ...]:
     prefix = detect_compose()
+    if prefix is not None and resolve(prefix) is None:
+        fail(f"'{prefix[0]}' is not on PATH (from {COMPOSE_OVERRIDE_KEY} or detection).")
+        prefix = None
     if prefix is None:
         fail("No working Compose implementation found.")
         print(
@@ -184,14 +229,18 @@ def compose_exec_binary(
 ) -> None:
     """`compose exec -T` with raw byte streams (dumps and restores), no shell on the host."""
     prefix = require_compose()
-    subprocess.run(
-        [*_compose_argv(prefix), "exec", "-T", service, *command],
-        check=True,
-        stdin=stdin,
-        stdout=stdout,
-        cwd=ROOT,
-        env={**os.environ, **compose_env(prefix)},
-    )
+    try:
+        subprocess.run(
+            _resolved([*_compose_argv(prefix), "exec", "-T", service, *command]),
+            check=True,
+            stdin=stdin,
+            stdout=stdout,
+            cwd=ROOT,
+            env={**os.environ, **compose_env(prefix)},
+        )
+    except FileNotFoundError:
+        missing(prefix[0])
+        raise SystemExit(127) from None
 
 
 def parse_ps_json(text: str) -> list[dict[str, Any]]:

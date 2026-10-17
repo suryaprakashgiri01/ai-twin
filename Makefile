@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -39,6 +39,9 @@ ollama: ## Native Ollama: ARGS="status" | "install" | "start" | "stop" | "pull [
 keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
 	$(PY) scripts.keys $(ARGS)
 
+seed: ## Fake-persona demo data via the API: dry run; ARGS="--apply" | "--remove --apply"
+	$(PY) scripts.seed $(ARGS)
+
 export: ## Encrypted vault archive under vault/exports/ (prompts for a passphrase)
 	$(PY) scripts.export $(ARGS)
 
@@ -49,7 +52,7 @@ check: ## Quality gate: ruff, mypy strict, pytest + coverage
 	$(PY) scripts.check
 
 run: ## Run the API locally (reload)
-	RELOAD=true $(PY) app.main
+	$(PY) app.main --reload
 
 test: ## Tests only (no coverage gate)
 	uv run pytest $(ARGS)

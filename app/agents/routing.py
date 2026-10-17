@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import calendar
 import re
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
@@ -18,6 +19,7 @@ from app.agents.tools.records import RecordsQuery
 from app.services.profile import RecordKind
 
 Route = Literal["kb_search", "records", "profile", "chat"]
+Guard = Literal["none", "records_rejected", "filters_dropped"]
 
 
 class RouteDecision(BaseModel):
@@ -119,3 +121,39 @@ def heuristic_route(question: str, previous_question: str | None, today: date) -
     if _PROFILE.search(query):
         return RouteDecision(route="profile", query=query)
     return RouteDecision(route="kb_search", query=query)
+
+
+@dataclass(frozen=True)
+class GuardResult:
+    decision: RouteDecision
+    guard: Guard = "none"
+    dropped: tuple[str, ...] = ()
+
+
+def guard_records(
+    decision: RouteDecision, question: str, previous_question: str | None, today: date
+) -> GuardResult:
+    """Check a router model's `records` route against the owner's own words.
+
+    A small router can send a follow-up to `records` with an invented rewrite and filters. The
+    route stands only if the question (a short follow-up folded into the previous question) looks
+    like a records question; otherwise the keyword router decides. On an accepted route, company
+    and stage filters the text never mentions are dropped. The model's rewrite is not trusted here.
+    """
+    if decision.route != "records":
+        return GuardResult(decision)
+    text = standalone(question, previous_question)
+    if not looks_like_records(text):
+        return GuardResult(heuristic_route(question, previous_question, today), "records_rejected")
+    if decision.records is None:
+        return GuardResult(decision)
+    lowered = text.casefold()
+    dropped = tuple(
+        name
+        for name in ("company", "stage")
+        if (value := getattr(decision.records, name)) and value.casefold() not in lowered
+    )
+    if not dropped:
+        return GuardResult(decision)
+    records = decision.records.model_copy(update=dict.fromkeys(dropped))
+    return GuardResult(decision.model_copy(update={"records": records}), "filters_dropped", dropped)

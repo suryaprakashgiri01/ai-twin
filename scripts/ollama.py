@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 import httpx
 import yaml
 
-from scripts._common import ROOT, fail, info, ok, read_env, warn
+from scripts._common import ROOT, fail, info, ok, read_env, run, warn
 
 DEFAULT_URL = "http://127.0.0.1:11434"
 INVENTORY = ROOT / "config" / "models.yaml"
@@ -178,7 +178,7 @@ def cmd_install(system: str | None = None) -> int:
         fail("No supported package manager found. Install from https://ollama.com/download")
         return 1
     info(f"Running: {' '.join(argv)}")
-    return subprocess.run(argv, check=False).returncode
+    return run(argv, check=False).returncode
 
 
 def default_launcher(argv: list[str], env: dict[str, str], log: Path) -> int:
