@@ -1,2 +1,27 @@
-.DS_Store
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Environment - never commit real credentials
 .env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
