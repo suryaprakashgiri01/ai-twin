@@ -71,6 +71,21 @@ def read_env(path: Path = ENV_FILE) -> dict[str, str]:
     return values
 
 
+def resolve(argv: Sequence[str]) -> list[str] | None:
+    """`argv` with its program replaced by the full path `shutil.which` finds, or None.
+
+    Windows `CreateProcess` only appends `.exe` to a bare name, so `.cmd` / `.bat` shims (and
+    anything missing) fail with WinError 2. `shutil.which` honours `PATHEXT`.
+    """
+    program = shutil.which(argv[0]) if argv else None
+    return [program, *argv[1:]] if program else None
+
+
+def _resolved(argv: Sequence[str]) -> list[str]:
+    # Unresolvable programs keep their name so the OS error still names what is missing.
+    return resolve(argv) or list(argv)
+
+
 def run(
     argv: Sequence[str],
     *,
@@ -80,7 +95,7 @@ def run(
 ) -> subprocess.CompletedProcess[str]:
     """Run a command without a shell, so quoting behaves the same on every OS."""
     return subprocess.run(
-        list(argv),
+        _resolved(argv),
         check=check,
         text=True,
         capture_output=capture,
@@ -94,7 +109,7 @@ def _works(argv: Sequence[str]) -> bool:
         return False
     try:
         result = subprocess.run(
-            [*argv, "version"], capture_output=True, text=True, timeout=15, check=False
+            _resolved([*argv, "version"]), capture_output=True, text=True, timeout=15, check=False
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -123,7 +138,7 @@ def podman_docker_host() -> str | None:
     if os.environ.get("DOCKER_HOST") or shutil.which("docker") or not shutil.which("podman"):
         return None
     result = subprocess.run(
-        ["podman", "machine", "inspect"], capture_output=True, text=True, check=False
+        _resolved(["podman", "machine", "inspect"]), capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
         return None
@@ -145,6 +160,9 @@ def compose_env(prefix: Sequence[str]) -> dict[str, str]:
 
 def require_compose() -> tuple[str, ...]:
     prefix = detect_compose()
+    if prefix is not None and resolve(prefix) is None:
+        fail(f"'{prefix[0]}' is not on PATH (from {COMPOSE_OVERRIDE_KEY} or detection).")
+        prefix = None
     if prefix is None:
         fail("No working Compose implementation found.")
         print(
@@ -185,7 +203,7 @@ def compose_exec_binary(
     """`compose exec -T` with raw byte streams (dumps and restores), no shell on the host."""
     prefix = require_compose()
     subprocess.run(
-        [*_compose_argv(prefix), "exec", "-T", service, *command],
+        _resolved([*_compose_argv(prefix), "exec", "-T", service, *command]),
         check=True,
         stdin=stdin,
         stdout=stdout,

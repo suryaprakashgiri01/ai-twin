@@ -141,3 +141,32 @@ def test_no_go_template_braces() -> None:
         if p.is_file() and p.suffix != ".pyc" and "{" * 2 in p.read_text(encoding="utf-8")
     ]
     assert offenders == []
+
+
+def test_resolve_uses_the_path_which_finds(monkeypatch: pytest.MonkeyPatch) -> None:
+    shim = r"C:\Tools\docker-compose.CMD"
+    monkeypatch.setattr("shutil.which", lambda name: shim if name == "docker-compose" else None)
+    assert _common.resolve(["docker-compose", "up", "-d"]) == [shim, "up", "-d"]
+    assert _common.resolve(["podman", "compose"]) is None
+
+
+def test_compose_runs_the_resolved_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    shim = r"C:\Tools\docker-compose.CMD"
+    monkeypatch.setenv(_common.COMPOSE_OVERRIDE_KEY, "docker-compose")
+    monkeypatch.setattr("shutil.which", lambda name: shim if name == "docker-compose" else None)
+    seen: list[list[str]] = []
+    monkeypatch.setattr("subprocess.run", lambda argv, **kw: seen.append(argv))
+    _common.compose("down")
+    assert seen[0][0] == shim and seen[0][-1] == "down"
+
+
+def test_missing_override_binary_fails_with_the_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(_common.COMPOSE_OVERRIDE_KEY, "podman compose")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    with pytest.raises(SystemExit) as exc:
+        _common.require_compose()
+    assert exc.value.code == 1
+    err = capsys.readouterr()
+    assert "'podman' is not on PATH" in err.err and "Docker Desktop" in err.out
