@@ -12,7 +12,7 @@ from scripts._common import fail, info, ok, run
 STEPS: tuple[tuple[str, list[str]], ...] = (
     ("lint", ["uv", "run", "ruff", "check", "."]),
     ("format", ["uv", "run", "ruff", "format", "--check", "."]),
-    ("types", ["uv", "run", "mypy", "app", "scripts", "tests"]),
+    ("types", ["uv", "run", "mypy", "app", "scripts", "tests", "packages/llm-orchestrator/src"]),
     (
         "tests",
         [

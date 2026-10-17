@@ -1,0 +1,108 @@
+# Default model inventory for llm-orchestrator. Overrides (kb-storage, admin) may disable a model,
+# lower its max_tier or reorder a chain; they can never raise max_tier above the value here.
+#
+# Tiers: public < private < confidential < restricted. No model may serve restricted, and a model
+# that may train on inputs is capped at public. Loading this file enforces both.
+#
+# Model ids checked against provider docs on 2026-10-17. A free-tier limit left out was not
+# published on the provider's docs page at that date (it is shown only in the provider console).
+version: 1
+
+models:
+  # --- Groq: inputs not retained for training; primary for every role ---------------------
+  - id: groq-llama-8b
+    provider: groq
+    model: llama-3.1-8b-instant
+    roles: [router, classifier]
+    max_tier: private
+    context_window: 131072
+    trains_on_inputs: false
+    tags: [fast]
+
+  - id: groq-gpt-oss-120b
+    provider: groq
+    model: openai/gpt-oss-120b
+    roles: [generator, judge]
+    max_tier: private
+    context_window: 131072
+    trains_on_inputs: false
+    free_tier: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    tags: [quality]
+
+  # --- Cerebras: inference inputs and outputs not retained; fallback ------------------------
+  - id: cerebras-qwen-27b
+    provider: cerebras
+    model: qwen-3.8-27b
+    roles: [router, classifier]
+    max_tier: private
+    context_window: 64000
+    trains_on_inputs: false
+    free_tier: {rpm: 5, tpm: 30000, tpd: 1000000}
+    tags: [fast]
+
+  - id: cerebras-gpt-oss-120b
+    provider: cerebras
+    model: gpt-oss-120b
+    roles: [generator, judge]
+    max_tier: private
+    context_window: 65536
+    trains_on_inputs: false
+    free_tier: {rpm: 5, tpm: 30000, tpd: 1000000}
+    tags: [quality]
+
+  # --- Gemini free tier: inputs used to improve Google's products, so public only ----------
+  - id: gemini-flash-lite
+    provider: gemini
+    model: gemini-3.5-flash-lite
+    roles: [router, classifier]
+    max_tier: public
+    context_window: 1048576
+    trains_on_inputs: true
+    tags: [fast]
+
+  - id: gemini-flash
+    provider: gemini
+    model: gemini-3.8-flash
+    roles: [generator, judge]
+    max_tier: public
+    context_window: 1048576
+    trains_on_inputs: true
+    tags: [quality]
+
+  # --- OpenRouter :free: upstream providers may log or train, so public only ---------------
+  - id: openrouter-gemma
+    provider: openrouter
+    model: google/gemma-4-31b-it:free
+    roles: [router, classifier, generator, judge]
+    max_tier: public
+    context_window: 262144
+    trains_on_inputs: true
+    free_tier: {rpm: 20, rpd: 50}
+    base_url: https://openrouter.ai/api/v1
+
+  # --- Ollama (local): the only real model allowed confidential text -----------------------
+  # OLLAMA_MODEL replaces `model` when set, so any locally pulled tag can be used.
+  - id: ollama-local
+    provider: ollama
+    model: llama3.2:3b
+    roles: [router, classifier, generator, judge]
+    max_tier: confidential
+    context_window: 131072
+    trains_on_inputs: false
+    tags: [local]
+
+  # --- mock: tests and keyless local runs; available only when LLM_MOCK_ENABLED is true ----
+  - id: mock
+    provider: mock
+    model: mock-echo
+    roles: [router, classifier, generator, judge]
+    max_tier: confidential
+    context_window: 8192
+    trains_on_inputs: false
+    tags: [local]
+
+roles:
+  router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
+  classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
+  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-local, mock]
+  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-local, mock]

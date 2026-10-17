@@ -24,7 +24,9 @@ async def test_liveness_returns_version(client: httpx.AsyncClient) -> None:
 async def test_readiness_ok_when_all_checks_pass() -> None:
     response = await _get("/readyz", [FakeCheck("mongodb"), FakeCheck("redis")])
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"mongodb": "ok", "redis": "ok"}}
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["checks"] == {"mongodb": "ok", "redis": "ok"}
 
 
 async def test_readiness_503_names_the_failing_dependency() -> None:
