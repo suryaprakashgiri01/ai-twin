@@ -67,8 +67,15 @@ def read_env(path: Path = ENV_FILE) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip()
+        values[key.strip()] = unquote(value.strip())
     return values
+
+
+def unquote(value: str) -> str:
+    """`"docker compose"` → `docker compose`, as docker compose and pydantic-settings read it."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
 
 
 def resolve(argv: Sequence[str]) -> list[str] | None:
@@ -78,7 +85,16 @@ def resolve(argv: Sequence[str]) -> list[str] | None:
     anything missing) fail with WinError 2. `shutil.which` honours `PATHEXT`.
     """
     program = shutil.which(argv[0]) if argv else None
+    if program and os.name == "nt" and not _windows_executable(program):
+        # Docker Desktop ships an extensionless `docker` shell script beside docker.exe; some
+        # Python 3.12 releases return it, and CreateProcess cannot start it.
+        program = None
     return [program, *argv[1:]] if program else None
+
+
+def _windows_executable(path: str) -> bool:
+    exts = (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").upper().split(";")
+    return os.path.splitext(path)[1].upper() in exts
 
 
 def _resolved(argv: Sequence[str]) -> list[str]:

@@ -183,3 +183,33 @@ def test_a_program_that_cannot_start_is_named(
         _common.run(["uv", "--version"])
     assert exc.value.code == 127
     assert "Could not start 'uv'" in capsys.readouterr().err
+
+
+def test_quoted_env_values_are_unquoted(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text('AI_TWIN_COMPOSE="docker compose"\nA=\'x\'\nB="half\nC="\n', encoding="utf-8")
+    assert _common.read_env(env) == {
+        "AI_TWIN_COMPOSE": "docker compose",
+        "A": "x",
+        "B": '"half',
+        "C": '"',
+    }
+
+
+def test_quoted_compose_override_from_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Windows report: AI_TWIN_COMPOSE="docker compose" ran a program named `"docker`.
+    monkeypatch.delenv(_common.COMPOSE_OVERRIDE_KEY, raising=False)
+    monkeypatch.setattr(
+        _common, "read_env", lambda *a: {_common.COMPOSE_OVERRIDE_KEY: "docker compose"}
+    )
+    assert _common.detect_compose() == ("docker", "compose")
+
+
+def test_extensionless_windows_match_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = r"C:\Program Files\Docker\Docker\resources\bin\docker"
+    monkeypatch.setattr("shutil.which", lambda name: script)
+    monkeypatch.setattr("os.name", "nt")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    assert _common.resolve(["docker", "compose"]) is None
+    monkeypatch.setattr("shutil.which", lambda name: script + ".exe")
+    assert _common.resolve(["docker", "compose"]) == [script + ".exe", "compose"]
