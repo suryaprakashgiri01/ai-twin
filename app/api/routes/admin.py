@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routes import admin_ingest, admin_meta, admin_models
+from app.api.routes import admin_ingest, admin_meta, admin_models, admin_review
 
 ADMIN_PREFIX = "/admin/v1"
 
@@ -14,4 +14,5 @@ def build_admin_router() -> APIRouter:
     router.include_router(admin_meta.router)
     router.include_router(admin_models.router)
     router.include_router(admin_ingest.router)
+    router.include_router(admin_review.router)
     return router
