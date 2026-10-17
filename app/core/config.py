@@ -64,9 +64,22 @@ class Settings(BaseSettings):
     conversation_cache_turns: int = Field(default=20, gt=0)
     public_conversation_retention_days: int = Field(default=90, gt=0)
 
+    # --- ingestion -------------------------------------------------------------
+    ingest_max_files: int = Field(default=20, gt=0, le=200)
+    ingest_max_file_mb: int = Field(default=25, gt=0, le=500)
+    ingest_workers: int = Field(default=2, ge=1, le=16)
+    url_fetch_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    # Comma-separated `owner/name` list: the only repositories GitHub sync may read.
+    github_sync_repos: str = ""
+    github_token: SecretStr | None = None
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False
+
+
+def ingest_max_bytes(settings: Settings) -> int:
+    return settings.ingest_max_file_mb * 1024 * 1024
 
 
 @lru_cache
