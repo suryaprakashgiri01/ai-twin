@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from app.api.routes import health
 from app.core.config import Settings, get_settings
+from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
 from app.exceptions.handlers import register_exception_handlers
 from app.middleware.request_context import RequestContextMiddleware
@@ -21,6 +22,7 @@ logger = structlog.get_logger(__name__)
 def create_app(
     settings: Settings | None = None,
     health_checks: Sequence[DependencyCheck] | None = None,
+    llm: LLMServices | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(level=settings.log_level, log_format=settings.log_format)
@@ -51,6 +53,7 @@ def create_app(
     app.state.health_checks = list(
         health_checks if health_checks is not None else default_checks(settings)
     )
+    app.state.llm = llm or build_llm(settings)
 
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
