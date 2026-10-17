@@ -82,7 +82,9 @@ class IngestMeta(BaseModel):
     summary: str | None = None
 
 
-class Source(Document):
+class SourceFields(BaseModel):
+    """A submitted source and its ingestion job. Shared by the document and the store views."""
+
     kind: SourceKind
     uri: str | None = None
     filename: str | None = None
@@ -98,6 +100,8 @@ class Source(Document):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
+
+class Source(SourceFields, Document):
     class Settings:
         name = "sources"
         indexes: ClassVar[list[IndexModel]] = [
@@ -110,7 +114,9 @@ class Source(Document):
         ]
 
 
-class KbDocument(Document):
+class KbDocumentFields(BaseModel):
+    """One knowledge-base document: its label, review state and redacted text."""
+
     source_id: PydanticObjectId
     title: str
     category: str
@@ -135,6 +141,8 @@ class KbDocument(Document):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
+
+class KbDocument(KbDocumentFields, Document):
     class Settings:
         name = "documents"
         indexes: ClassVar[list[IndexModel]] = [
@@ -146,7 +154,7 @@ class KbDocument(Document):
         ]
 
 
-class Chunk(Document):
+class ChunkFields(BaseModel):
     document_id: PydanticObjectId
     ordinal: int
     text: str  # redacted before it is stored
@@ -155,6 +163,8 @@ class Chunk(Document):
     canary: bool = False
     published: bool = False
 
+
+class Chunk(ChunkFields, Document):
     class Settings:
         name = "chunks"
         indexes: ClassVar[list[IndexModel]] = [

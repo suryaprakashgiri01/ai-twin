@@ -74,6 +74,14 @@ LABELS: dict[str, str] = {
 QUESTION = "How sensitive is this text about the owner's career and life?"
 
 
+def is_restricted(category: str, tier_hint: str | None) -> bool:
+    """Known before parsing: such a source is kept as a blob plus metadata, never read."""
+    rule = CATEGORY_RULES.get(category, DEFAULT_RULE)
+    return rule.tier >= Tier.RESTRICTED or (
+        tier_hint is not None and Tier.parse(tier_hint) >= Tier.RESTRICTED
+    )
+
+
 def rule_label(item: IngestItem) -> tuple[Tier, str]:
     """The tier the rules give, and why. Pure: no model involved."""
     rule = SOURCE_RULES.get(item.source_kind) or CATEGORY_RULES.get(item.category, DEFAULT_RULE)

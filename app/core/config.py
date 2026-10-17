@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     chunk_target_tokens: int = Field(default=400, ge=50, le=2000)
     chunk_overlap_tokens: int = Field(default=60, ge=0, le=500)
     url_fetch_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    # Local model files (spaCy, fastembed); excluded from vault export.
+    models_dir: Path = Path("vault/models")
+    # Owner-maintained, git-ignored employer denylist (see config/denylist.example.yaml).
+    denylist_path: Path = Path("vault/config/denylist.yaml")
+    # Comma-separated strings redaction keeps: the owner's published e-mail, phone, name.
+    public_contact_allowlist: str = ""
     # Comma-separated `owner/name` list: the only repositories GitHub sync may read.
     github_sync_repos: str = ""
     github_token: SecretStr | None = None
@@ -82,6 +88,10 @@ class Settings(BaseSettings):
 
 def ingest_max_bytes(settings: Settings) -> int:
     return settings.ingest_max_file_mb * 1024 * 1024
+
+
+def split_list(raw: str) -> list[str]:
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 @lru_cache

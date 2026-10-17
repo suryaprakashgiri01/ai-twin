@@ -101,6 +101,8 @@ markers = [
 filterwarnings = [
     # pymupdf's SWIG bindings, raised at import on Python 3.12.
     "ignore:builtin type (SwigPy|swig).* has no __module__ attribute:DeprecationWarning",
+    # qdrant-client local mode (unit tests) ignores payload indexes; the server honours them.
+    "ignore:Payload indexes have no effect in the local Qdrant:UserWarning",
 ]
 
 [tool.coverage.run]
