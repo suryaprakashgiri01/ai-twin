@@ -20,8 +20,8 @@ Status: draft · Owner: Surya Prakash Giri · Ticket: none (personal repo; `task
 2. `python -m app.main --reload` turns on reload. `make run` and `./scripts/dev.ps1 run` pass the flag instead
    of setting an environment variable. `RELOAD=true` in `.env` keeps working.
 3. `python -m scripts.seed` (`make seed`, `./scripts/dev.ps1 seed`) creates the fake persona (Kavya Testpal)
-   through the running API: a private project note, a confidential Globex Labs offer note, a profile, and a
-   handful of application and interview records. It issues a temporary admin key directly in MongoDB and
+   through the running API: a private project note, a confidential Globex Labs offer note and a handful of
+   application and interview records; the profile only with `--with-profile`, since that replaces the owner's. It issues a temporary admin key directly in MongoDB and
    revokes it when done. It is a dry run unless given `--apply`.
 4. `python -m scripts.seed --remove --apply` deletes exactly what the seed created, read from a manifest in
    `vault/seed.json`; real documents and records are never touched. Records are also matched by a fixed marker
