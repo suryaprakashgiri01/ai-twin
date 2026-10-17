@@ -188,3 +188,21 @@ def test_main_reports_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ollama.main(["smoke"]) == 1
     monkeypatch.setattr(ollama, "read_env", lambda: {"OLLAMA_MODEL": "m"})
     assert ollama.main(["status"], transport=api_handler({"up": False, "pulled": []})) == 1
+
+
+def test_doctor_reports_ollama() -> None:
+    from scripts import doctor
+
+    assert doctor.check_ollama({})[0].level == "ok"
+    remote = doctor.check_ollama({"OLLAMA_BASE_URL": "http://10.0.0.5:11434", "OLLAMA_MODEL": "m"})
+    assert remote[0].level == "fail"
+    env = {"OLLAMA_BASE_URL": "http://127.0.0.1:11434", "OLLAMA_MODEL": "llama3.2:1b"}
+    state: dict[str, Any] = {"up": False, "pulled": []}
+    api = ollama.Api(ollama.target(env), api_handler(state))
+    down = doctor.check_ollama(env, api)[0]
+    assert down.level == "warn" and "start" in down.message
+    state["up"] = True
+    missing = doctor.check_ollama(env, api)[0]
+    assert missing.level == "warn" and "pull" in missing.message
+    state["pulled"].append("llama3.2:1b")
+    assert doctor.check_ollama(env, api)[0].level == "ok"
