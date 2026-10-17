@@ -143,3 +143,56 @@ async def harness(tmp_path: Path, blank_detector: PresidioDetector) -> AsyncIter
         store, index, blobs, embedder, classifier, ocr, pipeline, IngestionService(store, pool)
     )
     await pool.stop()
+
+
+# --- app with fakes -----------------------------------------------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from fastapi import FastAPI  # noqa: E402
+
+from app.auth.keys import issue_key  # noqa: E402
+from app.core.app_factory import create_app  # noqa: E402
+from app.core.config import Settings  # noqa: E402
+from app.kb.ingestion.runtime import Ingestion  # noqa: E402
+from tests.conftest import FakeCheck  # noqa: E402
+from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore  # noqa: E402
+
+
+@dataclass
+class Api:
+    client: httpx.AsyncClient
+    app: FastAPI
+    headers: dict[str, str]
+    audit: MemoryAuditLog
+    h: Harness
+
+    async def wait(self) -> None:
+        await self.h.service.pool.join()
+
+
+@pytest.fixture
+async def api(harness: Harness) -> AsyncIterator[Api]:
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        log_format="json",
+        ingest_max_files=3,
+        ingest_max_file_mb=1,
+        github_sync_repos=REPO,
+    )
+    app = create_app(settings, health_checks=[FakeCheck("mongodb")])
+    keys, audit = MemoryApiKeyStore(), MemoryAuditLog()
+    app.state.resources = SimpleNamespace(
+        api_keys=keys,
+        audit=audit,
+        overrides=MemoryOverrideStore(),
+        blobs=harness.blobs,
+        kb=harness.store,
+        vectors=harness.index,
+    )
+    app.state.ingestion = Ingestion(service=harness.service, pipeline=harness.pipeline)
+    key = (await issue_key(keys, "owner", ["admin"]))[1]
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield Api(client, app, {"X-API-Key": key}, audit, harness)

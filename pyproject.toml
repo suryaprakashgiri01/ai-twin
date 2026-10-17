@@ -10,15 +10,16 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "structlog>=24.1",
-    "colorama>=0.4; sys_platform == 'win32'",   # coloured console logs on Windows terminals
+    "colorama>=0.4; sys_platform == 'win32'", # coloured console logs on Windows terminals
     "httpx>=0.27",
-    "pymongo>=4.13",                            # PyMongo Async API (AsyncMongoClient)
-    "beanie>=2.0",                              # ODM on the PyMongo Async API (Motor is deprecated)
-    "redis>=5.2",                               # works against Valkey too
+    "pymongo>=4.13", # PyMongo Async API (AsyncMongoClient)
+    "beanie>=2.0", # ODM on the PyMongo Async API (Motor is deprecated)
+    "redis>=5.2", # works against Valkey too
     "qdrant-client>=1.15",
-    "cryptography>=44",                         # Fernet: blob store and vault archives
-    "opentelemetry-api>=1.34,<2",               # trace ids on log lines; exporters come later
-    "llm-orchestrator",                         # workspace member: packages/llm-orchestrator
+    "cryptography>=44", # Fernet: blob store and vault archives
+    "opentelemetry-api>=1.34,<2", # trace ids on log lines; exporters come later
+    "llm-orchestrator", # workspace member: packages/llm-orchestrator
+    "python-multipart>=0.0.20",
 ]
 
 [tool.uv.workspace]
