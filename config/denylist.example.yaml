@@ -1,0 +1,16 @@
+# Employer guard denylist: an EXAMPLE with obviously fake patterns. The real file lives at
+# vault/config/denylist.yaml (git-ignored) and must never be committed.
+#   macOS:    mkdir -p vault/config && cp config/denylist.example.yaml vault/config/denylist.yaml
+#   Windows:  New-Item -ItemType Directory -Force vault/config; Copy-Item config/denylist.example.yaml vault/config/denylist.yaml
+#
+# Each rule has a unique `name` and exactly one of:
+#   regex: a Python regular expression (matched case-insensitively)
+#   terms: literal strings, matched case-insensitively as whole words
+# A match quarantines the document; only the rule name is ever stored or logged.
+rules:
+  - name: internal-domain
+    regex: '\b[\w.-]*\.example-corp\.test\b'
+  - name: ticket-keys
+    regex: '\b(?:FAKEPROJ|DEMOTEAM)-\d+\b'
+  - name: internal-services
+    terms: [bluebird-gateway, orca-billing-svc]

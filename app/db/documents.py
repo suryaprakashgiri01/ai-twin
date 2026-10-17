@@ -19,7 +19,12 @@ Tier = Literal["public", "private", "confidential", "restricted"]
 Channel = Literal["public", "owner"]
 Role = Literal["user", "assistant", "system", "tool"]
 SourceKind = Literal["text", "file", "url", "github", "linkedin_export"]
-ReviewStatus = Literal["pending", "approved", "rejected"]
+ReviewStatus = Literal["pending", "approved", "rejected", "quarantined"]
+# An ingestion job moves left to right; the last three are terminal.
+JobStatus = Literal[
+    "queued", "parsing", "redacting", "labelling", "embedding", "done", "quarantined", "failed"
+]
+TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "quarantined", "failed"})
 Scope = Literal["admin", "public:read", "leads:write"]
 
 
@@ -66,15 +71,37 @@ class ApiKey(Document):
         ]
 
 
-class Source(Document):
+class IngestMeta(BaseModel):
+    """What the owner said about a source when submitting it; applied to its documents."""
+
+    title: str | None = None
+    category: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    occurred_at: datetime | None = None
+    tier_hint: Tier | None = None
+    summary: str | None = None
+
+
+class SourceFields(BaseModel):
+    """A submitted source and its ingestion job. Shared by the document and the store views."""
+
     kind: SourceKind
     uri: str | None = None
     filename: str | None = None
     checksum: str
     blob: BlobRef | None = None
-    status: str = "new"
+    meta: IngestMeta = Field(default_factory=IngestMeta)
+    status: JobStatus = "queued"
+    # A code and a fixed message only: never document content.
+    error_code: str | None = None
+    error_message: str | None = None
+    attempts: int = 0
+    document_ids: list[PydanticObjectId] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
+
+class Source(SourceFields, Document):
     class Settings:
         name = "sources"
         indexes: ClassVar[list[IndexModel]] = [
@@ -82,11 +109,14 @@ class Source(Document):
                 [("checksum", ASCENDING), ("kind", ASCENDING)],
                 name="checksum_kind_unique",
                 unique=True,
-            )
+            ),
+            IndexModel([("status", ASCENDING)], name="status"),
         ]
 
 
-class KbDocument(Document):
+class KbDocumentFields(BaseModel):
+    """One knowledge-base document: its label, review state and redacted text."""
+
     source_id: PydanticObjectId
     title: str
     category: str
@@ -98,20 +128,33 @@ class KbDocument(Document):
     # Default deny: nothing is public until the owner approves it.
     published: bool = False
     published_at: datetime | None = None
+    approved_at: datetime | None = None
     occurred_at: datetime | None = None
     deleted_at: datetime | None = None
+    # Redacted Markdown, shown in review. None for restricted documents (metadata only).
+    text: str | None = None
+    summary: str | None = None
+    # Denylist rule names that matched (never the matched text).
+    quarantine_rules: list[str] = Field(default_factory=list)
+    # Placeholder type -> count; values are never stored.
+    redaction_report: dict[str, int] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
+
+class KbDocument(KbDocumentFields, Document):
     class Settings:
         name = "documents"
         indexes: ClassVar[list[IndexModel]] = [
             IndexModel([("review_status", ASCENDING)], name="review_status"),
+            IndexModel([("source_id", ASCENDING)], name="source_id"),
             IndexModel([("tier", ASCENDING)], name="tier"),
             IndexModel([("published", ASCENDING)], name="published"),
             IndexModel([("title", TEXT)], name="title_text"),
         ]
 
 
-class Chunk(Document):
+class ChunkFields(BaseModel):
     document_id: PydanticObjectId
     ordinal: int
     text: str  # redacted before it is stored
@@ -120,6 +163,8 @@ class Chunk(Document):
     canary: bool = False
     published: bool = False
 
+
+class Chunk(ChunkFields, Document):
     class Settings:
         name = "chunks"
         indexes: ClassVar[list[IndexModel]] = [
@@ -128,6 +173,24 @@ class Chunk(Document):
                 name="document_ordinal_unique",
                 unique=True,
             )
+        ]
+
+
+class Canary(Document):
+    """A random marker planted in one chunk of a private or confidential document.
+
+    The public output guard treats any marker seen in a public answer as a critical incident.
+    """
+
+    document_id: PydanticObjectId
+    marker: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "canaries"
+        indexes: ClassVar[list[IndexModel]] = [
+            IndexModel([("marker", ASCENDING)], name="marker_unique", unique=True),
+            IndexModel([("document_id", ASCENDING)], name="document_id"),
         ]
 
 
@@ -158,6 +221,7 @@ class Profile(Document):
     preferred_roles: list[str] = Field(default_factory=list)
     locations: list[str] = Field(default_factory=list)
     resume_blob: BlobRef | None = None
+    resume_document_id: PydanticObjectId | None = None
     updated_at: datetime = Field(default_factory=utcnow)
 
     class Settings:
@@ -287,6 +351,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     Source,
     KbDocument,
     Chunk,
+    Canary,
     Record,
     Profile,
     Lead,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
@@ -13,10 +13,12 @@ from app.api.routes.admin import build_admin_router
 from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
-from app.core.resources import ResourcesFactory, open_resources
+from app.core.resources import Resources, ResourcesFactory, open_resources
 from app.exceptions.handlers import register_exception_handlers
+from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
+from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 
 logger = structlog.get_logger(__name__)
 
@@ -33,8 +35,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        async with open_storage(settings) as resources:
+        async with open_storage(settings) as resources, AsyncExitStack() as stack:
             app.state.resources = resources
+            # Ingestion workers run in the vault only; tests may hand in stand-in resources.
+            if settings.deployment_profile == "vault" and isinstance(resources, Resources):
+                ingestion = build_ingestion(settings, resources, app.state.llm)
+                app.state.ingestion = await stack.enter_async_context(run_ingestion(ingestion))
             logger.info(
                 "service started",
                 env=settings.app_env,
@@ -59,7 +65,7 @@ def create_app(
     app.state.health_checks = list(
         health_checks if health_checks is not None else default_checks(settings)
     )
-    app.state.llm = llm or build_llm(settings)
+    app.state.llm = llm or build_llm(settings, OrchestratorOverrides(lambda: _overrides(app)))
 
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
@@ -68,3 +74,8 @@ def create_app(
     if settings.deployment_profile == "vault":
         app.include_router(build_admin_router())
     return app
+
+
+def _overrides(app: FastAPI) -> OverrideStore | None:
+    resources = getattr(app.state, "resources", None)
+    return getattr(resources, "overrides", None)

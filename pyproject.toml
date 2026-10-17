@@ -10,15 +10,16 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "structlog>=24.1",
-    "colorama>=0.4; sys_platform == 'win32'",   # coloured console logs on Windows terminals
+    "colorama>=0.4; sys_platform == 'win32'", # coloured console logs on Windows terminals
     "httpx>=0.27",
-    "pymongo>=4.13",                            # PyMongo Async API (AsyncMongoClient)
-    "beanie>=2.0",                              # ODM on the PyMongo Async API (Motor is deprecated)
-    "redis>=5.2",                               # works against Valkey too
+    "pymongo>=4.13", # PyMongo Async API (AsyncMongoClient)
+    "beanie>=2.0", # ODM on the PyMongo Async API (Motor is deprecated)
+    "redis>=5.2", # works against Valkey too
     "qdrant-client>=1.15",
-    "cryptography>=44",                         # Fernet: blob store and vault archives
-    "opentelemetry-api>=1.34,<2",               # trace ids on log lines; exporters come later
-    "llm-orchestrator",                         # workspace member: packages/llm-orchestrator
+    "cryptography>=44", # Fernet: blob store and vault archives
+    "opentelemetry-api>=1.34,<2", # trace ids on log lines; exporters come later
+    "llm-orchestrator", # workspace member: packages/llm-orchestrator
+    "python-multipart>=0.0.20",
 ]
 
 [tool.uv.workspace]
@@ -37,6 +38,15 @@ dev = [
     "pre-commit>=4.0",
     "types-pyyaml>=6.0",
     "fakeredis>=2.26",
+]
+vault = [
+    "fastembed>=0.6",
+    "markitdown[docx,pptx,xlsx]>=0.1",
+    "onnxruntime>=1.20",
+    "presidio-analyzer>=2.2",
+    "pymupdf4llm>=0.0.17",
+    "rapidocr>=3.0",
+    "spacy>=3.8",
 ]
 
 [build-system]
@@ -68,13 +78,32 @@ show_error_codes = true
 module = ["tests.*"]
 disallow_untyped_defs = false
 
+# Vault-only libraries without type information; each is wrapped behind a small typed module.
+[[tool.mypy.overrides]]
+module = [
+    "pymupdf", "pymupdf.*", "pymupdf4llm", "markitdown", "rapidocr", "openpyxl", "pptx",
+    "presidio_analyzer", "presidio_analyzer.*", "spacy", "spacy.*", "fastembed", "fastembed.*",
+]
+ignore_missing_imports = true
+
+# pymupdf ships partial annotations; calls into it are untyped.
+[[tool.mypy.overrides]]
+module = ["app.kb.ingestion.parsers.pdf", "tests.ingestion.*"]
+disallow_untyped_calls = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
-    "integration: needs the compose stack (deselect with -m 'not integration')",
+    "integration: needs the compose stack or downloaded local models (deselect with -m 'not integration')",
+]
+filterwarnings = [
+    # pymupdf's SWIG bindings, raised at import on Python 3.12.
+    "ignore:builtin type (SwigPy|swig).* has no __module__ attribute:DeprecationWarning",
+    # qdrant-client local mode (unit tests) ignores payload indexes; the server honours them.
+    "ignore:Payload indexes have no effect in the local Qdrant:UserWarning",
 ]
 
 [tool.coverage.run]

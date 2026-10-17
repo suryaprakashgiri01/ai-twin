@@ -12,6 +12,7 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
+from scripts import models
 from scripts._common import (
     ENV_EXAMPLE,
     ENV_FILE,
@@ -90,6 +91,28 @@ def check_env(env: dict[str, str], example: dict[str, str]) -> list[Finding]:
     return findings
 
 
+def check_ingestion_deps(env: dict[str, str]) -> list[Finding]:
+    """The vault dependency group and the spaCy model; missing ones only block ingestion."""
+    findings: list[Finding] = []
+    try:
+        import presidio_analyzer  # noqa: F401
+        import spacy  # noqa: F401
+    except ImportError:
+        findings.append(Finding("warn", "vault dependencies missing; run: uv sync --all-groups"))
+    base = models.models_dir(env)
+    if models.spacy_ready(base):
+        findings.append(Finding("ok", f"spaCy {models.SPACY_MODEL} present"))
+    else:
+        findings.append(
+            Finding(
+                "warn",
+                f"spaCy {models.SPACY_MODEL} missing (ingestion cannot redact); "
+                "run: uv run python -m scripts.models",
+            )
+        )
+    return findings
+
+
 def port_free(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.3)
@@ -119,6 +142,7 @@ def collect() -> list[Finding]:
         else False
     )
     findings += check_ports(env, running)
+    findings += check_ingestion_deps(env)
     return findings
 
 

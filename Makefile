@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor up down status logs cleanup check run test keys export import
+.PHONY: help setup doctor models up down status logs cleanup check run test keys export import
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -14,6 +14,9 @@ setup: ## First-time setup: .env, deps, git hooks, stack
 
 doctor: ## Check tools, compose runtime, .env and ports
 	$(PY) scripts.doctor $(ARGS)
+
+models: ## Download local models (spaCy; ARGS="--embeddings" adds fastembed)
+	$(PY) scripts.models $(ARGS)
 
 up: ## Start the local stack and wait for health
 	$(PY) scripts.up $(ARGS)
