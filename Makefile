@@ -46,7 +46,7 @@ check: ## Quality gate: ruff, mypy strict, pytest + coverage
 	$(PY) scripts.check
 
 run: ## Run the API locally (reload)
-	RELOAD=true $(PY) app.main
+	$(PY) app.main --reload
 
 test: ## Tests only (no coverage gate)
 	uv run pytest $(ARGS)

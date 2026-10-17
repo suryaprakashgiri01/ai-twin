@@ -19,8 +19,7 @@ switch ($Command) {
         Write-Host "Commands: $($scripts -join ', '), run, test"
     }
     "run" {
-        $env:RELOAD = "true"
-        uv run python -m app.main
+        uv run python -m app.main --reload
     }
     "test" {
         uv run pytest @Rest
