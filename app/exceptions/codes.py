@@ -15,6 +15,10 @@ class ErrorCode(StrEnum):
     PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
     RATE_LIMITED = "RATE_LIMITED"
     DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+    # No model may serve the request, or every eligible model failed before answering.
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    # A model failed after it had started streaming; the partial answer is kept.
+    STREAM_INTERRUPTED = "STREAM_INTERRUPTED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
@@ -28,6 +32,8 @@ STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.PAYLOAD_TOO_LARGE: 413,
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.DEPENDENCY_UNAVAILABLE: 503,
+    ErrorCode.MODEL_UNAVAILABLE: 503,
+    ErrorCode.STREAM_INTERRUPTED: 502,
     ErrorCode.INTERNAL_ERROR: 500,
 }
 

@@ -3,8 +3,9 @@
 - spaCy `en_core_web_md` (redaction NER): the release wheel is downloaded once, checked against
   its pinned SHA-256 and unpacked into `<MODELS_DIR>/spacy/en_core_web_md`. It lives outside the
   virtualenv, so `uv sync` never removes it.
-- fastembed `BAAI/bge-small-en-v1.5` and `Qdrant/bm25` (with `--embeddings`): warmed into
-  `<MODELS_DIR>/fastembed`; the app also fetches them on first use.
+- fastembed `BAAI/bge-small-en-v1.5`, `Qdrant/bm25` and the `Xenova/ms-marco-MiniLM-L-6-v2`
+  reranker (with `--embeddings`): warmed into `<MODELS_DIR>/fastembed`; the app also fetches
+  them on first use.
 
 Both directories are git-ignored and left out of vault export. Re-running is a no-op.
 """
@@ -94,11 +95,21 @@ def ensure_spacy(base: Path, fetch: Callable[[str], bytes] = download) -> bool:
     return True
 
 
+def reranker_ready(base: Path) -> bool:
+    from app.kb.retrieval.rerank import RERANK_MODEL
+
+    name = RERANK_MODEL.split("/")[-1]
+    cache = base / "fastembed"
+    return cache.is_dir() and any(name in p.name for p in cache.iterdir())
+
+
 def warm_embeddings(base: Path) -> None:  # pragma: no cover - downloads real models
     from app.kb.embedding import FastEmbedder
+    from app.kb.retrieval.rerank import CrossEncoderReranker
 
-    info("Downloading fastembed models (bge-small-en-v1.5, bm25)")
+    info("Downloading fastembed models (bge-small-en-v1.5, bm25, ms-marco-MiniLM-L-6-v2)")
     asyncio.run(FastEmbedder(base / "fastembed").embed(["warm up"]))
+    CrossEncoderReranker(base / "fastembed")._score_sync("warm up", ["warm up"])
     ok("fastembed models ready")
 
 

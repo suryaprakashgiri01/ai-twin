@@ -20,6 +20,7 @@ dependencies = [
     "opentelemetry-api>=1.34,<2", # trace ids on log lines; exporters come later
     "llm-orchestrator", # workspace member: packages/llm-orchestrator
     "python-multipart>=0.0.20",
+    "langgraph>=1.2,<1.3", # agent graphs (owner now, public later)
 ]
 
 [tool.uv.workspace]

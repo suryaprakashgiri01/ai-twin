@@ -1,0 +1,121 @@
+"""The routing decision schema and the keyword fallback used when no router model answers.
+
+The router model fills `RouteDecision` through structured output. When it cannot (no eligible
+model, every model failed, invalid output), `heuristic_route` decides from keywords, so the
+owner still gets an answer with only the mock or an unreachable local model.
+"""
+
+from __future__ import annotations
+
+import calendar
+import re
+from datetime import date, timedelta
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from app.agents.tools.records import RecordsQuery
+from app.services.profile import RecordKind
+
+Route = Literal["kb_search", "records", "profile", "chat"]
+
+
+class RouteDecision(BaseModel):
+    route: Route
+    # The question rewritten to stand alone (follow-ups resolved from history).
+    query: str = Field(min_length=1, max_length=2000)
+    records: RecordsQuery | None = None
+
+
+_COUNT = re.compile(r"\b(how many|number of|count|list (?:my|all)|which compan(?:y|ies))\b", re.I)
+_DATE_WORDS = re.compile(
+    r"\b(this|last) (week|month|year)\b|\b(" + "|".join(calendar.month_name[1:]) + r")\b", re.I
+)
+_KIND = {
+    "interview": re.compile(r"\binterview(?:s|ed)?\b", re.I),
+    "application": re.compile(r"\b(applications?|applied|apply)\b", re.I),
+}
+_PROFILE = re.compile(
+    r"\b(availability|available|notice period|preferred roles?|locations?|relocat\w*|"
+    r"open to work)\b",
+    re.I,
+)
+_CHAT = re.compile(r"^\s*(hi|hello|hey|thanks|thank you|ok|okay|cool)\b[\s!.?]*$", re.I)
+_FOLLOW_UP = re.compile(
+    r"^\s*(and|what about|how about|also)\b|\b(that one|before that|the one|those)\b", re.I
+)
+
+
+def looks_like_records(text: str) -> bool:
+    return bool(_COUNT.search(text) or _DATE_WORDS.search(text))
+
+
+def _kind(text: str) -> RecordKind | None:
+    for kind, pattern in _KIND.items():
+        if pattern.search(text):
+            return kind  # type: ignore[return-value]
+    return None
+
+
+def _month_range(month: int, today: date) -> tuple[date, date]:
+    # A month name means its most recent occurrence: this year's, unless that is still ahead.
+    year = today.year if month <= today.month else today.year - 1
+    return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+
+
+def _relative_range(which: str, unit: str, today: date) -> tuple[date, date]:
+    if unit == "week":
+        start = today - timedelta(days=today.weekday())
+        if which == "last":
+            start -= timedelta(days=7)
+        return start, start + timedelta(days=6)
+    if unit == "month":
+        first = today.replace(day=1)
+        if which == "last":
+            first = (first - timedelta(days=1)).replace(day=1)
+        return first, first.replace(day=calendar.monthrange(first.year, first.month)[1])
+    year = today.year - (1 if which == "last" else 0)
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def date_range(text: str, today: date) -> tuple[date | None, date | None]:
+    match = _DATE_WORDS.search(text)
+    if match is None:
+        return None, None
+    if match.group(1):
+        return _relative_range(match.group(1).lower(), match.group(2).lower(), today)
+    month = list(calendar.month_name).index(match.group(3).capitalize())
+    return _month_range(month, today)
+
+
+def records_query(text: str, today: date) -> RecordsQuery | None:
+    kind = _kind(text)
+    if kind is None:
+        return None
+    date_from, date_to = date_range(text, today)
+    group_by = "company" if re.search(r"\bwhich compan", text, re.I) else None
+    return RecordsQuery(kind=kind, date_from=date_from, date_to=date_to, group_by=group_by)
+
+
+def standalone(question: str, previous_question: str | None) -> str:
+    """Fold a short follow-up into the previous question; otherwise keep it as asked."""
+    if previous_question and _FOLLOW_UP.search(question) and len(question.split()) <= 8:
+        return f"{previous_question} {question}"
+    return question
+
+
+def heuristic_route(question: str, previous_question: str | None, today: date) -> RouteDecision:
+    query = standalone(question, previous_question)
+    if _CHAT.match(question):
+        return RouteDecision(route="chat", query=query)
+    if looks_like_records(query):
+        records = records_query(query, today)
+        if records is not None:
+            # A follow-up's own dates ("and in August?") win over the folded-in question's.
+            own_from, own_to = date_range(question, today)
+            if own_from is not None:
+                records = records.model_copy(update={"date_from": own_from, "date_to": own_to})
+            return RouteDecision(route="records", query=query, records=records)
+    if _PROFILE.search(query):
+        return RouteDecision(route="profile", query=query)
+    return RouteDecision(route="kb_search", query=query)

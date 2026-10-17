@@ -232,6 +232,19 @@ class Orchestrator:
         spec = selection.models[0]
         return spec, self._executor.model_for(spec)
 
+    async def chat_models(
+        self,
+        role: Role,
+        tier: Tier,
+        *,
+        model: str | None = None,
+        prefer: Prefer | None = None,
+        privileged: bool = False,
+    ) -> list[tuple[ModelSpec, BaseChatModel]]:
+        """Every eligible model, best first, for callers that stream and own their fallbacks."""
+        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        return [(spec, self._executor.model_for(spec)) for spec in selection.models]
+
     async def model_counts(self) -> dict[str, int]:
         """Usable models (enabled and configured) per role, at the public tier."""
         effective = await self._inventory.effective(self._store)

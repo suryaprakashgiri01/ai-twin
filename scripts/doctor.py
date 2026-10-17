@@ -110,6 +110,16 @@ def check_ingestion_deps(env: dict[str, str]) -> list[Finding]:
                 "run: uv run python -m scripts.models",
             )
         )
+    if models.reranker_ready(base):
+        findings.append(Finding("ok", "reranker model present"))
+    else:
+        findings.append(
+            Finding(
+                "warn",
+                "reranker model missing (downloads on the first owner chat); "
+                "run: uv run python -m scripts.models --embeddings",
+            )
+        )
     return findings
 
 

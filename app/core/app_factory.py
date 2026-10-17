@@ -19,6 +19,7 @@ from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
+from app.services.owner_chat import build_owner_chat
 
 logger = structlog.get_logger(__name__)
 
@@ -41,6 +42,10 @@ def create_app(
             if settings.deployment_profile == "vault" and isinstance(resources, Resources):
                 ingestion = build_ingestion(settings, resources, app.state.llm)
                 app.state.ingestion = await stack.enter_async_context(run_ingestion(ingestion))
+                # One embedder for indexing and search, so its models load once.
+                app.state.owner_chat = build_owner_chat(
+                    settings, resources, app.state.llm, ingestion.pipeline.embedder
+                )
             logger.info(
                 "service started",
                 env=settings.app_env,
