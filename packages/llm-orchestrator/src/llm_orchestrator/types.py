@@ -40,6 +40,8 @@ class Role(StrEnum):
     CLASSIFIER = "classifier"
     GENERATOR = "generator"
     JUDGE = "judge"
+    # Prompt-injection scoring of untrusted text; the reply is a 0..1 score, not prose.
+    GUARD = "guard"
 
 
 class Provider(StrEnum):

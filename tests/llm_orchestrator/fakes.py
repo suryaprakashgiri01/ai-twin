@@ -102,7 +102,7 @@ def inventory(*specs: dict[str, Any], chains: dict[str, list[str]] | None = None
     ids = [s["id"] for s in specs]
     roles = chains or {
         role: [s["id"] for s in specs if role in s["roles"]]
-        for role in ("router", "classifier", "generator", "judge")
+        for role in ("router", "classifier", "generator", "judge", "guard")
     }
     assert ids
     return Inventory.from_mapping({"version": 1, "models": list(specs), "roles": roles})

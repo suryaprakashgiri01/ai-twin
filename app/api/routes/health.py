@@ -29,7 +29,13 @@ async def liveness(request: Request) -> dict[str, str]:
                     "example": {
                         "status": "not_ready",
                         "checks": {"mongodb": "ok", "redis": "unavailable", "qdrant": "ok"},
-                        "models": {"router": 2, "classifier": 2, "generator": 2, "judge": 2},
+                        "models": {
+                            "router": 2,
+                            "classifier": 2,
+                            "generator": 2,
+                            "judge": 2,
+                            "guard": 1,
+                        },
                     }
                 }
             },

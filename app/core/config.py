@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     public_messages_per_day: int = Field(default=60, ge=1, le=100_000)
     # Protects the free model quotas: every visitor together, per UTC day.
     public_daily_message_cap: int = Field(default=1500, ge=1, le=1_000_000)
+    # Input guard: longer messages are refused before anything else runs.
+    public_max_message_chars: int = Field(default=800, ge=50, le=8000)
+    # Prompt Guard 2 score (0..1) above which a message is blocked.
+    prompt_guard_threshold: float = Field(default=0.5, gt=0, lt=1)
+    # Scores from here up to the threshold are borderline: Jev gives a second opinion
+    # when FF_JEV_ENABLED is on.
+    prompt_guard_borderline: float = Field(default=0.2, ge=0, lt=1)
 
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
