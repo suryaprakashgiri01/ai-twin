@@ -140,6 +140,15 @@ class Settings(BaseSettings):
     lead_email_to: str = ""
     lead_email_from: str = ""
 
+    # --- opportunities: abuse controls and retention -----------------------------
+    # Leads per visitor (salted address hash) per day, and every visitor together per UTC day.
+    lead_visitor_daily_cap: int = Field(default=2, ge=1, le=100)
+    lead_daily_cap: int = Field(default=30, ge=1, le=10_000)
+    lead_retention_days: int = Field(default=365, ge=1, le=3650)
+    # Cloudflare Turnstile secret; empty = submits are not verified (local development).
+    turnstile_secret_key: SecretStr = SecretStr("")
+    turnstile_verify_url: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False

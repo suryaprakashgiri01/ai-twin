@@ -56,6 +56,16 @@ def security_burst_key(scope: str) -> str:
     return f"sec:burst:{scope}"
 
 
+def lead_visitor_key(visitor_hash: str) -> str:
+    """Leads one visitor left in the day since their first; expires a day after it."""
+    return f"lead:v:{visitor_hash}:day"
+
+
+def lead_global_key(day: str) -> str:
+    """Leads from every visitor on one UTC day (`YYYYMMDD`)."""
+    return f"lead:global:{day}"
+
+
 def lead_digest_key(day: str) -> str:
     """Set when the suppressed-leads digest for one local day (`YYYYMMDD`) has gone out."""
     return f"lead:digest:{day}"

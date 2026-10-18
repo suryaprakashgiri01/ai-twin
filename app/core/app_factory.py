@@ -18,6 +18,7 @@ from app.exceptions.handlers import register_exception_handlers
 from app.kb.embedding import Embedder, FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.leads.outbox import build_outbox
+from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
@@ -101,6 +102,7 @@ async def _start_services(
         embedder = FastEmbedder(settings.models_dir / "fastembed")
     outbox = build_outbox(settings, resources.leads, resources.security_events, resources.redis)
     app.state.lead_outbox = await stack.enter_async_context(outbox.running())
+    app.state.leads = build_lead_service(settings, resources, app.state.llm, outbox)
     app.state.resume = resume_provider(settings, resources.profile, resources.blobs)
     app.state.public_chat = build_public_chat(
         settings, resources, app.state.llm, embedder, app.state.resume
