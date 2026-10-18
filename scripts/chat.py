@@ -153,6 +153,25 @@ class Api:
         ).json()
         return result
 
+    def whoami(self) -> dict[str, Any]:
+        result: dict[str, Any] = self._request("GET", "/whoami").json()
+        return result
+
+    def version(self) -> str:
+        """The API's version from /healthz (outside /admin/v1); "?" when it doesn't say."""
+        try:
+            response = self._client.get(f"{self._base}/healthz")
+        except httpx.ConnectError as exc:
+            raise CliError(
+                f"The API is not reachable at {self._base}. Start it: make run "
+                "(Windows: ./scripts/dev.ps1 run)"
+            ) from exc
+        return str(response.json().get("version", "?")) if response.is_success else "?"
+
+    @property
+    def base_url(self) -> str:
+        return self._base
+
     def assistant_state(self, conversation_id: str) -> dict[str, Any]:
         result: dict[str, Any] = self._request("GET", f"/assistant/{conversation_id}").json()
         return result
@@ -215,10 +234,66 @@ def render_list(conversations: Sequence[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+ASK_INTRO = (
+    "Ask anything about your vault: notes, projects, documents, records (applications, "
+    "assessments, interviews, offers, rejections, withdrawals) and your profile.",
+    "Answers cite their sources. Confidential sources are read by the local model only; "
+    "private ones may use Groq/Cerebras.",
+    'Try: "How many interviews did I have this month?" · "What did I learn building <project>?"',
+)
+INTAKE_INTRO = (
+    "Tell me what to add or change in plain language. I ask for anything missing, show a "
+    "draft, and save nothing until you say yes. Runs on your local model only.",
+    "I can: add notes · ingest a URL, an inbox file (INTAKE_INBOX_DIR, default vault/inbox) "
+    "or a GitHub repo · add, update or delete records (application, assessment, interview, "
+    "offer, rejection, withdrawal) · update your profile · show the review queue and leads · "
+    "approve, publish, unpublish, relabel or delete documents · answer questions.",
+    'Try: "I had a technical round 2 with Acme yesterday for an AI Engineer role"',
+)
+COMMANDS = "Commands: /exit (or Ctrl+C) leaves; the conversation is kept for make chat-continue."
+
+
+def _when(value: object) -> str:
+    return str(value or "")[:16].replace("T", " ") or "-"
+
+
+def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None) -> None:
+    """Printed before the first prompt: where you are, what this agent does, how to leave.
+
+    It also proves the API answers and the key works before you type anything."""
+    who = api.whoami()
+    title = "intake assistant" if mode == "intake" else "owner chat"
+    print(paint(f"━━ ai-twin · {title} ━━", "bold"))
+    print(paint(f'API {api.version()} at {api.base_url} · key "{who.get("name", "?")}"', "dim"))
+    if conversation is None:
+        for line in INTAKE_INTRO if mode == "intake" else ASK_INTRO:
+            print(line)
+    else:
+        print(
+            f"Continuing {paint(str(conversation.get('name') or '-'), 'bold')} "
+            f"({mode}) · id {conversation['id']}"
+        )
+        turns = conversation.get("message_count", 0)
+        print(
+            f"Started {_when(conversation.get('created_at'))} · last active "
+            f"{_when(conversation.get('updated_at'))} · {turns} turns"
+        )
+        if conversation.get("description"):
+            print(f"About: {_short(str(conversation['description']), 100)}")
+        print(
+            paint(
+                "Earlier turns are reloaded by the server: from the Valkey cache while it lasts "
+                "(14 days), otherwise from MongoDB.",
+                "dim",
+            )
+        )
+    print(paint(COMMANDS, "dim"))
+
+
 def print_recap(conversation: dict[str, Any]) -> None:
     turns = conversation.get("turns", [])[-RECAP_TURNS:]
-    title = conversation.get("name") or conversation["id"]
-    info(f"Continuing {paint(str(title), 'bold')} ({conversation.get('message_count', 0)} turns)")
+    if turns:
+        info(f"Last {len(turns)} turns:")
     for turn in turns:
         who = paint("you", "blue") if turn.get("role") == "user" else paint("twin", "green")
         print(f"  {who}: {_short(str(turn.get('content', '')), RECAP_CHARS)}")
@@ -285,8 +360,6 @@ def print_pending(api: Api, conversation_id: str) -> None:
 
 
 def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
-    hint = "Tell me what to add; I confirm before saving." if mode == "intake" else ""
-    print(paint(f"{hint} Type your message; /exit to leave.".strip(), "dim"))
     turn = tell if mode == "intake" else ask
     named = conversation_id is not None
     while True:
@@ -345,8 +418,9 @@ def execute(args: argparse.Namespace, api: Api) -> int:
     if command == "continue":
         found = resolve(api, args.ref)
         detail = api.get(found["id"]) or found
-        print_recap(detail)
         mode = str(detail.get("mode") or "ask")
+        print_banner(api, mode, detail)
+        print_recap(detail)
         if mode == "intake":
             print_pending(api, found["id"])
         return chat_loop(api, found["id"], mode)
@@ -356,7 +430,9 @@ def execute(args: argparse.Namespace, api: Api) -> int:
         ok(f"Renamed to {updated.get('name')}")
         return 0
     if command == "twin":
+        print_banner(api, "intake")
         return chat_loop(api, None, "intake")
+    print_banner(api, "ask")
     return chat_loop(api, None)
 
 

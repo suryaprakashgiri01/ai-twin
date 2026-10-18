@@ -30,6 +30,10 @@ CONVERSATIONS = [
 def handler(request: httpx.Request) -> httpx.Response:
     assert request.headers["X-API-Key"] == "atw_test"
     path = request.url.path
+    if path == "/healthz":
+        return httpx.Response(200, json={"status": "ok", "version": "9.9.9"})
+    if path == "/admin/v1/whoami":
+        return httpx.Response(200, json={"name": "owner", "scopes": ["admin"]})
     if path == "/admin/v1/conversations":
         return httpx.Response(200, json=CONVERSATIONS)
     if path.startswith("/admin/v1/conversations/by-name/"):
@@ -135,3 +139,21 @@ def test_main_lists_and_reports_errors(
     assert chat.main(["continue", "salary-notes"]) == 0
     out = capsys.readouterr().out
     assert "Hello" in out and "kept" in out
+    assert "━━ ai-twin · owner chat ━━" in out and 'key "owner"' in out and "API 9.9.9" in out
+    assert "Continuing salary-notes (ask)" in out and "Valkey" in out
+
+
+def test_twin_banner_explains_the_intake_before_the_first_prompt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = chat.Config("http://test", "atw_test")
+    real_api = chat.Api
+    monkeypatch.setattr(chat, "load_config", lambda base_url: config)
+    monkeypatch.setattr(
+        chat, "Api", lambda cfg: real_api(cfg, transport=httpx.MockTransport(handler))
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "/exit")
+    assert chat.main(["twin"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("intake assistant") < out.index("Commands: /exit")
+    assert "save nothing until you say yes" in out and "assessment" in out
