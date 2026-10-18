@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+import structlog
 from fakeredis import FakeAsyncRedis
 
 from app.cache.redis import alert_cooldown_key
@@ -253,18 +254,20 @@ def test_alert_recipient_is_alert_email_to_else_lead_email_to() -> None:
     assert MailSettings.for_alerts(Settings(_env_file=None)) is None
 
 
-async def test_smtp_failure_keeps_events_pending_for_the_next_pass(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+async def test_smtp_failure_keeps_events_pending_for_the_next_pass() -> None:
     a = make_alerts(smtp=FakeSmtp(failures=2))
     canary = a.store.add("canary_hit", T0, severity="critical")
     a.store.add("meta_probe", T0 - minutes(1))
-    await a.worker.tick(T0)
+    with structlog.testing.capture_logs() as logs:
+        await a.worker.tick(T0)
     assert a.smtp.sent == []
     assert a.store.events[canary.id].alerted_at is None
     assert all(e.digested_at is None for e in a.store.events.values())
-    out = capsys.readouterr().out
-    assert "alert email failed" in out and "SMTPConnectError" in out
+    failures = [e for e in logs if e["event"] == "alert email failed"]
+    assert [(e["log_level"], e["error_code"]) for e in failures] == [
+        ("error", "SMTPConnectError"),
+        ("error", "SMTPConnectError"),
+    ]
 
     await a.worker.tick(T0 + minutes(1))
     assert len(a.smtp.sent) == 2, "the alert and the digest went on the retry"
