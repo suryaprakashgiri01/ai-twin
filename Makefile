@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin migrate-status upgrade downgrade
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -62,6 +62,15 @@ chat-list: ## List conversations: name, mode, id, updated, turns, description
 
 chat-continue: ## Continue a conversation (ask or intake, at a pending draft): ARGS="<name|id>"
 	$(PY) scripts.chat continue $(ARGS)
+
+migrate-status: ## MongoDB data migrations: applied / pending, reversible or not
+	$(PY) scripts.migrate status $(ARGS)
+
+upgrade: ## Apply pending MongoDB migrations (the API also does this at every start)
+	$(PY) scripts.migrate upgrade $(ARGS)
+
+downgrade: ## Roll back migrations newer than a version (dry run): ARGS="0003 --apply"
+	$(PY) scripts.migrate downgrade $(ARGS)
 
 run: ## Run the API locally (reload)
 	$(PY) app.main --reload
