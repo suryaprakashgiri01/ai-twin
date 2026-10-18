@@ -222,6 +222,8 @@ class Profile(Document):
     notice_period: str | None = None
     preferred_roles: list[str] = Field(default_factory=list)
     locations: list[str] = Field(default_factory=list)
+    # How soon the owner usually replies ("within two working days"); shown after a lead.
+    reply_time: str | None = None
     resume_blob: BlobRef | None = None
     resume_document_id: PydanticObjectId | None = None
     updated_at: datetime = Field(default_factory=utcnow)
@@ -230,22 +232,62 @@ class Profile(Document):
         name = "profile"
 
 
-class Lead(Document):
+class LeadDetails(BaseModel):
+    location: str | None = None
+    employment_type: str | None = None
+    # Stored as text: never fetched, never rendered as a link.
+    link: str | None = None
+
+
+class LeadFields(BaseModel):
+    """An opportunity from the public assistant or the form endpoint.
+
+    `email` is stored as given (validated); logs carry only a salted hash of it. `email_key` and
+    `company_key` are the case-folded forms duplicates are matched on. Delivery: a `new` lead with
+    no `emailed_at` is due for its email at `next_attempt_at`; after the last attempt it becomes
+    `failed`. A `suppressed` (spam) lead is never emailed; it goes into the daily digest.
+    """
+
     name: str
     email: str
     company: str | None = None
     role: str | None = None
     message: str
+    details: LeadDetails = Field(default_factory=LeadDetails)
+    source: Literal["assistant", "form"] = "form"
+    status: Literal["new", "reviewed", "replied", "archived", "suppressed", "failed"] = "new"
+    visitor_hash: str | None = None
+    email_key: str | None = None
+    company_key: str | None = None
     summary: str | None = None
     triage: str | None = None
+    triage_confidence: float | None = None
+    fit_note: str | None = None
     conversation_id: str | None = None
+    # Later submissions of the same email + company within a day, merged into this lead.
+    duplicates: int = 0
+    attempts: int = 0
+    last_error_code: str | None = None
+    next_attempt_at: datetime | None = None
     emailed_at: datetime | None = None
+    digested_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    # LEAD_RETENTION_DAYS after creation; the TTL index deletes the lead then.
+    expires_at: datetime | None = None
 
+
+class Lead(LeadFields, Document):
     class Settings:
         name = "leads"
         indexes: ClassVar[list[IndexModel]] = [
-            IndexModel([("created_at", DESCENDING)], name="created_at")
+            IndexModel([("created_at", DESCENDING)], name="created_at"),
+            IndexModel(
+                [("email_key", ASCENDING), ("company_key", ASCENDING), ("created_at", DESCENDING)],
+                name="dedupe",
+            ),
+            IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="status_time"),
+            _ttl("expires_at"),
         ]
 
 

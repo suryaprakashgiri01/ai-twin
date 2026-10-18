@@ -1,7 +1,8 @@
 """Security events from the public surface: what happened and which rule fired, never the text.
 
 Written for every input-guard block, meta probe, output-guard block, canary hit (critical),
-grounding fail-open, rate-limit burst and auth failure on public routes. Details hold rule
+grounding fail-open, rate-limit burst and auth failure on public routes, for a refused lead
+(over a cap, failed Turnstile) and for a lead email that failed its last attempt. Details hold rule
 names, layers, scores and ids only. A failed write is logged and dropped: recording an event
 must never break a visitor's reply. Bursts (rate limits, auth failures) are recorded once per
 window via a Redis `SET NX`, so a flood leaves one event, not thousands. Emailing events is a
@@ -29,6 +30,8 @@ EventKind = Literal[
     "grounding_fail_open",
     "rate_limited",
     "auth_failed",
+    "lead_delivery_failed",
+    "lead_refused",
 ]
 Severity = Literal["low", "medium", "high", "critical"]
 Detail = str | int | float | bool | None

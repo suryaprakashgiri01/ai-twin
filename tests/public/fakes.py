@@ -20,6 +20,8 @@ from app.guardrails.scope import INTENT_LABELS, ProfileTemplates, ScopeRouter
 from app.kb.canaries import new_marker
 from app.kb.retrieval.rerank import FusedOrderReranker
 from app.kb.retrieval.retriever import Hit
+from app.leads.capture import CaptureDeps, CaptureSettings
+from app.leads.service import LeadService
 from app.services.answer_cache import AnswerCache
 from app.services.conversations import ConversationService, Turn
 from app.services.owner_chat import ConversationMeta, ConversationSummary
@@ -193,9 +195,12 @@ class Public:
         *,
         visitor: str = "visitor-a",
         conversation_id: str | None = None,
+        turnstile_token: str | None = None,
     ) -> list[tuple[str, dict[str, Any]]]:
         prepared = await self.service.prepare(
-            PublicChatRequest(message=message, conversation_id=conversation_id),
+            PublicChatRequest(
+                message=message, conversation_id=conversation_id, turnstile_token=turnstile_token
+            ),
             Visitor(hash=visitor, forwarded=True),
         )
         events = [e async for e in self.service.events(prepared)]
@@ -228,6 +233,10 @@ def make_public(
     searcher: Any = None,
     has_resume: bool = True,
     cache_ttl: int = 3600,
+    leads: LeadService | None = None,
+    checkpointer: Any = None,
+    max_turns: int = 6,
+    reply_time: str | None = None,
 ) -> Public:
     factory = Factory({"gen": generator or [ANSWER]})
     orch = orchestrator(
@@ -246,6 +255,25 @@ def make_public(
     store = MemoryConversationStore()
     conversations = ConversationService(redis, store, visitor_salt="salt", retry_base_delay=0)
     search = searcher or FakePublicSearcher(hits=list(hits if hits is not None else [public_hit()]))
+    output_guard = OutputGuard(
+        canaries=StaticCanaryHashes([marker_hash(MARKER)]),
+        system_prompts=[GENERATE_V1],
+        allowlist=[EMAIL],
+        judge=judge,
+    )
+
+    async def profile_reply_time() -> str | None:
+        return reply_time
+
+    capture = None
+    if leads is not None:
+        capture = CaptureDeps(
+            orchestrator=orch,
+            service=leads,
+            output_guard=output_guard,
+            reply_time=profile_reply_time,
+            settings=CaptureSettings(max_turns=max_turns, owner_name="Kavya"),
+        )
     deps = PublicDeps(
         input_guard=InputGuard(guard_model, GuardSettings(max_chars=800)),
         router=ScopeRouter(classifier),
@@ -253,17 +281,13 @@ def make_public(
         retriever=search,
         reranker=FusedOrderReranker(),
         orchestrator=orch,
-        output_guard=OutputGuard(
-            canaries=StaticCanaryHashes([marker_hash(MARKER)]),
-            system_prompts=[GENERATE_V1],
-            allowlist=[EMAIL],
-            judge=judge,
-        ),
+        output_guard=output_guard,
         events=events,
         settings=PublicSettings(),
+        capture=capture,
     )
     service = PublicChatService(
-        build_public_graph(deps),
+        build_public_graph(deps, checkpointer if capture is not None else None),
         conversations,
         PublicMemoryIndex(store),
         AnswerCache(redis, cache_ttl),

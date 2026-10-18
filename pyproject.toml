@@ -23,6 +23,8 @@ dependencies = [
     "langgraph>=1.2,<1.3", # agent graphs (owner now, public later)
     "dateparser>=1.2", # owner intake: "yesterday", "last Friday", "12 Oct" in OWNER_TIMEZONE
     "tzdata>=2024.1; sys_platform == 'win32'", # zoneinfo data on Windows
+    "email-validator>=2.2",
+    "aiosmtplib>=3.0",
 ]
 
 [tool.uv.workspace]
@@ -42,6 +44,7 @@ dev = [
     "types-pyyaml>=6.0",
     "fakeredis>=2.26",
     "types-dateparser>=1.4.3.20260907",
+    "aiosmtpd>=1.4",
 ]
 vault = [
     "fastembed>=0.6",

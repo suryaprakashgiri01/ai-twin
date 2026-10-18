@@ -1,8 +1,9 @@
 """Who a public visitor is: the salted hash of the address the portfolio server forwards.
 
 The portfolio's server route holds the service key and sends the visitor's address in
-`X-Visitor-Address`. The header is trusted only from a key that carries `public:read` itself
-(an admin key testing the route counts as one visitor), and only its keyed hash is kept.
+`X-Visitor-Address`. The header is trusted only from a key that carries `public:read` or
+`leads:write` itself (an admin key testing the route counts as one visitor), and only its keyed
+hash is kept.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from app.exceptions import AppError, ErrorCode
 from app.services.conversations import hash_visitor
 
 VISITOR_HEADER = "X-Visitor-Address"
-TRUSTED_SCOPE = "public:read"
+TRUSTED_SCOPES: frozenset[str] = frozenset({"public:read", "leads:write"})
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,6 @@ def _address(raw: str) -> str:
 def resolve_visitor(request: Request, principal: Principal) -> Visitor:
     raw = request.headers.get(VISITOR_HEADER)
     salt = _salt(request)
-    if raw and TRUSTED_SCOPE in principal.scopes:
+    if raw and TRUSTED_SCOPES & set(principal.scopes):
         return Visitor(hash=hash_visitor(_address(raw), salt), forwarded=True)
     return Visitor(hash=hash_visitor(f"key:{principal.key_id}", salt), forwarded=False)

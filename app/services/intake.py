@@ -307,6 +307,7 @@ def build_intake(
             redis=resources.redis,
             ingestion=ingestion.service,
             pipeline=ingestion.pipeline,
+            leads=resources.leads,
         )
     )
     saver = MongoCheckpointSaver()

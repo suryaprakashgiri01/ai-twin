@@ -1,5 +1,11 @@
-"""The public graph: input_guard → scope → (fixed reply | profile template | retrieve → generate
-→ output_guard).
+"""The public graph: input_guard → scope → (fixed reply | profile template | capture | retrieve
+→ generate → output_guard).
+
+With lead capture configured (`PublicDeps.capture`), an `opportunity` or an open draft goes to
+`capture` (`app.leads.capture`), which may pause at `confirm` and, on an explicit yes, run
+`submit`. The graph then needs a checkpointer: the draft lives in the thread's state
+(`public:<conversation id>`) between turns. Every turn still starts at `input_guard`, a resumed
+confirmation included.
 
 Isolation is in code: the retriever is built with `kb_public` as its only collection and every
 search runs at `Tier.PUBLIC` with no filters. Nothing in the state, the request or a prompt can
@@ -17,12 +23,13 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, cast
 
 import structlog
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Checkpointer
 from qdrant_client import AsyncQdrantClient
 
 from app.agents.prompts import public as prompts
@@ -40,6 +47,7 @@ from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import DocumentFilter, Hit, Retriever
+from app.leads.capture import OPPORTUNITY, CaptureDeps, CaptureNodes
 from app.services.conversations import Turn
 from app.services.security_events import Detail, SecurityEventWriter
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
@@ -88,6 +96,8 @@ class PublicDeps:
     output_guard: OutputGuard
     events: SecurityEventWriter
     settings: PublicSettings = field(default_factory=PublicSettings)
+    # Lead capture; None keeps the fixed contact-form reply for opportunities.
+    capture: CaptureDeps | None = None
 
 
 class PublicState(TypedDict, total=False):
@@ -97,6 +107,10 @@ class PublicState(TypedDict, total=False):
     history: list[Turn]
     visitor_hash: str
     started: float
+    # The Turnstile token the widget sends with a confirmation; checked on submit only.
+    turnstile_token: str | None
+    # An opportunity draft ({stage, draft, asked, turns}); kept across turns by the checkpointer.
+    lead: dict[str, Any] | None
     # input_guard
     text: str
     input_guard: dict[str, Any]
@@ -281,6 +295,12 @@ def _after_scope(state: PublicState) -> str:
     return "retrieve" if state["intent"] == "about_owner" else "end"
 
 
+def _after_scope_capture(state: PublicState) -> str:
+    if state.get("lead") is not None or state["intent"] == OPPORTUNITY:
+        return "capture"
+    return _after_scope(state)
+
+
 def _after_generate(state: PublicState) -> str:
     return "output_guard" if state.get("generated") else "end"
 
@@ -288,7 +308,7 @@ def _after_generate(state: PublicState) -> str:
 PublicGraph = CompiledStateGraph[PublicState, None, PublicState, PublicState]
 
 
-def build_public_graph(deps: PublicDeps) -> PublicGraph:
+def build_public_graph(deps: PublicDeps, checkpointer: Checkpointer = None) -> PublicGraph:
     nodes = PublicNodes(deps)
     graph = StateGraph(PublicState)
     graph.add_node("input_guard", nodes.input_guard)
@@ -298,22 +318,60 @@ def build_public_graph(deps: PublicDeps) -> PublicGraph:
     graph.add_node("output_guard", nodes.output_guard)
     graph.add_edge(START, "input_guard")
     graph.add_conditional_edges("input_guard", _after_input, {"scope": "scope", "end": END})
-    graph.add_conditional_edges("scope", _after_scope, {"retrieve": "retrieve", "end": END})
+    if deps.capture is None:
+        graph.add_conditional_edges("scope", _after_scope, {"retrieve": "retrieve", "end": END})
+    else:
+        # The capture nodes read the same state as plain mappings.
+        capture = CaptureNodes(deps.capture)
+        graph.add_node(
+            "capture",
+            cast(Any, capture.capture),
+            destinations=("confirm", "submit", "retrieve", END),
+        )
+        graph.add_node("confirm", cast(Any, capture.confirm), destinations=("input_guard",))
+        graph.add_node("submit", cast(Any, capture.submit))
+        graph.add_edge("submit", END)
+        graph.add_conditional_edges(
+            "scope",
+            _after_scope_capture,
+            {"capture": "capture", "retrieve": "retrieve", "end": END},
+        )
     graph.add_edge("retrieve", "generate")
     graph.add_conditional_edges(
         "generate", _after_generate, {"output_guard": "output_guard", "end": END}
     )
     graph.add_edge("output_guard", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def initial_state(
-    *, conversation_id: str, question: str, history: list[Turn], visitor_hash: str
+    *,
+    conversation_id: str,
+    question: str,
+    history: list[Turn],
+    visitor_hash: str,
+    turnstile_token: str | None = None,
 ) -> PublicState:
+    """A turn's input. Every per-turn value is reset here: with a checkpointer the thread's
+    state carries over, and only the draft (`lead`) may."""
     return PublicState(
         conversation_id=conversation_id,
         question=question,
         history=history,
         visitor_hash=visitor_hash,
         started=time.perf_counter(),
+        turnstile_token=turnstile_token,
+        text="",
+        input_guard={},
+        intent="",
+        scope={},
+        hits=[],
+        context="",
+        sources=[],
+        answer="",
+        generated=False,
+        model_id=None,
+        input_tokens=0,
+        output_tokens=0,
+        output_guard={},
     )

@@ -26,6 +26,7 @@ from app.db.documents import (
     SourceFields,
     SourceKind,
     TierLabel,
+    utcnow,
 )
 from app.db.documents import Tier as TierName
 from app.exceptions import AppError, ErrorCode
@@ -45,6 +46,8 @@ from app.kb.ingestion.pipeline import Pipeline
 from app.kb.publishing import Publisher
 from app.kb.store import DocumentView, KbStore, SourceView
 from app.kb.vectors import VectorIndex
+from app.leads.models import OwnerStatus
+from app.leads.store import LeadStore, StoredLead
 from app.services.answer_cache import bump_public_version
 from app.services.audit import AuditLog
 from app.services.profile import (
@@ -271,6 +274,48 @@ class AdminDeps:
     redis: Any
     ingestion: IngestionService | None = None
     pipeline: Pipeline | None = None
+    leads: LeadStore | None = None
+
+
+class LeadOut(BaseModel):
+    """A lead as the owner sees it in the vault."""
+
+    id: str
+    created_at: datetime
+    source: str
+    status: str
+    name: str
+    email: str
+    company: str | None
+    role: str | None
+    message: str
+    location: str | None = None
+    employment_type: str | None = None
+    link: str | None = None
+    summary: str | None = None
+    triage: str | None = None
+    triage_confidence: float | None = None
+    fit_note: str | None = None
+    duplicates: int = 0
+    attempts: int = 0
+    last_error_code: str | None = None
+    emailed_at: datetime | None = None
+    conversation_id: str | None = None
+
+    @classmethod
+    def of(cls, lead: StoredLead) -> LeadOut:
+        return cls(
+            **lead.model_dump(
+                include=set(cls.model_fields) - {"location", "employment_type", "link"}
+            ),
+            **lead.details.model_dump(),
+        )
+
+
+class LeadPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: OwnerStatus
 
 
 class AdminOps:
@@ -294,6 +339,7 @@ class AdminOps:
                 redis=resources.redis,
                 ingestion=ingestion.service if ingestion is not None else None,
                 pipeline=ingestion.pipeline if ingestion is not None else None,
+                leads=getattr(resources, "leads", None),
             )
         )
 
@@ -556,3 +602,27 @@ class AdminOps:
         if not await self._d.records.delete(parse_id(record_id)):
             raise AppError(ErrorCode.NOT_FOUND, "Record not found")
         await self._audit(actor, "record.delete", record_id, {})
+
+    # --- leads ------------------------------------------------------------------------------
+
+    def _leads(self) -> LeadStore:
+        if self._d.leads is None:
+            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Leads are not available")
+        return self._d.leads
+
+    async def list_leads(
+        self, status: str | None = None, triage: str | None = None, limit: int = 50
+    ) -> list[LeadOut]:
+        return [LeadOut.of(lead) for lead in await self._leads().list(status, triage, limit)]
+
+    async def update_lead(self, lead_id: str, body: LeadPatch, actor: str) -> LeadOut:
+        store = self._leads()
+        before = await store.get(lead_id)
+        if before is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Lead not found")
+        lead = await store.update(lead_id, {"status": body.status, "updated_at": utcnow()})
+        assert lead is not None
+        await self._audit(
+            actor, "lead.update", lead_id, {"status": body.status, "from": before.status}
+        )
+        return LeadOut.of(lead)

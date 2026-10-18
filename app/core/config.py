@@ -126,6 +126,33 @@ class Settings(BaseSettings):
     # Synced canary hashes (deploy-public provisions it); the vault reads MongoDB instead.
     public_canary_hashes_path: Path | None = None
 
+    # --- opportunities: lead email (SMTP) -------------------------------------
+    # Gmail: smtp.gmail.com, 587, starttls, an app password. Empty host = leads are stored
+    # but not emailed until SMTP is configured.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    # starttls (587), tls (465) or none (a local debug server only).
+    smtp_security: Literal["starttls", "tls", "none"] = "starttls"
+    smtp_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    # The only recipient lead mail ever has; `From` is always LEAD_EMAIL_FROM (the owner's).
+    lead_email_to: str = ""
+    lead_email_from: str = ""
+
+    # --- opportunities: capture in the public assistant -----------------------------
+    # Turns the assistant spends gathering details before it falls back to the contact form.
+    lead_max_turns: int = Field(default=6, ge=1, le=20)
+
+    # --- opportunities: abuse controls and retention -----------------------------
+    # Leads per visitor (salted address hash) per day, and every visitor together per UTC day.
+    lead_visitor_daily_cap: int = Field(default=2, ge=1, le=100)
+    lead_daily_cap: int = Field(default=30, ge=1, le=10_000)
+    lead_retention_days: int = Field(default=365, ge=1, le=3650)
+    # Cloudflare Turnstile secret; empty = submits are not verified (local development).
+    turnstile_secret_key: SecretStr = SecretStr("")
+    turnstile_verify_url: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False

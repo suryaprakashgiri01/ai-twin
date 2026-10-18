@@ -30,7 +30,8 @@ async def assistant_info(settings: Settings, profile: ProfileStore) -> Assistant
         privacy=(
             f"Conversations are kept for {days} days, and your address is stored only as a "
             "one-way hash. Messages are processed by third-party AI providers, so please don't "
-            "share personal or sensitive details."
+            "share personal or sensitive details. If you share an opportunity, the details you "
+            f"confirm (name, email, company and message) are passed to {owner} by email."
         ),
         availability=(await profile.get()).availability,
     )

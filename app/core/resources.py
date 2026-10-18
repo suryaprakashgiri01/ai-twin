@@ -17,6 +17,7 @@ from app.db.documents import DOCUMENT_MODELS
 from app.db.migrations import run_migrations
 from app.kb.store import KbStore, MongoKbStore
 from app.kb.vectors import QdrantIndex, VectorIndex
+from app.leads.store import LeadStore, MongoLeadStore
 from app.services.audit import AuditLog, MongoAuditLog
 from app.services.conversations import ConversationService, MongoConversationStore
 from app.services.model_overrides import MongoOverrideStore, OverrideStore
@@ -41,6 +42,7 @@ class Resources:
     profile: ProfileStore
     records: RecordStore
     security_events: SecurityEventWriter
+    leads: LeadStore
 
 
 ResourcesFactory = Callable[[Settings], AbstractAsyncContextManager[Resources]]
@@ -83,4 +85,5 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
             profile=MongoProfileStore(),
             records=MongoRecordStore(),
             security_events=MongoSecurityEvents(),
+            leads=MongoLeadStore(),
         )
