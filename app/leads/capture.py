@@ -33,7 +33,15 @@ from app.agents.intake.confirm import classify_rules
 from app.agents.prompts import public as prompts
 from app.guardrails.output import OutputGuard
 from app.guardrails.scope import FIXED_REPLIES
-from app.leads.models import FIELDS, LIMITS, REQUIRED, LeadDraft, check, clean
+from app.leads.models import (
+    EMPLOYMENT_WORDS,
+    FIELDS,
+    LIMITS,
+    REQUIRED,
+    LeadDraft,
+    check,
+    clean,
+)
 from app.leads.service import LeadService
 from app.services.conversations import Turn
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
@@ -155,7 +163,9 @@ def question_like(text: str) -> bool:
 def grounded(name: str, value: str, said: str) -> bool:
     """A model value counts only when it comes from the visitor's own words."""
     if name == "employment_type":
-        return True
+        # Inferred, not copied: it counts only when the visitor used one of its words.
+        spoken = f" {' '.join(_words(said.replace('-', ' ')))} "
+        return any(f" {alias} " in spoken for alias in EMPLOYMENT_WORDS)
     words = [w for w in _words(value) if len(w) > 1]
     if not words:
         return False

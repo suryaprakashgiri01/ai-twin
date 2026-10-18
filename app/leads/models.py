@@ -55,6 +55,11 @@ _EMPLOYMENT_ALIASES: Mapping[str, str] = {
     "consulting": "freelance",
     "consultant": "freelance",
 }
+# What a visitor has to say for an employment type to count as theirs.
+EMPLOYMENT_WORDS: frozenset[str] = frozenset(k.replace("-", " ") for k in _EMPLOYMENT_ALIASES) | {
+    "full time",
+    "part time",
+}
 # Control characters (CR/LF included) never survive into a stored value.
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _LINE_BREAKS = re.compile(r"[\r\n\u2028\u2029]+")

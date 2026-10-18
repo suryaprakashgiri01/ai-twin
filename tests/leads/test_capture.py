@@ -304,3 +304,16 @@ async def test_an_address_in_the_summary_is_masked_so_the_guard_passes_it() -> N
     await c.say("yes")
     [lead] = c.store.leads.values()
     assert lead.summary == "Ravi ([email]) from Acme is hiring."
+
+
+async def test_an_employment_type_counts_only_when_the_visitor_said_it() -> None:
+    c = make_capture([extraction(role="backend", company="Acme", employment_type="full-time")])
+    await c.say(OPENING)
+    c2 = make_capture([extraction(role="backend", company="Acme", employment_type="contract")])
+    await c2.say(f"{OPENING}, a six month contract")
+    drafts = []
+    for cap in (c, c2):
+        config: Any = {"configurable": {"thread_id": f"public:{cap.conversation_id}"}}
+        drafts.append((await cap.public.service._graph.aget_state(config)).values["lead"]["draft"])
+    assert "employment_type" not in drafts[0]
+    assert drafts[1]["employment_type"] == "contract"
