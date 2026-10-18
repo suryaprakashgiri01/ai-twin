@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
+import time
+from collections.abc import Callable
 from typing import Any, Literal
 
 import structlog
 from opentelemetry import trace
 
 _EXTERNAL_LOGGERS = ("uvicorn", "uvicorn.error", "httpx", "httpcore", "pymongo")
+
+# Presidio attaches its own handlers at import time; ours (the root's) is the only one we keep.
+_PRESIDIO_LOGGERS = ("presidio-analyzer", "decision_process")
 
 # uvicorn's `color_message` carries raw ANSI escapes, which break strict JSON parsers.
 _NOISY_RECORD_KEYS = ("color_message",)
@@ -121,6 +127,75 @@ def setup_logging(
         logging.getLogger(name).setLevel(logging.WARNING)
     # Our middleware writes the access line, with the request id on it.
     logging.getLogger("uvicorn.access").disabled = True
+
+
+class OnceFilter(logging.Filter):
+    """Lets each distinct message through once per process: a warning repeated per document
+    (or per text block) is noise after the first time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._seen: set[str] = set()
+        self._lock = threading.Lock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        key = f"{record.levelno}:{record.getMessage()}"
+        with self._lock:
+            if key in self._seen:
+                return False
+            self._seen.add(key)
+        return True
+
+
+class RateLimitFilter(logging.Filter):
+    """At most one record per `interval` seconds through the logger it is attached to.
+
+    For exporters (Langfuse, OTLP) whose every failed batch would otherwise log during an
+    outage. The next record let through says how many were dropped.
+    """
+
+    def __init__(self, interval: float = 60.0, clock: Callable[[], float] = time.monotonic):
+        super().__init__()
+        self._interval = interval
+        self._clock = clock
+        self._last: float | None = None
+        self._dropped = 0
+        self._lock = threading.Lock()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        with self._lock:
+            now = self._clock()
+            if self._last is not None and now - self._last < self._interval:
+                self._dropped += 1
+                return False
+            self._last = now
+            if self._dropped:
+                record.msg = f"{record.getMessage()} ({self._dropped} similar suppressed)"
+                record.args = ()
+                self._dropped = 0
+        return True
+
+
+def attach_filter(name: str, make: Callable[[], logging.Filter]) -> None:
+    """Attach one filter of `make`'s type to logger `name`, once (create_app runs per test)."""
+    target = logging.getLogger(name)
+    sample = make()
+    if not any(type(f) is type(sample) for f in target.filters):
+        target.addFilter(sample)
+
+
+def quiet_presidio() -> None:
+    """Call after presidio is imported: drop its own handlers (records reach ours through the
+    root, once) and let each warning through once."""
+    for name in _PRESIDIO_LOGGERS:
+        target = logging.getLogger(name)
+        for handler in list(target.handlers):
+            if not isinstance(handler, logging.NullHandler):
+                target.removeHandler(handler)
+        target.propagate = True
+        attach_filter(name, OnceFilter)
+    # Presidio's per-decision trace is debug output; INFO would print one line per entity.
+    logging.getLogger("decision_process").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> Any:

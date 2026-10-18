@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     reload: bool = False
     log_level: str = "INFO"
     log_format: Literal["json", "console", "auto"] = "auto"
+    # OTLP/HTTP traces endpoint (e.g. http://localhost:4318/v1/traces); empty = spans stay local.
+    otel_exporter_otlp_endpoint: str = ""
 
     # --- dependencies ------------------------------------------------------
     mongodb_uri: str = "mongodb://localhost:27018"

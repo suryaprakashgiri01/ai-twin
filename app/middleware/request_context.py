@@ -1,8 +1,9 @@
-"""Correlation id + access log, as raw ASGI middleware.
+"""Correlation ids, the request's server span and the access log, as raw ASGI middleware.
 
-Raw ASGI rather than ``BaseHTTPMiddleware`` so the contextvars it binds are
-visible to the endpoint, exception handlers, and anything they spawn, and so
-the access line is written even when the response body streams.
+Raw ASGI rather than ``BaseHTTPMiddleware`` so the contextvars it binds (and the current span)
+are visible to the endpoint, exception handlers, and anything they spawn, and so the access line
+is written even when the response body streams. The span starts first, so every line of the
+request, the access line included, carries its `trace_id`; `X-Trace-ID` returns it.
 """
 
 from __future__ import annotations
@@ -13,10 +14,12 @@ import uuid
 
 import structlog
 from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.context import set_request_id, set_session_id, set_user_id
+from app.core.telemetry import TRACE_ID_HEADER, current_trace_id, tracer
 from app.exceptions.handlers import render_unhandled
 from app.middleware.routing import route_template
 
@@ -57,15 +60,30 @@ class RequestContextMiddleware:
             raw_session if raw_session and _VALID_REQUEST_ID.match(raw_session) else request_id
         )
 
+        # Exception messages may quote content, so they are not copied onto the span.
+        with tracer().start_as_current_span(
+            scope["method"], kind=SpanKind.SERVER, record_exception=False
+        ) as span:
+            await self._handle(scope, receive, send, span, request_id, session_id)
+
+    async def _handle(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        span: trace.Span,
+        request_id: str,
+        session_id: str,
+    ) -> None:
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id, session_id=session_id)
         set_request_id(request_id)
         set_session_id(session_id)
         set_user_id(None)
-        # Tag the current server span (once tracing is wired) so a request id finds its trace.
-        span = trace.get_current_span()
+        # A request id (or a session) finds its trace, and the trace id its logs.
         span.set_attribute("request.id", request_id)
         span.set_attribute("session.id", session_id)
+        trace_id = current_trace_id()
 
         status_code = 500
         response_started = False
@@ -79,6 +97,8 @@ class RequestContextMiddleware:
                 response_headers = MutableHeaders(scope=message)
                 response_headers[REQUEST_ID_HEADER] = request_id
                 response_headers[SESSION_ID_HEADER] = session_id
+                if trace_id:
+                    response_headers[TRACE_ID_HEADER] = trace_id
             await send(message)
 
         try:
@@ -94,10 +114,12 @@ class RequestContextMiddleware:
         finally:
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
             path = scope["path"]
+            route = route_template(scope)
+            _finish_span(span, scope["method"], route, status_code)
             fields = {
                 "method": scope["method"],
                 "path": path,
-                "route": route_template(scope),
+                "route": route,
                 "status": status_code,
                 "duration_ms": duration_ms,
             }
@@ -110,3 +132,13 @@ class RequestContextMiddleware:
             else:
                 logger.info("request completed", **fields)
             structlog.contextvars.clear_contextvars()
+
+
+def _finish_span(span: trace.Span, method: str, route: str, status_code: int) -> None:
+    """Name the span by its route template (never the raw path, which carries ids)."""
+    span.update_name(f"{method} {route}")
+    span.set_attribute("http.request.method", method)
+    span.set_attribute("http.route", route)
+    span.set_attribute("http.response.status_code", status_code)
+    if status_code >= 500:
+        span.set_status(Status(StatusCode.ERROR))

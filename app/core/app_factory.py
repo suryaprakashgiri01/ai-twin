@@ -15,6 +15,7 @@ from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
 from app.core.resources import Resources, ResourcesFactory, open_resources
+from app.core.telemetry import setup_telemetry, shutdown_telemetry
 from app.exceptions.handlers import register_exception_handlers
 from app.kb.embedding import Embedder, FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
@@ -40,6 +41,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(level=settings.log_level, log_format=settings.log_format)
+    setup_telemetry(settings)
     open_storage = resources_factory or open_resources
 
     @asynccontextmanager
@@ -56,6 +58,7 @@ def create_app(
                 version=settings.service_version,
             )
             yield
+        shutdown_telemetry()
         logger.info("service stopped")
 
     app = FastAPI(
@@ -63,11 +66,15 @@ def create_app(
         version=settings.service_version,
         description=(
             "Personal knowledge base and portfolio AI twin.\n\n"
-            "**Tracing:** every response carries `X-Request-ID`; send `X-Session-ID` to group "
+            "**Tracing:** every response carries `X-Request-ID` and `X-Trace-ID` (the trace id "
+            "on the request's log lines and its Langfuse trace); send `X-Session-ID` to group "
             "requests.\n\n"
             '**Errors:** always `{"error": {code, message, request_id, details?}}`.'
         ),
         lifespan=lifespan,
+        # Our middleware owns the server span: FastAPI's native one would adopt a caller's
+        # `traceparent`, letting a visitor choose the trace id.
+        telemetry={"tracing": False, "metrics": False, "logs": False, "operation_spans": False},
     )
     app.state.settings = settings
     app.state.health_checks = list(

@@ -17,7 +17,7 @@ dependencies = [
     "redis>=5.2", # works against Valkey too
     "qdrant-client>=1.15",
     "cryptography>=44", # Fernet: blob store and vault archives
-    "opentelemetry-api>=1.34,<2", # trace ids on log lines; exporters come later
+    "opentelemetry-api>=1.34,<2", # trace ids on log lines
     "llm-orchestrator", # workspace member: packages/llm-orchestrator
     "python-multipart>=0.0.20",
     "langgraph>=1.2,<1.3", # agent graphs (owner now, public later)
@@ -25,6 +25,10 @@ dependencies = [
     "tzdata>=2024.1; sys_platform == 'win32'", # zoneinfo data on Windows
     "email-validator>=2.2",
     "aiosmtplib>=3.0",
+    "opentelemetry-sdk>=1.34,<2", # a server span per request (trace_id, X-Trace-ID)
+    "opentelemetry-exporter-otlp-proto-http>=1.34,<2", # optional OTLP export
+    "langfuse>=3.6,<4", # agent traces (Langfuse Cloud Hobby or self-hosted), masked by policy
+    "prometheus-client>=0.21", # GET /metrics
 ]
 
 [tool.uv.workspace]

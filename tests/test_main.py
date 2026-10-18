@@ -30,3 +30,12 @@ def test_makefile_recipes_set_no_env_vars_inline() -> None:
         line for line in (ROOT / "Makefile").read_text().splitlines() if line.startswith("\t")
     ]
     assert [r for r in recipes if re.match(r"\t@?[A-Z_]+=", r)] == []
+
+
+def test_reload_watches_code_and_config_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr("uvicorn.run", lambda *a, **kw: seen.update(kw))
+    get_settings.cache_clear()
+    main.run(["--reload"])
+    assert seen["reload_dirs"] == ["app", "packages", "config"]
+    assert not {"vault", "graphify-out", "."} & set(seen["reload_dirs"])
