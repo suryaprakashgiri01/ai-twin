@@ -36,6 +36,8 @@ EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
 RECAP_TURNS = 4
 RECAP_CHARS = 280
 LIST_LIMIT_MAX = 200
+# How long /exit waits for a new title before leaving a slow local model to finish later.
+TITLE_WAIT_SECONDS = 8.0
 # Names are at most 48 characters; generated ones at most 40 plus a short suffix.
 NAME_WIDTH = 44
 MODE_WIDTH = 6
@@ -171,6 +173,15 @@ class Api:
     @property
     def base_url(self) -> str:
         return self._base
+
+    def refresh_title(self, conversation_id: str, wait_seconds: float) -> dict[str, Any]:
+        result: dict[str, Any] = self._request(
+            "POST",
+            f"/conversations/{conversation_id}/title",
+            params={"wait_seconds": wait_seconds},
+            timeout=wait_seconds + 15,
+        ).json()
+        return result
 
     def assistant_state(self, conversation_id: str) -> dict[str, Any]:
         result: dict[str, Any] = self._request("GET", f"/assistant/{conversation_id}").json()
@@ -359,9 +370,29 @@ def print_pending(api: Api, conversation_id: str) -> None:
         print_draft(pending)
 
 
+def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
+    """Ask the server to re-title the conversation; returns its (possibly new) name."""
+    print(paint("Updating the conversation's title…", "dim"))
+    try:
+        result = api.refresh_title(conversation_id, TITLE_WAIT_SECONDS)
+    except (CliError, httpx.HTTPError, KeyboardInterrupt) as exc:
+        warn(f"Title not refreshed ({type(exc).__name__}); the conversation is kept as it was")
+        return None
+    status = result.get("status")
+    if status == "updated" and result.get("renamed"):
+        ok(f"Renamed to {paint(str(result.get('name')), 'bold')}")
+    if status == "updated" and result.get("description"):
+        info(f"About: {result['description']}")
+    elif status == "scheduled":
+        info("The local model is still titling it; the new title shows in make chat-list")
+    name = result.get("name")
+    return str(name) if name else None
+
+
 def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
     turn = tell if mode == "intake" else ask
     named = conversation_id is not None
+    spoke = False
     while True:
         try:
             message = input(paint("you: ", "blue")).strip()
@@ -374,6 +405,7 @@ def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
             break
         try:
             conversation_id = turn(api, message, conversation_id)
+            spoke = True
         except KeyboardInterrupt:
             print()
             warn("Answer interrupted")
@@ -387,7 +419,9 @@ def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
                 )
             named = True
     if conversation_id:
-        info(f"Conversation {conversation_id} kept")
+        name = refresh_on_exit(api, conversation_id) if spoke else None
+        ref = name or conversation_id
+        info(f'Conversation kept · continue later: make chat-continue ARGS="{ref}"')
     return 0
 
 

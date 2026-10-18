@@ -56,6 +56,7 @@ class MemoryIntakeIndex:
     def __init__(self, store: MemoryConversationStore) -> None:
         self.store = store
         self.meta: dict[str, dict[str, Any]] = {}
+        self.locked: set[str] = set()
 
     def _row(self, conversation_id: str) -> dict[str, Any]:
         return self.meta.setdefault(
@@ -87,6 +88,14 @@ class MemoryIntakeIndex:
         row = self._row(conversation_id)
         row["name"] = name or row["name"]
         row["description"] = description or row["description"]
+
+    async def lock_name(self, conversation_id: str) -> None:
+        self.locked.add(conversation_id)
+
+    async def save_refresh(
+        self, conversation_id: str, name: str | None, description: str, titled_turns: int
+    ) -> None:
+        await self.set_title(conversation_id, name, description)
 
     async def set_mode(self, conversation_id: str, mode: ConversationMode) -> None:
         self._row(conversation_id)["mode"] = mode

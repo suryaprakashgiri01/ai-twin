@@ -109,6 +109,11 @@ class TitleUpdate(BaseModel):
 class ConversationMeta(ConversationSummary):
     channel: Channel
     visitor_hash: str | None = None
+    name_locked: bool = False
+    titled_turns: int = 0
+
+
+_INTERNAL_META = {"channel", "visitor_hash", "name_locked", "titled_turns"}
 
 
 class ConversationDetail(ConversationSummary):
@@ -126,6 +131,12 @@ class ConversationIndex(Protocol):
 
     async def set_title(
         self, conversation_id: str, name: str | None, description: str | None
+    ) -> None: ...
+
+    async def lock_name(self, conversation_id: str) -> None: ...
+
+    async def save_refresh(
+        self, conversation_id: str, name: str | None, description: str, titled_turns: int
     ) -> None: ...
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]: ...
@@ -150,6 +161,21 @@ class MongoConversationIndex:
             {"channel": "owner", "name": {"$regex": pattern}}, {"name": 1}
         )
         return {doc["name"] async for doc in cursor}
+
+    async def lock_name(self, conversation_id: str) -> None:
+        await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id}, {"$set": {"name_locked": True}}
+        )
+
+    async def save_refresh(
+        self, conversation_id: str, name: str | None, description: str, titled_turns: int
+    ) -> None:
+        changes: dict[str, Any] = {"description": description, "titled_turns": titled_turns}
+        if name is not None:
+            changes["name"] = name
+        await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id}, {"$set": changes}
+        )
 
     async def set_title(
         self, conversation_id: str, name: str | None, description: str | None
@@ -237,6 +263,8 @@ def _meta(found: Conversation) -> ConversationMeta:
         updated_at=found.updated_at,
         message_count=found.message_count,
         mode=found.mode,
+        name_locked=found.name_locked,
+        titled_turns=found.titled_turns,
     )
 
 
@@ -438,7 +466,10 @@ class OwnerChatService:
             if holder is not None and holder.id != conversation_id:
                 raise AppError(ErrorCode.CONFLICT, "That name is already used")
         await self._index.set_title(conversation_id, update.name, update.description)
-        changed = meta.model_dump(exclude={"channel", "visitor_hash"})
+        if update.name is not None:
+            # The owner chose this name: the automatic refresh must never overwrite it.
+            await self._index.lock_name(conversation_id)
+        changed = meta.model_dump(exclude=_INTERNAL_META)
         changed.update(update.model_dump(exclude_none=True))
         return ConversationSummary(**changed)
 

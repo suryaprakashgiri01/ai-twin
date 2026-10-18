@@ -33,6 +33,7 @@ class MemoryIndex:
     def __init__(self, store: MemoryConversationStore) -> None:
         self.store = store
         self.titles: dict[str, tuple[str | None, str | None]] = {}
+        self.locked: set[str] = set()
 
     def _meta(self, conversation_id: str) -> ConversationMeta:
         meta = self.store.conversations[conversation_id]
@@ -79,6 +80,14 @@ class MemoryIndex:
     ) -> None:
         old_name, old_description = self.titles.get(conversation_id, (None, None))
         self.titles[conversation_id] = (name or old_name, description or old_description)
+
+    async def lock_name(self, conversation_id: str) -> None:
+        self.locked.add(conversation_id)
+
+    async def save_refresh(
+        self, conversation_id: str, name: str | None, description: str, titled_turns: int
+    ) -> None:
+        await self.set_title(conversation_id, name, description)
 
 
 @dataclass

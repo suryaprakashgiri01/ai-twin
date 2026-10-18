@@ -24,9 +24,10 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
-from app.services.owner_chat import build_owner_chat_from, owner_deps
+from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
+from app.services.titling import ConversationTitler
 
 logger = structlog.get_logger(__name__)
 
@@ -96,6 +97,7 @@ async def _start_services(
         embedder = ingestion.pipeline.embedder
         owner = owner_deps(settings, resources, app.state.llm, embedder)
         app.state.owner_chat = build_owner_chat_from(owner, resources, app.state.llm)
+        app.state.titler = ConversationTitler(MongoConversationIndex(), app.state.llm.orchestrator)
         intake, saver = build_intake(settings, resources, app.state.llm, ingestion, owner)
         app.state.intake = intake
         await prune_checkpoints(saver, settings.intake_checkpoint_days)

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth.dependencies import Principal, require_scopes
+from app.core.config import Settings
 from app.exceptions import AppError, ErrorCode
 from app.services.audit import AuditLog
 from app.services.naming import NAME_MAX, NAME_PATTERN
@@ -19,6 +20,7 @@ from app.services.owner_chat import (
     OwnerChatService,
     TitleUpdate,
 )
+from app.services.titling import ConversationTitler, TitleRefresh
 
 router = APIRouter(tags=["admin: chat"])
 
@@ -94,6 +96,30 @@ async def update_conversation(
         details={"fields": sorted(body.model_dump(exclude_none=True))},
     )
     return summary
+
+
+@router.post(
+    "/conversations/{conversation_id}/title",
+    summary="Refresh the name and description from the conversation (local model when needed)",
+)
+async def refresh_title(
+    conversation_id: ConversationId,
+    _principal: AdminKey,
+    request: Request,
+    wait_seconds: Annotated[
+        float | None,
+        Query(ge=0, le=60, description="how long to wait before the refresh continues later"),
+    ] = None,
+) -> TitleRefresh:
+    """Runs at the conversation's own tier (intake or confidential → local model only). The
+    description is always refreshed; the name only if the owner never renamed it. `scheduled`
+    means a slow model is still working and will save its result when done."""
+    titler: ConversationTitler | None = getattr(request.app.state, "titler", None)
+    if titler is None:
+        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Title refresh is not running")
+    settings: Settings = request.app.state.settings
+    wait = settings.title_refresh_wait_seconds if wait_seconds is None else wait_seconds
+    return await titler.refresh_within(conversation_id, wait)
 
 
 @router.get("/conversations/{conversation_id}", summary="One owner conversation with its turns")
