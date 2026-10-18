@@ -141,3 +141,11 @@ async def test_every_series_is_exposed_and_no_label_carries_an_id_or_text() -> N
             for label, label_value in sample.labels.items():
                 assert not hexid.search(label_value), (family.name, label, label_value)
                 assert "@" not in label_value and len(label_value) <= 64
+
+
+async def test_route_labels_keep_their_router_prefixes() -> None:
+    async with client_for() as c:
+        await c.get("/admin/v1/leads")
+        body = (await c.get("/metrics")).text
+    assert 'route="/admin/v1/leads"' in body
+    assert 'route="/leads"' not in body
