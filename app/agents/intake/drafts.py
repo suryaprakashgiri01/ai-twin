@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import dateparser
 from dateparser.search import search_dates
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 if TYPE_CHECKING:
     from app.agents.intake.actions import ActionSpec
@@ -63,17 +63,42 @@ REFERENCES = frozenset({"record", "document", "source_id"})
 STEM = 5
 
 
-class IntakeDraft(BaseModel):
-    """The model's reading of the owner's latest message. Never trusted for completeness."""
+ACTION_NAMES: tuple[str, ...] = ActionName.__args__  # type: ignore[attr-defined]
+REPLY_MAX = 600
 
-    action: ActionName | None = Field(
-        default=None, description="The action the owner wants, or null when there is none"
+
+class IntakeDraft(BaseModel):
+    """The model's reading of the owner's latest message. Never trusted for completeness.
+
+    Lenient on purpose: a small model's unknown action, null payload or long reply should cost
+    a question, not a failed turn."""
+
+    action: str | None = Field(
+        default=None,
+        description="The action the owner wants, or null when there is none",
+        json_schema_extra={"enum": [*ACTION_NAMES, None]},
     )
     payload: dict[str, Any] = Field(
         default_factory=dict,
         description="Only the fields the owner gave or changed, with their words for dates",
     )
-    reply: str = Field(default="", max_length=600, description="A short reply when no action")
+    reply: str = Field(default="", description="A short reply when no action")
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def _known_action(cls, value: Any) -> str | None:
+        name = str(value).strip().lower() if value is not None else ""
+        return name if name in ACTION_NAMES else None
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def _dict_payload(cls, value: Any) -> dict[str, Any]:
+        return dict(value) if isinstance(value, dict) else {}
+
+    @field_validator("reply", mode="before")
+    @classmethod
+    def _short_reply(cls, value: Any) -> str:
+        return "" if value is None else str(value)[:REPLY_MAX]
 
 
 @dataclass
