@@ -24,6 +24,7 @@ class ProfileIn(BaseModel):
     notice_period: str | None = Field(default=None, max_length=100)
     preferred_roles: list[str] = Field(default_factory=list, max_length=20)
     locations: list[str] = Field(default_factory=list, max_length=20)
+    reply_time: str | None = Field(default=None, max_length=100)
     resume_document_id: str | None = None
 
 
@@ -32,6 +33,7 @@ class ProfileOut(BaseModel):
     notice_period: str | None
     preferred_roles: list[str]
     locations: list[str]
+    reply_time: str | None = None
     resume_document_id: str | None
     resume_blob: BlobRef | None
     updated_at: datetime
@@ -88,6 +90,7 @@ def _profile_out(doc: Profile) -> ProfileOut:
         notice_period=doc.notice_period,
         preferred_roles=doc.preferred_roles,
         locations=doc.locations,
+        reply_time=doc.reply_time,
         resume_document_id=str(doc.resume_document_id) if doc.resume_document_id else None,
         resume_blob=doc.resume_blob,
         updated_at=doc.updated_at,
