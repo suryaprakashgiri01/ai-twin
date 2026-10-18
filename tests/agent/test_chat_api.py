@@ -32,13 +32,17 @@ Q = "what did I learn at the meetup?"
 class MemoryIndex:
     def __init__(self, store: MemoryConversationStore) -> None:
         self.store = store
+        self.titles: dict[str, tuple[str | None, str | None]] = {}
 
     def _meta(self, conversation_id: str) -> ConversationMeta:
         meta = self.store.conversations[conversation_id]
         turns = self.store.turns.get(conversation_id, {})
         stamps = [t.created_at for t in turns.values()]
+        name, description = self.titles.get(conversation_id, (None, None))
         return ConversationMeta(
             id=conversation_id,
+            name=name,
+            description=description,
             channel=meta["channel"],
             created_at=min(stamps),
             updated_at=max(stamps),
@@ -59,6 +63,22 @@ class MemoryIndex:
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]
+
+    async def by_name(self, name: str) -> ConversationMeta | None:
+        for conversation_id, (title, _) in self.titles.items():
+            if title == name and conversation_id in self.store.conversations:
+                return self._meta(conversation_id)
+        return None
+
+    async def names_like(self, base: str) -> set[str]:
+        names = {title for title, _ in self.titles.values() if title}
+        return {n for n in names if n == base or n.startswith(f"{base}-")}
+
+    async def set_title(
+        self, conversation_id: str, name: str | None, description: str | None
+    ) -> None:
+        old_name, old_description = self.titles.get(conversation_id, (None, None))
+        self.titles[conversation_id] = (name or old_name, description or old_description)
 
 
 @dataclass

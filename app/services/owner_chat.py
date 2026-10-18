@@ -7,6 +7,7 @@ partial answer marked `incomplete`.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,13 +31,22 @@ from app.agents.tools.records import MongoRecordsTool, RecordsResult
 from app.core.config import Settings
 from app.core.llm import LLMServices
 from app.core.resources import Resources
-from app.db.documents import Channel, Conversation, Message
+from app.db.documents import Channel, Conversation, Message, utcnow
 from app.exceptions import AppError, ErrorCode
 from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
 from app.kb.retrieval.retriever import MongoDocumentFilter, Retriever, SearchFilters
 from app.services.conversations import ConversationService, Turn
+from app.services.naming import (
+    DESCRIPTION_MAX,
+    NAME_MAX,
+    NAME_PATTERN,
+    describe,
+    fallback_name,
+    slugify_title,
+    unique_name,
+)
 from llm_orchestrator import Prefer, Tier
 
 logger = structlog.get_logger(__name__)
@@ -81,9 +91,18 @@ class ChatResponse(BaseModel):
 
 class ConversationSummary(BaseModel):
     id: str
+    name: str | None = None
+    description: str | None = None
     created_at: datetime
     updated_at: datetime
     message_count: int
+
+
+class TitleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, pattern=NAME_PATTERN, max_length=NAME_MAX)
+    description: str | None = Field(default=None, min_length=1, max_length=DESCRIPTION_MAX)
 
 
 class ConversationMeta(ConversationSummary):
@@ -100,6 +119,14 @@ class ConversationIndex(Protocol):
 
     async def list_owner(self, limit: int) -> list[ConversationSummary]: ...
 
+    async def by_name(self, name: str) -> ConversationMeta | None: ...
+
+    async def names_like(self, base: str) -> set[str]: ...
+
+    async def set_title(
+        self, conversation_id: str, name: str | None, description: str | None
+    ) -> None: ...
+
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]: ...
 
 
@@ -108,13 +135,46 @@ class MongoConversationIndex:
         found = await Conversation.get(conversation_id)
         if found is None:
             return None
-        return ConversationMeta(
-            id=found.id,
-            channel=found.channel,
-            visitor_hash=found.visitor_hash,
-            created_at=found.created_at,
-            updated_at=found.updated_at,
-            message_count=found.message_count,
+        return _meta(found)
+
+    async def by_name(self, name: str) -> ConversationMeta | None:
+        found = await Conversation.find_one(
+            Conversation.channel == "owner", Conversation.name == name
+        )
+        return _meta(found) if found is not None else None
+
+    async def names_like(self, base: str) -> set[str]:
+        pattern = f"^{re.escape(base)}(-[0-9]+)?$"
+        cursor = Conversation.get_pymongo_collection().find(
+            {"channel": "owner", "name": {"$regex": pattern}}, {"name": 1}
+        )
+        return {doc["name"] async for doc in cursor}
+
+    async def set_title(
+        self, conversation_id: str, name: str | None, description: str | None
+    ) -> None:
+        changes = {
+            key: value
+            for key, value in (("name", name), ("description", description))
+            if value is not None
+        }
+        if not changes:
+            return
+        now = utcnow()
+        # Upsert: a brand-new conversation may reach MongoDB only when its first turn persists.
+        await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id},
+            {
+                "$setOnInsert": {
+                    "channel": "owner",
+                    "visitor_hash": None,
+                    "created_at": now,
+                    "updated_at": now,
+                    "message_count": 0,
+                },
+                "$set": changes,
+            },
+            upsert=True,
         )
 
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
@@ -127,6 +187,8 @@ class MongoConversationIndex:
         return [
             ConversationSummary(
                 id=c.id,
+                name=c.name,
+                description=c.description,
                 created_at=c.created_at,
                 updated_at=c.updated_at,
                 message_count=c.message_count,
@@ -143,6 +205,19 @@ class MongoConversationIndex:
         )
         fields = set(Turn.model_fields)
         return [Turn.model_validate(m.model_dump(include=fields)) for m in messages]
+
+
+def _meta(found: Conversation) -> ConversationMeta:
+    return ConversationMeta(
+        id=found.id,
+        name=found.name,
+        description=found.description,
+        channel=found.channel,
+        visitor_hash=found.visitor_hash,
+        created_at=found.created_at,
+        updated_at=found.updated_at,
+        message_count=found.message_count,
+    )
 
 
 @dataclass(frozen=True)
@@ -183,6 +258,7 @@ class OwnerChatService:
             raise AppError(ErrorCode.VALIDATION_ERROR, "Unknown model id", details=[request.model])
         if request.conversation_id is None:
             ref = await self._conversations.start("owner")
+            await self._title(ref.id, request.message)
             return Prepared(request, ref.id, [])
         meta = await self._index.get(request.conversation_id)
         history = await self._conversations.history(request.conversation_id)
@@ -315,8 +391,36 @@ class OwnerChatService:
             raise AppError(ErrorCode(last["code"]), last["message"])
         return self._response(run)
 
+    async def _title(self, conversation_id: str, question: str) -> None:
+        """Name a new conversation from its first question. Naming never blocks the chat."""
+        try:
+            base = slugify_title(question, fallback_name(conversation_id))
+            name = unique_name(base, await self._index.names_like(base))
+            await self._index.set_title(conversation_id, name, describe(question) or None)
+        except Exception as exc:
+            logger.warning("conversation naming failed", error_type=type(exc).__name__)
+
     async def list_conversations(self, limit: int) -> list[ConversationSummary]:
         return await self._index.list_owner(limit)
+
+    async def conversation_by_name(self, name: str) -> ConversationSummary:
+        meta = await self._index.by_name(name)
+        if meta is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
+        return ConversationSummary(**meta.model_dump(exclude={"channel", "visitor_hash"}))
+
+    async def update_title(self, conversation_id: str, update: TitleUpdate) -> ConversationSummary:
+        meta = await self._index.get(conversation_id)
+        if meta is None or meta.channel != "owner":
+            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
+        if update.name is not None and update.name != meta.name:
+            holder = await self._index.by_name(update.name)
+            if holder is not None and holder.id != conversation_id:
+                raise AppError(ErrorCode.CONFLICT, "That name is already used")
+        await self._index.set_title(conversation_id, update.name, update.description)
+        changed = meta.model_dump(exclude={"channel", "visitor_hash"})
+        changed.update(update.model_dump(exclude_none=True))
+        return ConversationSummary(**changed)
 
     async def conversation(self, conversation_id: str, limit: int) -> ConversationDetail:
         meta = await self._index.get(conversation_id)

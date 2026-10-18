@@ -157,6 +157,17 @@ class PublicMemoryIndex:
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
         return []
 
+    async def by_name(self, name: str) -> ConversationMeta | None:
+        return None
+
+    async def names_like(self, base: str) -> set[str]:
+        return set()
+
+    async def set_title(
+        self, conversation_id: str, name: str | None, description: str | None
+    ) -> None:
+        return None
+
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]
 
