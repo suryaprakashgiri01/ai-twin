@@ -109,6 +109,10 @@ class AlertWorker:
     def settings(self) -> AlertSettings:
         return self._s
 
+    @property
+    def store(self) -> EventStore:
+        return self._store
+
     # --- one pass -----------------------------------------------------------------------------
 
     async def tick(self, now: datetime | None = None) -> None:
