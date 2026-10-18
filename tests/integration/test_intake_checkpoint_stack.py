@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any, TypedDict
 
+import pytest
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
@@ -15,6 +16,8 @@ from app.core.resources import Resources
 from app.db.documents import CheckpointEntry, utcnow
 from app.migrations import m0004_conversation_mode
 from tests.integration.conftest import TEST_DATABASE
+
+pytestmark = pytest.mark.integration
 
 
 class State(TypedDict, total=False):

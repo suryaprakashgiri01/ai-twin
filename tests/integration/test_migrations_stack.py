@@ -19,6 +19,8 @@ from app.db.migrations import (
 )
 from tests.integration.conftest import TEST_DATABASE
 
+pytestmark = pytest.mark.integration
+
 
 async def test_downgrade_then_upgrade_round_trip(resources: Resources) -> None:
     db = resources.mongo[TEST_DATABASE]
