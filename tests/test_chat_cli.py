@@ -32,6 +32,16 @@ def handler(request: httpx.Request) -> httpx.Response:
     path = request.url.path
     if path == "/healthz":
         return httpx.Response(200, json={"status": "ok", "version": "9.9.9"})
+    if path.endswith("/title") and request.method == "POST":
+        return httpx.Response(
+            200,
+            json={
+                "status": "updated",
+                "name": "salary-negotiation-notes",
+                "description": "Compared two offers.",
+                "renamed": True,
+            },
+        )
     if path == "/admin/v1/whoami":
         return httpx.Response(200, json={"name": "owner", "scopes": ["admin"]})
     if path == "/admin/v1/conversations":
@@ -141,6 +151,8 @@ def test_main_lists_and_reports_errors(
     assert "Hello" in out and "kept" in out
     assert "━━ ai-twin · owner chat ━━" in out and 'key "owner"' in out and "API 9.9.9" in out
     assert "Continuing salary-notes (ask)" in out and "Valkey" in out
+    assert "Renamed to salary-negotiation-notes" in out and "About: Compared two offers." in out
+    assert 'make chat-continue ARGS="salary-negotiation-notes"' in out
 
 
 def test_twin_banner_explains_the_intake_before_the_first_prompt(
