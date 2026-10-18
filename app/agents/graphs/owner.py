@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Checkpointer
 from pydantic import BaseModel
 
 from app.agents.generation import AnswerGenerator, Generation, MidStreamError
@@ -99,6 +100,9 @@ class OwnerState(TypedDict, total=False):
     filters: SearchFilters | None
     model: str | None
     prefer: Prefer | None
+    # Raises every model call to at least this tier (the intake assistant passes confidential,
+    # so only local models answer there).
+    min_tier: Tier | None
     started: float
     # route
     route: Route
@@ -145,6 +149,12 @@ def floor_tier(max_tier: Tier) -> Tier:
     return min(Tier.PRIVATE, max_tier)
 
 
+def state_floor(state: OwnerState) -> Tier:
+    floor = floor_tier(state["max_tier"])
+    minimum = state.get("min_tier")
+    return max(floor, minimum) if minimum is not None else floor
+
+
 def visible_history(history: Sequence[Turn], ceiling: Tier, limit: int) -> list[Turn]:
     """Recent turns a model at `ceiling` may read; anything above it is left out."""
     allowed = [t for t in history if turn_tier(t) <= ceiling]
@@ -184,7 +194,7 @@ class OwnerNodes:
         started = time.perf_counter()
         question = state["question"]
         history = visible_history(state["history"], state["max_tier"], self.settings.history_turns)
-        tier = max([floor_tier(state["max_tier"]), *(turn_tier(t) for t in history)])
+        tier = max([state_floor(state), *(turn_tier(t) for t in history)])
         previous = next((t.content for t in reversed(history) if t.role == "user"), None)
         decision, source, model_id = await self._decide(question, previous, history, tier, state)
         # Only the model's decision is checked; the keyword router already reads the question.
@@ -378,16 +388,18 @@ class OwnerNodes:
         if route == "records":
             result = state.get("records")
             text = result.summary() if result else NEEDS_PRIVATE
-            return Plan(tier=Tier.PRIVATE if result else floor_tier(state["max_tier"]), fixed=text)
+            floor = state_floor(state)
+            return Plan(tier=max(Tier.PRIVATE, floor) if result else floor, fixed=text)
         if route == "profile":
             facts = state.get("profile")
             if facts is None:
-                return Plan(tier=floor_tier(state["max_tier"]), fixed=NEEDS_PRIVATE)
+                return Plan(tier=state_floor(state), fixed=NEEDS_PRIVATE)
             system = prompts.GENERATE_PROFILE_V1.format(not_in_vault=prompts.NOT_IN_VAULT)
-            return self._with_messages(state, Tier.PRIVATE, system, f"Profile:\n{facts.render()}")
+            tier = max(Tier.PRIVATE, state_floor(state))
+            return self._with_messages(state, tier, system, f"Profile:\n{facts.render()}")
         tier = max(
             [
-                floor_tier(state["max_tier"]),
+                state_floor(state),
                 *(
                     turn_tier(t)
                     for t in visible_history(
@@ -400,7 +412,7 @@ class OwnerNodes:
 
     async def _plan_kb(self, state: OwnerState) -> Plan:
         hits = state.get("hits", [])
-        floor = floor_tier(state["max_tier"])
+        floor = state_floor(state)
         budget = self.settings.context_tokens
         context = build_context(hits, budget_tokens=budget, ceiling=state["max_tier"])
         tier = max(floor, context.tier or floor)
@@ -487,7 +499,9 @@ def _after_retrieve(state: OwnerState) -> str:
 OwnerGraph = CompiledStateGraph[OwnerState, None, OwnerState, OwnerState]
 
 
-def build_owner_graph(deps: OwnerDeps) -> OwnerGraph:
+def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> OwnerGraph:
+    """`checkpointer=False` when another graph runs this one inside a node: it then keeps no
+    checkpoints of its own instead of inheriting the caller's."""
     nodes = OwnerNodes(deps)
     graph = StateGraph(OwnerState)
     graph.add_node("route", nodes.route)
@@ -514,7 +528,7 @@ def build_owner_graph(deps: OwnerDeps) -> OwnerGraph:
     graph.add_edge("profile", "generate")
     graph.add_edge("generate", "finalize")
     graph.add_edge("finalize", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def initial_state(
@@ -526,6 +540,7 @@ def initial_state(
     filters: SearchFilters | None = None,
     model: str | None = None,
     prefer: Prefer | None = None,
+    min_tier: Tier | None = None,
 ) -> OwnerState:
     return OwnerState(
         conversation_id=conversation_id,
@@ -535,5 +550,6 @@ def initial_state(
         filters=filters,
         model=model,
         prefer=prefer,
+        min_tier=min_tier,
         started=time.perf_counter(),
     )
