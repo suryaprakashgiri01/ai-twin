@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
 
+    # --- owner intake assistant (vault) -----------------------------------------
+    # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.
+    intake_checkpoint_days: int = Field(default=30, ge=1, le=3650)
+
     # --- public agent ----------------------------------------------------------
     # Per visitor (salted hash of the address the portfolio server forwards) and in total.
     public_messages_per_minute: int = Field(default=8, ge=1, le=1000)
