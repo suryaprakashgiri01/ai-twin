@@ -98,11 +98,24 @@ class Prepared:
     history: list[Turn]
 
 
+# A turn's status as the intake outcome score: a write, a discarded draft, or a question back.
+INTAKE_OUTCOMES = {"done": "written", "cancelled": "discarded", "asked": "asked", "draft": "asked"}
+
+
 def _trace_intake(trace: TraceRun, state: dict[str, Any], pending: bool, resumed: bool) -> None:
     status = str(state.get("status") or "chat")
     trace.tag(f"status:{status}")
-    trace.meta(status=status, action=state.get("action"), pending=pending, resumed=resumed)
+    trace.meta(
+        status=status,
+        action=state.get("action"),
+        pending=pending,
+        resumed=resumed,
+        prompt_version=prompts.PROMPT_VERSION,
+    )
     trace.output(state.get("reply") or "")
+    outcome = INTAKE_OUTCOMES.get("draft" if pending and status != "done" else status)
+    if outcome is not None:
+        trace.score("intake_outcome", outcome, data_type="CATEGORICAL")
 
 
 def _config(conversation_id: str) -> RunnableConfig:

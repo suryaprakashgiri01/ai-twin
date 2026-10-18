@@ -179,15 +179,26 @@ def guard_rules(guards: dict[str, Any]) -> list[str]:
 def _trace_public(trace: TraceRun, outcome: Outcome) -> None:
     if outcome.intent == OPPORTUNITY_INTENT:
         trace.restrict("leads")
-    trace.tag(f"intent:{outcome.intent}", "cache_hit" if outcome.cache_hit else "")
+    rules = guard_rules(outcome.guards)
+    trace.tag(
+        f"intent:{outcome.intent}",
+        "cache_hit" if outcome.cache_hit else "",
+        *(f"rule:{rule}" for rule in rules),
+    )
     trace.meta(
         intent=outcome.intent,
         cache_hit=outcome.cache_hit,
         model=outcome.model_id,
-        verdicts=guard_rules(outcome.guards),
+        verdicts=rules,
         seq=outcome.seq,
+        prompt_version=prompts.PROMPT_VERSION,
     )
     trace.output(outcome.answer)
+    output = outcome.guards.get("output_guard")
+    # A cached answer was scored when it was generated.
+    if output and not outcome.cache_hit:
+        trace.score("output_guard", bool(output["passed"]), comment=output.get("rule"))
+        trace.score("grounding", str(output["grounding"]), data_type="CATEGORICAL")
 
 
 def cacheable(state: dict[str, Any]) -> bool:

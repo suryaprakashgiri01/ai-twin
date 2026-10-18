@@ -25,6 +25,7 @@ from app.agents.graphs.owner import (
     build_owner_graph,
     initial_state,
 )
+from app.agents.prompts import owner as owner_prompts
 from app.agents.streaming import StreamingGenerator, sse
 from app.agents.tools.profile import ProfileTool
 from app.agents.tools.records import MongoRecordsTool, RecordsResult
@@ -505,6 +506,7 @@ def _trace_owner_run(trace: TraceRun, state: dict[str, Any]) -> None:
         model=state.get("model_id"),
         seq=state.get("seq"),
         incomplete=bool(state.get("incomplete")),
+        prompt_version=owner_prompts.PROMPT_VERSION,
     )
     trace.output(state.get("answer", ""))
 

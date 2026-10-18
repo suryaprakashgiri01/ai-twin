@@ -97,7 +97,7 @@ class ConversationTitler:
             "title-refresh",
             "intake" if meta.mode == "intake" else "owner",
             session_id=conversation_id,
-            metadata={"tier": tier.label, "turns": len(turns)},
+            metadata={"tier": tier.label, "turns": len(turns), "prompt_version": "title-v1"},
         ) as trace:
             suggestion = await self._suggest(turns, tier)
             trace.tag("outcome:no_model" if suggestion is None else "outcome:suggested")
