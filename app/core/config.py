@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     rerank_min_score: float = Field(default=0.01, ge=0, le=1)
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
+    # How long POST /conversations/{id}/title waits before letting a slow model finish later.
+    title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=60)
 
     # --- owner intake assistant (vault) -----------------------------------------
     # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.

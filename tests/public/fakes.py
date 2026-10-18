@@ -140,6 +140,7 @@ class FakePublicSearcher:
 class PublicMemoryIndex:
     def __init__(self, store: MemoryConversationStore) -> None:
         self.store = store
+        self.locked: set[str] = set()
 
     async def get(self, conversation_id: str) -> ConversationMeta | None:
         meta = self.store.conversations.get(conversation_id)
@@ -169,6 +170,14 @@ class PublicMemoryIndex:
         self, conversation_id: str, name: str | None, description: str | None
     ) -> None:
         return None
+
+    async def lock_name(self, conversation_id: str) -> None:
+        self.locked.add(conversation_id)
+
+    async def save_refresh(
+        self, conversation_id: str, name: str | None, description: str, titled_turns: int
+    ) -> None:
+        await self.set_title(conversation_id, name, description)
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]

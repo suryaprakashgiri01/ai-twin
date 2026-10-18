@@ -314,6 +314,10 @@ class Conversation(Document):
     name: str | None = None
     description: str | None = None
     mode: ConversationMode = "ask"
+    # True once the owner renames it; the automatic title refresh then never changes the name.
+    name_locked: bool = False
+    # message_count when the title was last refreshed, so an unchanged chat is not re-titled.
+    titled_turns: int = 0
 
     class Settings:
         name = "conversations"
