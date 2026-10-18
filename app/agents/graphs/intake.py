@@ -57,7 +57,7 @@ from app.exceptions import AppError
 from app.services.admin_ops import AdminOps, intake_actor
 from app.services.conversations import ConversationService
 from app.services.naming import describe
-from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
+from llm_orchestrator import AllModelsFailedError, Orchestrator, OrchestratorError, Role, Tier
 
 logger = structlog.get_logger(__name__)
 
@@ -66,6 +66,7 @@ HISTORY_TURNS = 6
 HISTORY_CHARS = 600
 RECENT_KEEP = 10
 TITLE_CHARS = 80
+EXTRACT_ATTEMPTS = 2
 
 Status = Literal["asked", "draft", "done", "cancelled", "answer", "chat", "error"]
 
@@ -152,7 +153,8 @@ def pending_prompt(pending: dict[str, Any]) -> str:
         )
     if pending["kind"] == "suggestion":
         return f"{pending['summary']} (yes / no)"
-    return f"{pending['summary']}\n\nSave this? (yes / no / tell me what to change)"
+    verb = "Delete this?" if pending.get("confirm_text") else "Save this?"
+    return f"{pending['summary']}\n\n{verb} (yes / no / tell me what to change)"
 
 
 class IntakeNodes:
@@ -171,7 +173,8 @@ class IntakeNodes:
             return Command(
                 goto=END,
                 update={
-                    "reply": "The local model couldn't read that. Please try again.",
+                    "reply": "The local model couldn't read that. Please try again "
+                    "(is Ollama running? make ollama ARGS=status).",
                     "status": "error",
                 },
             )
@@ -283,10 +286,17 @@ class IntakeNodes:
                 HumanMessage(content=text) if turn["role"] == "user" else AIMessage(content=text)
             )
         messages.append(HumanMessage(content=state["message"]))
-        result = await deps.orchestrator.structured_call(
-            Role.ROUTER, INTAKE_TIER, IntakeDraft, messages, privileged=True
-        )
-        return result.value, result.model_id
+        # A small local model sometimes stops mid-JSON; one more try is cheap.
+        for attempt in range(EXTRACT_ATTEMPTS):
+            try:
+                result = await deps.orchestrator.structured_call(
+                    Role.ROUTER, INTAKE_TIER, IntakeDraft, messages, privileged=True
+                )
+                return result.value, result.model_id
+            except AllModelsFailedError:
+                if attempt == EXTRACT_ATTEMPTS - 1:
+                    raise
+        raise AssertionError("unreachable")  # pragma: no cover
 
     # --- confirm ---------------------------------------------------------------------------
 
