@@ -139,6 +139,11 @@ def _missing_text(spec: ActionSpec, missing: list[str], invalid: dict[str, str])
     return " ".join(parts)
 
 
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text.endswith((".", "?", "!")) else f"{text}."
+
+
 def pending_prompt(pending: dict[str, Any]) -> str:
     if pending["kind"] == "retype":
         return (
@@ -224,9 +229,8 @@ class IntakeNodes:
             "pending": None,
         }
         if resolution.problem or result.missing or invalid:
-            text = resolution.problem or _missing_text(spec, result.missing, invalid)
-            if resolution.problem and result.missing:
-                text += " " + _missing_text(spec, result.missing, {})
+            parts = [resolution.problem or "", _missing_text(spec, result.missing, invalid)]
+            text = " ".join(_sentence(p) for p in parts if p)
             return Command(goto=END, update=update | {"reply": text, "status": "asked"})
         if not spec.write:
             return Command(goto="execute", update=update)
