@@ -104,6 +104,8 @@ class ActionSpec:
     date_fields: tuple[str, ...] = ()
     list_fields: tuple[str, ...] = ()
     lower_fields: tuple[str, ...] = ()
+    # Fields the model may infer rather than copy (a category, a record's kind, a note's title).
+    inferred: tuple[str, ...] = ()
     resolved: tuple[str, ...] = ()
     run: Runner | None = None
     # Payload keys passed to the model; None means every field.
@@ -446,6 +448,7 @@ RELABEL = ActionSpec(
     needs_any=("tier", "category", "tags", "title"),
     model=DocumentPatch,
     model_keys=("tier", "category", "tags", "title"),
+    inferred=("category",),
     target="document",
     list_fields=("tags",),
     lower_fields=("tier",),
@@ -477,6 +480,7 @@ _SPECS = [
         fields={"title": "a short title", "body": "the note text, in the owner's words", **_META},
         required=("title", "body", "category"),
         model=TextIn,
+        inferred=("title", "category"),
         date_fields=("occurred_at",),
         list_fields=("tags",),
         lower_fields=("category", "tier"),
@@ -489,6 +493,7 @@ _SPECS = [
         fields={"urls": "the links", **_META},
         required=("urls", "category"),
         model=UrlsIn,
+        inferred=("category",),
         date_fields=("occurred_at",),
         list_fields=("urls", "tags"),
         lower_fields=("category", "tier"),
@@ -501,6 +506,7 @@ _SPECS = [
         fields={"filename": "the file name only, e.g. resume.pdf", **_META},
         required=("filename", "category"),
         model=InboxFileIn,
+        inferred=("category",),
         date_fields=("occurred_at",),
         list_fields=("tags",),
         lower_fields=("category", "tier"),
@@ -530,6 +536,7 @@ _SPECS = [
         },
         required=("kind", "company", "role", "stage", "date"),
         model=RecordIn,
+        inferred=("kind",),
         date_fields=("date",),
         lower_fields=("kind",),
         run=_add_record,
@@ -605,6 +612,7 @@ _SPECS = [
         description="answer a question about the vault, records or profile (read only)",
         fields={"question": "the owner's question"},
         write=False,
+        inferred=("question",),
     ),
 ]
 

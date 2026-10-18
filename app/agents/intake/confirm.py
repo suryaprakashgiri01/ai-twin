@@ -63,6 +63,8 @@ YES_PHRASES = frozenset(
     }
 )
 NO_WORDS = frozenset({"no", "n", "nope", "nah", "cancel", "discard", "stop", "abort", "drop"})
+AFFIRMATIVE = YES_WORDS | {"fine", "good", "great", "perfect", "yes", "right", "agreed"}
+NEGATIVE = NO_WORDS | {"not", "don't", "dont", "won't", "never", "wrong"}
 NO_PHRASES = frozenset({"never mind", "nevermind", "forget it", "don't", "dont", "not now"})
 EDIT_VERBS = frozenset(
     {
@@ -138,7 +140,18 @@ async def classify_reply(
     except OrchestratorError as exc:
         logger.warning("intake confirm fell back to asking", error_type=type(exc).__name__)
         return None
-    return result.value.decision
+    return checked(result.value.decision, text)
+
+
+def checked(decision: Decision, text: str) -> Decision | None:
+    """A model's yes or no counts only when the reply carries such a word; a write never
+    rests on the model's reading alone. Anything else is read as an edit to the draft."""
+    words = set(_words(text))
+    if decision == "yes":
+        return "yes" if words & AFFIRMATIVE else None
+    if decision == "no":
+        return "no" if words & NEGATIVE else "edit"
+    return decision
 
 
 def retype_matches(expected: str, typed: str) -> bool:

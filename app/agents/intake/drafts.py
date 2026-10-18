@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from zoneinfo import ZoneInfo
 
 import dateparser
+from dateparser.search import search_dates
 from pydantic import BaseModel, Field, ValidationError
 
 if TYPE_CHECKING:
@@ -49,6 +50,14 @@ _WEEKDAY = re.compile(
     r"(?:day)?$"
 )
 _SPACE = re.compile(r"\s+")
+_TOKEN = re.compile(r"[a-z0-9]+")
+_WEEKDAY_IN_TEXT = re.compile(
+    r"\b(?:(?:last|past|previous|this|on)\s+)?(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?"
+    r"|sun)(?:day)?\b"
+)
+# Share of a value's words that must appear in the owner's message for it to count as theirs.
+GROUNDED_SHARE = 0.6
+STEM = 5
 
 
 class IntakeDraft(BaseModel):
@@ -113,19 +122,30 @@ def parse_day(value: Any, tz: ZoneInfo, now: datetime) -> date | None:
             return None
     if (weekday := _weekday(text, today)) is not None:
         return weekday
-    base = now.astimezone(tz).replace(tzinfo=None)
-    parsed = dateparser.parse(
-        text,
-        languages=["en"],
-        settings={
-            "TIMEZONE": str(tz),
-            "RETURN_AS_TIMEZONE_AWARE": False,
-            "DATE_ORDER": "DMY",
-            "PREFER_DATES_FROM": "past",
-            "RELATIVE_BASE": base,
-        },
-    )
+    parsed = dateparser.parse(text, languages=["en"], settings=_dateparser_settings(tz, now))
     return parsed.date() if parsed is not None else None
+
+
+def _dateparser_settings(tz: ZoneInfo, now: datetime) -> Any:
+    return {
+        "TIMEZONE": str(tz),
+        "RETURN_AS_TIMEZONE_AWARE": False,
+        "DATE_ORDER": "DMY",
+        "PREFER_DATES_FROM": "past",
+        "RELATIVE_BASE": now.astimezone(tz).replace(tzinfo=None),
+    }
+
+
+def find_day(text: str, tz: ZoneInfo, now: datetime) -> date | None:
+    """The first date phrase in free text ("round 2, yesterday", "last Friday"), or None."""
+    lowered = text.casefold()
+    if (match := _WEEKDAY_IN_TEXT.search(lowered)) is not None:
+        return _weekday(match.group(0), local_today(tz, now))
+    found = search_dates(lowered, languages=["en"], settings=_dateparser_settings(tz, now)) or []
+    for phrase, when in found:
+        if re.search(r"[a-z/-]", phrase):
+            return when.date()
+    return None
 
 
 def day_value(day: date) -> datetime:
@@ -162,6 +182,64 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [part.strip() for part in value.split(",") if part.strip()]
     return [str(v).strip() for v in value if str(v).strip()]
+
+
+def _tokens(text: str) -> list[str]:
+    return _TOKEN.findall(text.casefold())
+
+
+def grounded(value: Any, source: str) -> bool:
+    """True when the value is (mostly) in the owner's own words: every word of a short value,
+    most words of a longer one. Words match on a shared stem ("interviewed" ~ "interview")."""
+    want = _tokens(str(value))
+    have = set(_tokens(source))
+    if not want:
+        return False
+
+    def seen(token: str) -> bool:
+        return token in have or (len(token) >= STEM and any(h[:STEM] == token[:STEM] for h in have))
+
+    hits = sum(1 for token in want if seen(token))
+    return hits == len(want) if len(want) <= 2 else hits / len(want) >= GROUNDED_SHARE
+
+
+def ground(
+    spec: ActionSpec,
+    extracted: dict[str, Any],
+    message: str,
+    current: dict[str, Any],
+    tz: ZoneInfo,
+    now: datetime,
+) -> tuple[dict[str, Any], list[str]]:
+    """Keep only values the owner actually gave in `message` (or already in the draft); a
+    small model fills gaps with plausible inventions. Dates the model computed are replaced by
+    the date phrase found in the message. Returns the kept values and the dropped field names."""
+    kept: dict[str, Any] = {}
+    dropped: list[str] = []
+    for key, value in extracted.items():
+        if _clean(value) is None:
+            continue
+        if key in spec.inferred or current.get(key) == value:
+            kept[key] = value
+        elif key in spec.date_fields:
+            day = find_day(message, tz, now)
+            if grounded(value, message):
+                kept[key] = value
+            elif day is not None:
+                kept[key] = day_value(day)
+            else:
+                dropped.append(key)
+        elif key in spec.list_fields and isinstance(value, list | str):
+            items = [v for v in _as_list(value) if grounded(v, message)]
+            if items:
+                kept[key] = items
+            else:
+                dropped.append(key)
+        elif grounded(value, message):
+            kept[key] = value
+        else:
+            dropped.append(key)
+    return kept, dropped
 
 
 def merge(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
