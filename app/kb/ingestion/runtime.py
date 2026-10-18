@@ -52,6 +52,7 @@ def build_ingestion(settings: Settings, resources: Resources, llm: LLMServices) 
         ),
         chunk_target=settings.chunk_target_tokens,
         chunk_overlap=settings.chunk_overlap_tokens,
+        events=resources.security_events,
     )
     pool = WorkerPool(pipeline.run, settings.ingest_workers)
     return Ingestion(service=IngestionService(resources.kb, pool), pipeline=pipeline)

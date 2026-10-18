@@ -36,6 +36,7 @@ from app.kb.store import DocumentView, KbStore, SourceView
 from app.kb.vectors import ALL_COLLECTIONS, VectorIndex, VectorPoint, collection_for, point_id
 from app.observability.metrics import INGESTION_JOBS
 from app.observability.tracing import tracing
+from app.services.security_events import SecurityEventWriter
 from app.storage.blobs import BlobStore
 
 logger = structlog.get_logger(__name__)
@@ -65,6 +66,8 @@ class Pipeline:
     ocr: OcrEngine | None = None
     chunk_target: int = 400
     chunk_overlap: int = 60
+    # Failed jobs become `ingestion_failed` ops events (code and kind only).
+    events: SecurityEventWriter | None = None
 
     # --- job ------------------------------------------------------------------------------
 
@@ -82,12 +85,20 @@ class Pipeline:
                 metadata={"job_id": str(source.id), "kind": source.kind},
             ) as trace,
         ):
-            status = await self._run(source)
+            status, code = await self._run(source)
             INGESTION_JOBS.labels(status).inc()
+            if code is not None and self.events is not None:
+                await self.events.record(
+                    "ingestion_failed",
+                    "medium",
+                    rules=[f"ingest:{code}"],
+                    details={"job_id": str(source.id), "kind": source.kind},
+                )
             trace.tag(f"status:{status}")
             trace.meta(status=status)
 
-    async def _run(self, source: SourceView) -> str:
+    async def _run(self, source: SourceView) -> tuple[str, str | None]:
+        """The job's final status, and its error code when it failed."""
         await self._discard_partial(source.id)
         await self.store.update_source(
             source.id,
@@ -102,15 +113,15 @@ class Pipeline:
         except IngestError as exc:
             log.warning("ingestion failed", error_code=exc.code.value)
             await self._fail(source.id, exc.code.value, exc.message)
-            return "failed"
+            return "failed", exc.code.value
         except Exception as exc:
             log.error("ingestion crashed", error_type=type(exc).__name__)
             await self._fail(source.id, IngestErrorCode.INTERNAL.value, "Unexpected error")
-            return "failed"
+            return "failed", IngestErrorCode.INTERNAL.value
         status = "quarantined" if quarantined else "done"
         await self.store.update_source(source.id, status=status, document_ids=document_ids)
         log.info("ingestion finished", status=status, documents=len(document_ids))
-        return status
+        return status, None
 
     async def _fail(self, source_id: PydanticObjectId, code: str, message: str) -> None:
         await self._discard_partial(source_id)

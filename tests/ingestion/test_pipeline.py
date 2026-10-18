@@ -273,3 +273,14 @@ async def test_worker_survives_a_crashing_job() -> None:
     await pool.join()
     await pool.stop()
     assert len(seen) == 2
+
+
+async def test_a_failed_job_records_an_ingestion_failed_event(harness: Harness) -> None:
+    from tests.public.fakes import MemorySecurityEvents
+
+    events = MemorySecurityEvents()
+    harness.pipeline.events = events
+    await harness.ingest(harness.file_source(b"GIF89a....", "secret-plan.gif"))
+    [event] = events.events
+    assert event["kind"] == "ingestion_failed" and event["rules"] == ["ingest:UNSUPPORTED_TYPE"]
+    assert "secret-plan" not in str(event)

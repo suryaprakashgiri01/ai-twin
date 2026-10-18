@@ -25,12 +25,14 @@ from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
 from app.observability import metrics
 from app.observability.tracing import NOOP, Tracing, build_tracing, install
+from app.security.worker import build_alert_worker
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
+from app.services.security_events import recording_exhausted_chains
 from app.services.titling import ConversationTitler
 
 logger = structlog.get_logger(__name__)
@@ -107,6 +109,9 @@ async def _start_services(
     app: FastAPI, settings: Settings, resources: Resources, stack: AsyncExitStack
 ) -> None:
     embedder: Embedder
+    await stack.enter_async_context(
+        recording_exhausted_chains(resources.security_events, resources.redis)
+    )
     # Ingestion workers and owner chat run in the vault only.
     if settings.deployment_profile == "vault":
         ingestion = build_ingestion(settings, resources, app.state.llm)
@@ -130,6 +135,8 @@ async def _start_services(
         hooks=[partial(prune_public, saver)],
     )
     app.state.lead_outbox = await stack.enter_async_context(outbox.running())
+    alerts = build_alert_worker(settings, resources.redis)
+    app.state.alert_worker = await stack.enter_async_context(alerts.running())
     app.state.leads = build_lead_service(settings, resources, app.state.llm, outbox)
     app.state.resume = resume_provider(settings, resources.profile, resources.blobs)
     app.state.public_chat = build_public_chat(

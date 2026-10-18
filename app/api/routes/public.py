@@ -7,17 +7,15 @@ Every route needs a key with `public:read`, except the opportunity form, which n
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request, Security
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from app.auth.dependencies import Principal, api_key_header, require_scopes
+from app.auth.dependencies import Principal, require_scopes
 from app.auth.visitor import Visitor, resolve_visitor
 from app.core.config import Settings
-from app.db.documents import Scope
 from app.exceptions import AppError, ErrorCode
 from app.leads.models import LeadForm, LeadIn
 from app.leads.service import DAY, LeadService
@@ -41,37 +39,9 @@ def _events(request: Request) -> SecurityEventWriter | None:
     return getattr(request.app.state.resources, "security_events", None)
 
 
-def recorded_key(scope: Scope) -> Callable[..., Awaitable[Principal]]:
-    """`require_scopes(scope)`, recording failures as security events (once per window)."""
-    required = require_scopes(scope)
-
-    async def dependency(
-        request: Request, api_key: Annotated[str | None, Security(api_key_header)] = None
-    ) -> Principal:
-        try:
-            return await required(request, api_key)
-        except AppError as exc:
-            events = _events(request)
-            if (
-                exc.code in AUTH_FAILURES
-                and events is not None
-                and await first_in_window(
-                    request.app.state.resources.redis, f"auth:{exc.code.value}", AUTH_EVENT_WINDOW
-                )
-            ):
-                await events.record(
-                    "auth_failed",
-                    "medium",
-                    rules=[exc.code.value],
-                    details={"path": request.url.path},
-                )
-            raise
-
-    return dependency
-
-
-public_key = recorded_key("public:read")
-lead_key = recorded_key("leads:write")
+# `require_scopes` records failures as `auth_failed` events (surface: public).
+public_key = require_scopes("public:read")
+lead_key = require_scopes("leads:write")
 PublicKey = Annotated[Principal, Depends(public_key)]
 LeadKey = Annotated[Principal, Depends(lead_key)]
 

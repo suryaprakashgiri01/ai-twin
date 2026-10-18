@@ -173,6 +173,15 @@ class Settings(BaseSettings):
     # Fraction of runs traced (the Hobby plan has a monthly quota).
     langfuse_sample_rate: float = Field(default=1.0, ge=0, le=1)
 
+    # --- observability: security alert emails (SMTP settings shared with leads) ---------
+    # The only alert recipient; empty = LEAD_EMAIL_TO. Always the owner's own address.
+    alert_email_to: str = ""
+    # One email per policy per cooldown: a storm sends one email and a count.
+    alert_cooldown_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    # The daily digest goes after this hour (0-23) in OWNER_TIMEZONE.
+    alert_digest_hour: int = Field(default=9, ge=0, le=23)
+    alert_poll_seconds: float = Field(default=30.0, ge=1, le=3600)
+
     # --- observability: metrics ---------------------------------------------------
     # Public profile: GET /metrics needs this as a bearer token (unset = 404). The vault's is open.
     metrics_token: SecretStr = SecretStr("")

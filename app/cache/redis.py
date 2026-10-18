@@ -71,6 +71,21 @@ def lead_digest_key(day: str) -> str:
     return f"lead:digest:{day}"
 
 
+def alert_cooldown_key(policy: str) -> str:
+    """Set (with the cooldown as its TTL) when an alert for `policy` has gone out."""
+    return f"alert:cooldown:{policy}"
+
+
+def alert_last_key(policy: str) -> str:
+    """ISO time of the last alert email for `policy`: events after it are a follow-up's count."""
+    return f"alert:last:{policy}"
+
+
+def alert_digest_key(day: str) -> str:
+    """Set when the security digest for one local day (`YYYYMMDD`) has been handled."""
+    return f"alert:digest:{day}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

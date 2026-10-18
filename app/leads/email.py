@@ -51,6 +51,24 @@ class MailSettings:
     timeout: float = 20.0
 
     @classmethod
+    def for_alerts(cls, settings: Settings) -> MailSettings | None:
+        """The lead SMTP settings with the alert recipient (ALERT_EMAIL_TO, else LEAD_EMAIL_TO);
+        None until SMTP, a sender and a recipient are configured."""
+        to = settings.alert_email_to or settings.lead_email_to
+        if not (settings.smtp_host and to and settings.lead_email_from):
+            return None
+        return cls(
+            host=settings.smtp_host,
+            port=settings.smtp_port,
+            username=settings.smtp_username,
+            password=settings.smtp_password.get_secret_value(),
+            security=settings.smtp_security,
+            to=to,
+            sender=settings.lead_email_from,
+            timeout=settings.smtp_timeout_seconds,
+        )
+
+    @classmethod
     def from_settings(cls, settings: Settings) -> MailSettings | None:
         """None until SMTP and both addresses are configured."""
         if not (settings.smtp_host and settings.lead_email_to and settings.lead_email_from):

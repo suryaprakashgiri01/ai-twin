@@ -371,13 +371,22 @@ class SecurityEvent(Document):
     severity: Literal["low", "medium", "high", "critical"]
     details: dict[str, Any] = Field(default_factory=dict)
     visitor_hash: str | None = None
+    # Where an auth failure happened: `admin` or `public`; None for other kinds.
+    surface: Literal["admin", "public"] | None = None
     created_at: datetime = Field(default_factory=utcnow)
+    # Set by the alert worker once the event went out in an alert email, or in a daily digest.
     alerted_at: datetime | None = None
+    digested_at: datetime | None = None
 
     class Settings:
         name = "security_events"
         indexes: ClassVar[list[IndexModel]] = [
-            IndexModel([("kind", ASCENDING), ("created_at", DESCENDING)], name="kind_time")
+            IndexModel([("kind", ASCENDING), ("created_at", DESCENDING)], name="kind_time"),
+            IndexModel([("alerted_at", ASCENDING), ("created_at", DESCENDING)], name="alert_time"),
+            IndexModel(
+                [("digested_at", ASCENDING), ("created_at", DESCENDING)], name="digest_time"
+            ),
+            IndexModel([("created_at", DESCENDING)], name="time"),
         ]
 
 
