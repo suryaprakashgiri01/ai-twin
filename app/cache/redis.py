@@ -56,6 +56,11 @@ def security_burst_key(scope: str) -> str:
     return f"sec:burst:{scope}"
 
 
+def lead_digest_key(day: str) -> str:
+    """Set when the suppressed-leads digest for one local day (`YYYYMMDD`) has gone out."""
+    return f"lead:digest:{day}"
+
+
 async def open_redis(settings: Settings) -> Redis:
     client: Redis = Redis.from_url(settings.redis_url, decode_responses=True)
     try:

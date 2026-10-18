@@ -239,7 +239,7 @@ class LeadDetails(BaseModel):
     link: str | None = None
 
 
-class Lead(Document):
+class LeadFields(BaseModel):
     """An opportunity from the public assistant or the form endpoint.
 
     `email` is stored as given (validated); logs carry only a salted hash of it. `email_key` and
@@ -276,6 +276,8 @@ class Lead(Document):
     # LEAD_RETENTION_DAYS after creation; the TTL index deletes the lead then.
     expires_at: datetime | None = None
 
+
+class Lead(LeadFields, Document):
     class Settings:
         name = "leads"
         indexes: ClassVar[list[IndexModel]] = [

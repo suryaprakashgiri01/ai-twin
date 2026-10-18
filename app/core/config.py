@@ -126,6 +126,20 @@ class Settings(BaseSettings):
     # Synced canary hashes (deploy-public provisions it); the vault reads MongoDB instead.
     public_canary_hashes_path: Path | None = None
 
+    # --- opportunities: lead email (SMTP) -------------------------------------
+    # Gmail: smtp.gmail.com, 587, starttls, an app password. Empty host = leads are stored
+    # but not emailed until SMTP is configured.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    # starttls (587), tls (465) or none (a local debug server only).
+    smtp_security: Literal["starttls", "tls", "none"] = "starttls"
+    smtp_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    # The only recipient lead mail ever has; `From` is always LEAD_EMAIL_FROM (the owner's).
+    lead_email_to: str = ""
+    lead_email_from: str = ""
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False
