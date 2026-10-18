@@ -15,13 +15,13 @@ from pydantic import BaseModel, ValidationError
 from tenacity.wait import wait_base
 
 from llm_orchestrator.executor import CallContext, Executor, usage_of
+from llm_orchestrator.hooks import exhausted
 from llm_orchestrator.inventory import Inventory
 from llm_orchestrator.overrides import OverrideStore
 from llm_orchestrator.policy import rejection
 from llm_orchestrator.providers import ModelFactory, ProviderSecrets, default_factory, is_available
 from llm_orchestrator.selection import Selection, select
 from llm_orchestrator.types import (
-    AllModelsFailedError,
     CallResult,
     ModelSpec,
     Prefer,
@@ -141,7 +141,7 @@ class Orchestrator:
                 fallback_used=index > 0,
                 usage=usage_of(message),
             )
-        raise AllModelsFailedError(role, tier, ctx.attempts)
+        raise exhausted(role, tier, ctx.attempts)
 
     async def structured_call[T: BaseModel](
         self,
@@ -166,7 +166,7 @@ class Orchestrator:
                 return StructuredResult[T](
                     value=value, model_id=spec.id, attempts=ctx.attempts, fallback_used=index > 0
                 )
-        raise AllModelsFailedError(role, tier, ctx.attempts)
+        raise exhausted(role, tier, ctx.attempts)
 
     async def structured[T: BaseModel](
         self,

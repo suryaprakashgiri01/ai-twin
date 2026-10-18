@@ -55,6 +55,7 @@ from app.kb.retrieval.retriever import Hit, MongoDocumentFilter
 from app.leads.capture import OPPORTUNITY as OPPORTUNITY_INTENT
 from app.leads.capture import CaptureDeps, CaptureSettings
 from app.leads.service import LeadService
+from app.observability.metrics import ANSWER_CACHE
 from app.observability.tracing import TraceRun, current_run, tracing
 from app.services.answer_cache import AnswerCache, CachedAnswer
 from app.services.conversations import ConversationRef, ConversationService, Turn
@@ -332,7 +333,9 @@ class PublicChatService:
         """Only a conversation's first message can be answered from (or stored in) the cache."""
         if not prepared.single_turn or self._cache is None or not self._cache.enabled:
             return None, None
-        return await self._cache.lookup(prepared.request.message)
+        version, cached = await self._cache.lookup(prepared.request.message)
+        ANSWER_CACHE.labels("hit" if cached is not None else "miss").inc()
+        return version, cached
 
     async def _store(self, version: int, prepared: PublicPrepared, outcome: Outcome) -> None:
         assert self._cache is not None

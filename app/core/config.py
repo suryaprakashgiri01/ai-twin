@@ -173,6 +173,10 @@ class Settings(BaseSettings):
     # Fraction of runs traced (the Hobby plan has a monthly quota).
     langfuse_sample_rate: float = Field(default=1.0, ge=0, le=1)
 
+    # --- observability: metrics ---------------------------------------------------
+    # Public profile: GET /metrics needs this as a bearer token (unset = 404). The vault's is open.
+    metrics_token: SecretStr = SecretStr("")
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False

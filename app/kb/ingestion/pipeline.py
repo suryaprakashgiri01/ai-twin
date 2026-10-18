@@ -34,6 +34,7 @@ from app.kb.ingestion.parsers.image import OcrEngine
 from app.kb.ingestion.redaction import Redactor
 from app.kb.store import DocumentView, KbStore, SourceView
 from app.kb.vectors import ALL_COLLECTIONS, VectorIndex, VectorPoint, collection_for, point_id
+from app.observability.metrics import INGESTION_JOBS
 from app.observability.tracing import tracing
 from app.storage.blobs import BlobStore
 
@@ -82,6 +83,7 @@ class Pipeline:
             ) as trace,
         ):
             status = await self._run(source)
+            INGESTION_JOBS.labels(status).inc()
             trace.tag(f"status:{status}")
             trace.meta(status=status)
 

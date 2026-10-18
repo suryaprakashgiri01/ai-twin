@@ -22,6 +22,7 @@ from app.core.context import set_request_id, set_session_id, set_user_id
 from app.core.telemetry import TRACE_ID_HEADER, current_trace_id, tracer
 from app.exceptions.handlers import render_unhandled
 from app.middleware.routing import route_template
+from app.observability.metrics import observe_request
 
 REQUEST_ID_HEADER = "X-Request-ID"
 # Groups several requests (a conversation, a test run) into one session in logs and
@@ -116,6 +117,7 @@ class RequestContextMiddleware:
             path = scope["path"]
             route = route_template(scope)
             _finish_span(span, scope["method"], route, status_code)
+            observe_request(route, scope["method"], status_code, duration_ms / 1000)
             fields = {
                 "method": scope["method"],
                 "path": path,

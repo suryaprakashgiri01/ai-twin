@@ -29,6 +29,7 @@ from app.leads.models import LeadIn, LeadSource, dedupe_key, email_hash
 from app.leads.store import LeadStore
 from app.leads.triage import FitFactsSource, PublicFitFacts, fit_note, triage
 from app.leads.turnstile import Turnstile
+from app.observability.metrics import LEADS
 from app.observability.tracing import current_run, tracing
 from app.services.security_events import SecurityEventWriter, first_in_window
 from llm_orchestrator.classify import Classifier
@@ -115,6 +116,7 @@ class LeadService:
                 conversation_id=conversation_id,
                 summary=summary,
             )
+            LEADS.labels(result.outcome, result.status or "none").inc()
             trace.tag(f"outcome:{result.outcome}")
             trace.meta(outcome=result.outcome, status=result.status, kind=result.refusal)
             return result

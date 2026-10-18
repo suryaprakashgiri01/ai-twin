@@ -23,6 +23,7 @@ from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.leads.outbox import build_outbox
 from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
+from app.observability import metrics
 from app.observability.tracing import NOOP, Tracing, build_tracing, install
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
@@ -46,6 +47,7 @@ def create_app(
     settings = settings or get_settings()
     setup_logging(level=settings.log_level, log_format=settings.log_format)
     setup_telemetry(settings)
+    metrics.install_llm_metrics()
     open_storage = resources_factory or open_resources
 
     @asynccontextmanager
@@ -93,6 +95,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(public.router)
     # The public deployment has no admin surface at all, not merely a locked one.
     if settings.deployment_profile == "vault":

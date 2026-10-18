@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 
 from app.cache.redis import security_burst_key
 from app.db.documents import SecurityEvent
+from app.observability.metrics import SECURITY_EVENTS
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +60,7 @@ class MongoSecurityEvents:
         visitor_hash: str | None = None,
         details: Mapping[str, Detail] | None = None,
     ) -> None:
+        SECURITY_EVENTS.labels(kind, severity).inc()
         body = {"rules": list(rules), **(details or {})}
         try:
             await SecurityEvent(

@@ -27,6 +27,7 @@ from app.core.config import Settings
 from app.db.documents import utcnow
 from app.leads.email import Mailer, MailError, MailSettings, SmtpMailer, render_digest, render_lead
 from app.leads.store import LeadStore, StoredLead
+from app.observability.metrics import EMAILS
 from app.services.security_events import SecurityEventWriter
 
 logger = structlog.get_logger(__name__)
@@ -105,8 +106,10 @@ class LeadOutbox:
         try:
             await mailer.send(render_lead(lead, mailer, self._s.timezone))
         except Exception as exc:
+            EMAILS.labels("lead", "failed").inc()
             await self._failed(lead, attempts, _error_code(exc), now)
             return 0
+        EMAILS.labels("lead", "sent").inc()
         await self._store.update(
             lead.id,
             {
@@ -161,10 +164,12 @@ class LeadOutbox:
         try:
             await self._mailer.send(render_digest(leads, self._mailer, self._s.timezone))
         except Exception as exc:
+            EMAILS.labels("lead_digest", "failed").inc()
             # Let the next pass try again.
             await self._redis.delete(key)
             logger.warning("lead digest failed", error_code=_error_code(exc), leads=len(leads))
             return 0
+        EMAILS.labels("lead_digest", "sent").inc()
         for lead in leads:
             await self._store.update(lead.id, {"digested_at": now})
         logger.info("lead digest sent", leads=len(leads))
