@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     typesafe_api_key: SecretStr | None = None
     jev_model: str = "jev-1.13.0"
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    # Local models (Ollama) on a CPU can take far longer to start answering a long prompt.
+    llm_local_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
     llm_max_attempts: int = Field(default=3, ge=1, le=10)
     model_inventory_path: Path = DEFAULT_MODEL_INVENTORY
     # Offline stand-in model for keyless local runs and tests.

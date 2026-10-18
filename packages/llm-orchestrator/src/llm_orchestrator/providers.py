@@ -137,8 +137,13 @@ def build_chat_model(spec: ModelSpec, secrets: ProviderSecrets, timeout: float) 
             return MockChatModel()
 
 
-def default_factory(secrets: ProviderSecrets, timeout: float) -> ModelFactory:
+def default_factory(
+    secrets: ProviderSecrets, timeout: float | Callable[[ModelSpec], float]
+) -> ModelFactory:
+    """`timeout` is one value for every model, or a function picking one per model."""
+
     def factory(spec: ModelSpec) -> BaseChatModel:
-        return build_chat_model(spec, secrets, timeout)
+        seconds = timeout(spec) if callable(timeout) else timeout
+        return build_chat_model(spec, secrets, seconds)
 
     return factory
