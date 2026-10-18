@@ -25,6 +25,7 @@ from app.agents.graphs.owner import (
     build_owner_graph,
     initial_state,
 )
+from app.agents.prompts import owner as owner_prompts
 from app.agents.streaming import StreamingGenerator, sse
 from app.agents.tools.profile import ProfileTool
 from app.agents.tools.records import MongoRecordsTool, RecordsResult
@@ -37,6 +38,7 @@ from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
 from app.kb.retrieval.retriever import MongoDocumentFilter, Retriever, SearchFilters
+from app.observability.tracing import TraceRun, tracing
 from app.services.conversations import ConversationService, Turn
 from app.services.naming import (
     DESCRIPTION_MAX,
@@ -337,16 +339,25 @@ class OwnerChatService:
         self, started: tuple[_Run, OwnerState]
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         run, state = started
-        try:
-            async for item in self._graph.astream(state, stream_mode=["updates", "custom"]):
-                mode, chunk = cast(tuple[str, Any], item)
-                for event in self._on_chunk(run, mode, chunk):
-                    yield event
-        except AppError as exc:
-            yield "error", self._error(run, exc.code, exc.message)
-        except Exception as exc:
-            logger.error("owner chat failed", error_type=type(exc).__name__)
-            yield "error", self._error(run, ErrorCode.INTERNAL_ERROR, "Chat failed")
+        with tracing().run(
+            "owner-chat",
+            "owner",
+            input=state["question"],
+            session_id=run.conversation_id,
+            metadata={"max_tier": state["max_tier"].label},
+        ) as trace:
+            try:
+                async for item in self._graph.astream(state, stream_mode=["updates", "custom"]):
+                    mode, chunk = cast(tuple[str, Any], item)
+                    for event in self._on_chunk(run, mode, chunk):
+                        yield event
+            except AppError as exc:
+                yield "error", self._error(run, exc.code, exc.message)
+            except Exception as exc:
+                logger.error("owner chat failed", error_type=type(exc).__name__)
+                yield "error", self._error(run, ErrorCode.INTERNAL_ERROR, "Chat failed")
+            finally:
+                _trace_owner_run(trace, run.state)
 
     def _on_chunk(self, run: _Run, mode: str, chunk: Any) -> list[tuple[str, dict[str, Any]]]:
         if mode == "custom":
@@ -481,6 +492,23 @@ class OwnerChatService:
         return ConversationDetail(
             **meta.model_dump(exclude={"channel", "visitor_hash"}), turns=turns
         )
+
+
+def _trace_owner_run(trace: TraceRun, state: dict[str, Any]) -> None:
+    tier: Tier | None = state.get("tier")
+    trace.tag(f"route:{state.get('route', 'chat')}")
+    if state.get("incomplete") or state.get("error") is not None:
+        trace.tag("incomplete")
+    trace.meta(
+        route=state.get("route"),
+        route_source=state.get("route_source"),
+        tier=tier.label if tier is not None else None,
+        model=state.get("model_id"),
+        seq=state.get("seq"),
+        incomplete=bool(state.get("incomplete")),
+        prompt_version=owner_prompts.PROMPT_VERSION,
+    )
+    trace.output(state.get("answer", ""))
 
 
 def owner_deps(

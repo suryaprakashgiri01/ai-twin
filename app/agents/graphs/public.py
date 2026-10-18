@@ -48,6 +48,7 @@ from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import DocumentFilter, Hit, Retriever
 from app.leads.capture import OPPORTUNITY, CaptureDeps, CaptureNodes
+from app.observability.metrics import GUARD_DECISIONS, SCOPE_INTENTS
 from app.services.conversations import Turn
 from app.services.security_events import Detail, SecurityEventWriter
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
@@ -170,6 +171,9 @@ class PublicNodes:
                     "conversation_id": state["conversation_id"],
                 },
             )
+        GUARD_DECISIONS.labels(
+            f"input:{verdict.layer or 'all'}", "allowed" if verdict.allowed else "blocked"
+        ).inc()
         _step("input_guard", started, allowed=verdict.allowed, rules=list(verdict.rules))
         return update
 
@@ -198,6 +202,7 @@ class PublicNodes:
             update["answer"] = FIXED_REPLIES[intent]
         elif intent in PROFILE_INTENTS:
             update["answer"] = await self.deps.templates.reply(intent)
+        SCOPE_INTENTS.labels(intent).inc()
         _step("scope", started, intent=intent, source=decision.source)
         return update
 
@@ -259,6 +264,9 @@ class PublicNodes:
         if not verdict.passed:
             # The visitor sees only the safe fallback; the blocked answer goes nowhere.
             update |= {"answer": prompts.NO_CONTEXT, "sources": []}
+        GUARD_DECISIONS.labels(
+            f"output:{verdict.check or 'all'}", "passed" if verdict.passed else "blocked"
+        ).inc()
         await self._record_output(state, verdict)
         _step("output_guard", started, passed=verdict.passed, rule=verdict.rule)
         return update

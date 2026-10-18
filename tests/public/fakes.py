@@ -112,6 +112,7 @@ class MemorySecurityEvents:
         rules: Sequence[str] = (),
         visitor_hash: str | None = None,
         details: Mapping[str, Any] | None = None,
+        surface: str | None = None,
     ) -> None:
         self.events.append(
             {
@@ -120,6 +121,7 @@ class MemorySecurityEvents:
                 "rules": list(rules),
                 "visitor_hash": visitor_hash,
                 "details": dict(details or {}),
+                "surface": surface,
             }
         )
 

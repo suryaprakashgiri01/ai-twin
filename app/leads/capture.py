@@ -43,6 +43,7 @@ from app.leads.models import (
     clean,
 )
 from app.leads.service import LeadService
+from app.observability.masking import channel_scope
 from app.services.conversations import Turn
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
 
@@ -333,9 +334,11 @@ class CaptureNodes:
             ),
         ]
         try:
-            result = await self.deps.orchestrator.structured_call(
-                Role.GENERATOR, LEAD_TIER, LeadDraft, messages
-            )
+            # The extracted fields are a lead's: traced under the lead policy (always masked).
+            with channel_scope("leads"):
+                result = await self.deps.orchestrator.structured_call(
+                    Role.GENERATOR, LEAD_TIER, LeadDraft, messages
+                )
         except OrchestratorError as exc:
             logger.warning("lead extraction failed", error_type=type(exc).__name__)
             return {}
@@ -399,7 +402,8 @@ class CaptureNodes:
             HumanMessage(content=f"Transcript:\n{text}"),
         ]
         try:
-            result = await self.deps.orchestrator.chat(Role.GENERATOR, LEAD_TIER, messages)
+            with channel_scope("leads"):
+                result = await self.deps.orchestrator.chat(Role.GENERATOR, LEAD_TIER, messages)
         except OrchestratorError as exc:
             logger.warning("lead summary failed", error_type=type(exc).__name__)
             return None

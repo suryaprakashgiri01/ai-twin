@@ -40,6 +40,7 @@ from app.core.resources import Resources
 from app.db.documents import ConversationMode, utcnow
 from app.exceptions import AppError, ErrorCode
 from app.kb.ingestion.runtime import Ingestion
+from app.observability.tracing import TraceRun, tracing
 from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
@@ -95,6 +96,26 @@ class Prepared:
     conversation_id: str
     key_name: str
     history: list[Turn]
+
+
+# A turn's status as the intake outcome score: a write, a discarded draft, or a question back.
+INTAKE_OUTCOMES = {"done": "written", "cancelled": "discarded", "asked": "asked", "draft": "asked"}
+
+
+def _trace_intake(trace: TraceRun, state: dict[str, Any], pending: bool, resumed: bool) -> None:
+    status = str(state.get("status") or "chat")
+    trace.tag(f"status:{status}")
+    trace.meta(
+        status=status,
+        action=state.get("action"),
+        pending=pending,
+        resumed=resumed,
+        prompt_version=prompts.PROMPT_VERSION,
+    )
+    trace.output(state.get("reply") or "")
+    outcome = INTAKE_OUTCOMES.get("draft" if pending and status != "done" else status)
+    if outcome is not None:
+        trace.score("intake_outcome", outcome, data_type="CATEGORICAL")
 
 
 def _config(conversation_id: str) -> RunnableConfig:
@@ -181,19 +202,29 @@ class IntakeService:
         graph_input: Any = (
             Command(resume=prepared.request.message, update=values) if resumed else values
         )
-        try:
-            async for item in self._graph.astream(graph_input, config, stream_mode="custom"):
-                yield "token", {"text": item["token"]}
-            after = await self._graph.aget_state(config)
-        except AppError as exc:
-            yield "error", self._error(cid, exc.code, exc.message)
-            return
-        except Exception as exc:
-            logger.error("intake turn failed", error_type=type(exc).__name__)
-            yield "error", self._error(cid, ErrorCode.INTERNAL_ERROR, "The assistant failed")
-            return
-        for event in await self._finish(prepared, after.values, after.interrupts, resumed):
-            yield event
+        with tracing().run(
+            "intake-turn",
+            "intake",
+            input=prepared.request.message,
+            session_id=cid,
+            metadata={"mode": "intake", "tier": INTAKE_TIER.label},
+        ) as trace:
+            try:
+                async for item in self._graph.astream(graph_input, config, stream_mode="custom"):
+                    yield "token", {"text": item["token"]}
+                after = await self._graph.aget_state(config)
+            except AppError as exc:
+                trace.tag("status:error")
+                yield "error", self._error(cid, exc.code, exc.message)
+                return
+            except Exception as exc:
+                trace.tag("status:error")
+                logger.error("intake turn failed", error_type=type(exc).__name__)
+                yield "error", self._error(cid, ErrorCode.INTERNAL_ERROR, "The assistant failed")
+                return
+            _trace_intake(trace, after.values, bool(after.interrupts), resumed)
+            for event in await self._finish(prepared, after.values, after.interrupts, resumed):
+                yield event
         logger.info(
             "intake turn",
             status=after.values.get("status"),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
@@ -15,21 +16,28 @@ from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
 from app.core.resources import Resources, ResourcesFactory, open_resources
+from app.core.telemetry import setup_telemetry, shutdown_telemetry
 from app.exceptions.handlers import register_exception_handlers
 from app.kb.embedding import Embedder, FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.leads.outbox import build_outbox
 from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
+from app.observability import metrics
+from app.observability.tracing import NOOP, Tracing, build_tracing, install
+from app.security.worker import build_alert_worker
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
+from app.services.security_events import recording_exhausted_chains
 from app.services.titling import ConversationTitler
 
 logger = structlog.get_logger(__name__)
+
+SHUTDOWN_FLUSH_SECONDS = 5.0
 
 
 def create_app(
@@ -40,11 +48,17 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(level=settings.log_level, log_format=settings.log_format)
+    setup_telemetry(settings)
+    metrics.install_llm_metrics()
     open_storage = resources_factory or open_resources
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        tracing = build_tracing(settings)
+        install(tracing)
+        app.state.tracing = tracing
         async with open_storage(settings) as resources, AsyncExitStack() as stack:
+            stack.push_async_callback(_stop_tracing, tracing)
             app.state.resources = resources
             # Tests may hand in stand-in resources and wire services themselves.
             if isinstance(resources, Resources):
@@ -56,6 +70,7 @@ def create_app(
                 version=settings.service_version,
             )
             yield
+        shutdown_telemetry()
         logger.info("service stopped")
 
     app = FastAPI(
@@ -63,11 +78,15 @@ def create_app(
         version=settings.service_version,
         description=(
             "Personal knowledge base and portfolio AI twin.\n\n"
-            "**Tracing:** every response carries `X-Request-ID`; send `X-Session-ID` to group "
+            "**Tracing:** every response carries `X-Request-ID` and `X-Trace-ID` (the trace id "
+            "on the request's log lines and its Langfuse trace); send `X-Session-ID` to group "
             "requests.\n\n"
             '**Errors:** always `{"error": {code, message, request_id, details?}}`.'
         ),
         lifespan=lifespan,
+        # Our middleware owns the server span: FastAPI's native one would adopt a caller's
+        # `traceparent`, letting a visitor choose the trace id.
+        telemetry={"tracing": False, "metrics": False, "logs": False, "operation_spans": False},
     )
     app.state.settings = settings
     app.state.health_checks = list(
@@ -78,6 +97,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(public.router)
     # The public deployment has no admin surface at all, not merely a locked one.
     if settings.deployment_profile == "vault":
@@ -89,6 +109,9 @@ async def _start_services(
     app: FastAPI, settings: Settings, resources: Resources, stack: AsyncExitStack
 ) -> None:
     embedder: Embedder
+    await stack.enter_async_context(
+        recording_exhausted_chains(resources.security_events, resources.redis)
+    )
     # Ingestion workers and owner chat run in the vault only.
     if settings.deployment_profile == "vault":
         ingestion = build_ingestion(settings, resources, app.state.llm)
@@ -112,6 +135,8 @@ async def _start_services(
         hooks=[partial(prune_public, saver)],
     )
     app.state.lead_outbox = await stack.enter_async_context(outbox.running())
+    alerts = build_alert_worker(settings, resources.redis)
+    app.state.alert_worker = await stack.enter_async_context(alerts.running())
     app.state.leads = build_lead_service(settings, resources, app.state.llm, outbox)
     app.state.resume = resume_provider(settings, resources.profile, resources.blobs)
     app.state.public_chat = build_public_chat(
@@ -123,6 +148,15 @@ async def _start_services(
         leads=app.state.leads,
         checkpointer=saver,
     )
+
+
+async def _stop_tracing(tracing: Tracing) -> None:
+    """Flush pending traces, but never hold shutdown hostage to an unreachable Langfuse."""
+    install(NOOP)
+    try:
+        await asyncio.wait_for(asyncio.to_thread(tracing.shutdown), timeout=SHUTDOWN_FLUSH_SECONDS)
+    except TimeoutError:
+        logger.warning("langfuse flush timed out at shutdown")
 
 
 def _overrides(app: FastAPI) -> OverrideStore | None:

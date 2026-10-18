@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from app.core.logging import quiet_presidio
 from app.guardrails.identifiers import Span, rule_spans
 
 logger = structlog.get_logger(__name__)
@@ -70,6 +71,18 @@ class Detector(Protocol):
         ...
 
 
+def ner_configuration(nlp: Any) -> Any:
+    """Only spaCy's PERSON label is used; every other label is ignored up front, so presidio
+    does not warn "Entity X is not mapped" for each GPE, ORG or DATE it meets."""
+    from presidio_analyzer.nlp_engine import NerModelConfiguration
+
+    labels = set(nlp.get_pipe("ner").labels) if "ner" in nlp.pipe_names else set()
+    return NerModelConfiguration(
+        model_to_presidio_entity_mapping={"PERSON": "PERSON", "PER": "PERSON"},
+        labels_to_ignore=sorted(labels - {"PERSON", "PER"}),
+    )
+
+
 class PresidioDetector:
     """Presidio with only the recognisers we use, on an already-loaded spaCy pipeline."""
 
@@ -85,7 +98,11 @@ class PresidioDetector:
             SpacyRecognizer,
         )
 
-        engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": SPACY_MODEL}])
+        quiet_presidio()
+        engine = SpacyNlpEngine(
+            models=[{"lang_code": "en", "model_name": SPACY_MODEL}],
+            ner_model_configuration=ner_configuration(nlp),
+        )
         # Hand presidio the loaded pipeline so it never tries to download one.
         engine.nlp = {"en": nlp}  # type: ignore[assignment]  # set by load() otherwise
         registry = RecognizerRegistry(

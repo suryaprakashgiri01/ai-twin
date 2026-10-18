@@ -21,6 +21,7 @@ from langchain_core.runnables import RunnableConfig
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_random_exponential
 from tenacity.wait import wait_base
 
+from llm_orchestrator.hooks import AttemptEvent, notify_attempt
 from llm_orchestrator.providers import ModelFactory
 from llm_orchestrator.types import Attempt, ModelSpec, ProviderError, Role, Tier, TokenUsage
 
@@ -131,6 +132,8 @@ class Executor:
                 "llm_role": ctx.role.value,
                 "llm_tier": ctx.tier.label,
                 "llm_model": spec.id,
+                # Read by tracing callbacks (Langfuse) as the generation's model name.
+                "ls_model_name": spec.model,
             },
         }
         kwargs: dict[str, Any] = {} if ctx.max_tokens is None else {"max_tokens": ctx.max_tokens}
@@ -215,4 +218,18 @@ def log_attempt(
         output_tokens=usage.output_tokens,
         error_type=error_type,
         status_code=status_code,
+    )
+    notify_attempt(
+        AttemptEvent(
+            role=ctx.role.value,
+            tier=ctx.tier.label,
+            model_id=spec.id,
+            provider=spec.provider.value,
+            number=number,
+            outcome=outcome,
+            latency_ms=latency_ms,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            error_type=error_type,
+        )
     )

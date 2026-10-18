@@ -20,7 +20,6 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents.generation import Generation, MidStreamError
 from llm_orchestrator import (
-    AllModelsFailedError,
     Attempt,
     ModelSpec,
     Orchestrator,
@@ -30,6 +29,7 @@ from llm_orchestrator import (
     TokenUsage,
 )
 from llm_orchestrator.executor import CallContext, classify_error, log_attempt
+from llm_orchestrator.hooks import exhausted
 
 logger = structlog.get_logger(__name__)
 
@@ -85,7 +85,7 @@ class StreamingGenerator:
             usage = TokenUsage(input_tokens=out.input_tokens, output_tokens=out.output_tokens)
             log_attempt(ctx, spec, number=1, outcome="ok", latency_ms=_ms(started), usage=usage)
             return
-        raise AllModelsFailedError(Role.GENERATOR, tier, ctx.attempts)
+        raise exhausted(Role.GENERATOR, tier, ctx.attempts)
 
     async def _chunks(
         self,
@@ -100,6 +100,8 @@ class StreamingGenerator:
                 "llm_role": ctx.role.value,
                 "llm_tier": ctx.tier.label,
                 "llm_model": spec.id,
+                # Read by tracing callbacks (Langfuse) as the generation's model name.
+                "ls_model_name": spec.model,
             }
         }
         iterator = aiter(chat.astream(list(messages), config=config))
