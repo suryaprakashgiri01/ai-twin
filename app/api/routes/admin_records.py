@@ -1,4 +1,5 @@
-"""Applications and interviews as structured records (company, role, stage, date, notes)."""
+"""Job-search pipeline records (applications, assessments, interviews, outcomes): company, role,
+stage, date, notes."""
 
 from __future__ import annotations
 
