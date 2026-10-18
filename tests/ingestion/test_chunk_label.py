@@ -183,3 +183,20 @@ def test_rule_floors_and_hints() -> None:
     assert rule_label(item("project", source_kind="github"))[0] == Tier.PUBLIC
     assert rule_label(item("anything-else"))[0] == Tier.PRIVATE
     assert "suggest public" in rule_label(item("resume"))[1]
+
+
+@pytest.mark.parametrize(
+    ("category", "tier"),
+    [
+        ("offer", Tier.CONFIDENTIAL),
+        ("assessment", Tier.PRIVATE),
+        ("job-description", Tier.PRIVATE),
+        ("achievement", Tier.PRIVATE),
+        ("testimonial", Tier.PRIVATE),
+        ("learning", Tier.PRIVATE),
+    ],
+)
+def test_new_categories_have_rules(category: str, tier: Tier) -> None:
+    got, reason = rule_label(item(category))
+    assert got is tier
+    assert "default" not in reason

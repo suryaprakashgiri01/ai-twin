@@ -42,6 +42,13 @@ CATEGORIES: tuple[str, ...] = (
     "profile-link",
     "blog",
     "persona",
+    # Job-search and growth material (added after first owner testing).
+    "assessment",
+    "offer",
+    "achievement",
+    "testimonial",
+    "job-description",
+    "learning",
 )
 
 
@@ -58,6 +65,12 @@ CATEGORY_RULES: dict[str, CategoryRule] = {
     "marksheet": CategoryRule(Tier.RESTRICTED, "marksheets are blob-only"),
     "resume": CategoryRule(Tier.PRIVATE, "resume; suggest public after review"),
     "certification": CategoryRule(Tier.PRIVATE, "certification name; suggest public after review"),
+    "offer": CategoryRule(Tier.CONFIDENTIAL, "offer details are confidential"),
+    "assessment": CategoryRule(Tier.PRIVATE, "take-home or test material stays private"),
+    "job-description": CategoryRule(Tier.PRIVATE, "a role's job description stays private"),
+    "achievement": CategoryRule(Tier.PRIVATE, "achievement; suggest public after review"),
+    "testimonial": CategoryRule(Tier.PRIVATE, "testimonial; public only with the author's consent"),
+    "learning": CategoryRule(Tier.PRIVATE, "learning notes; suggest public after review"),
     "blog": CategoryRule(Tier.PUBLIC, "published writing"),
     "profile-link": CategoryRule(Tier.PUBLIC, "a public profile"),
 }
