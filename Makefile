@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -50,6 +50,15 @@ import: ## Dry run of ARGS="vault/exports/X.atv"; add --apply to restore
 
 check: ## Quality gate: ruff, mypy strict, pytest + coverage
 	$(PY) scripts.check
+
+chat: ## Chat with the vault in the terminal (new conversation; ARGS="rename X new-name")
+	$(PY) scripts.chat $(ARGS)
+
+chat-list: ## List conversations: name, id, updated, turns, description
+	$(PY) scripts.chat list $(ARGS)
+
+chat-continue: ## Continue a conversation: ARGS="<name|id>"
+	$(PY) scripts.chat continue $(ARGS)
 
 run: ## Run the API locally (reload)
 	$(PY) app.main --reload
