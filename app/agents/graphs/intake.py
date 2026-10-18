@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -67,6 +68,7 @@ HISTORY_CHARS = 600
 RECENT_KEEP = 10
 TITLE_CHARS = 80
 EXTRACT_ATTEMPTS = 2
+_TYPED_ID = re.compile(r"\b[0-9a-f]{24}\b")
 
 Status = Literal["asked", "draft", "done", "cancelled", "answer", "chat", "error"]
 
@@ -248,7 +250,13 @@ class IntakeNodes:
 
     @staticmethod
     def _defaults(spec: ActionSpec, payload: dict[str, Any], message: str) -> dict[str, Any]:
-        """A note's text is the owner's own message when the model left it out."""
+        """A note's text is the owner's own message when the model left it out, and an id the
+        owner typed names the target, whatever the model made of it."""
+        typed_id = _TYPED_ID.search(message)
+        if spec.target is not None and typed_id is not None:
+            payload = {k: v for k, v in payload.items() if not k.startswith(f"{spec.target}_")} | {
+                spec.target: typed_id.group(0)
+            }
         if spec.name == "add_note":
             if not payload.get("body"):
                 payload = {**payload, "body": message}
