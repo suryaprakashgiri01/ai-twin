@@ -323,6 +323,8 @@ class OwnerNodes:
             writer({"token": plan.fixed})
         else:
             error = await self._stream(state, plan, gen, parts, writer)
+        # The model found nothing to answer with: citing what it was shown would mislead.
+        sources = [] if prompts.says_not_in_vault("".join(parts)) else plan.sources
         if plan.withheld and error is None and plan.fixed is None:
             note = prompts.withheld_note(plan.withheld)
             parts.append(note)
@@ -334,7 +336,7 @@ class OwnerNodes:
             tier=plan.tier.label,
             model=gen.model_id,
             fallback=gen.fallback_used,
-            sources=len(plan.sources),
+            sources=len(sources),
             withheld=plan.withheld,
             fixed=plan.fixed is not None,
             error_code=error.code.value if error else None,
@@ -345,7 +347,7 @@ class OwnerNodes:
             "answer": "".join(parts),
             "tier": plan.tier,
             "model_id": gen.model_id,
-            "sources": plan.sources,
+            "sources": sources,
             "withheld": plan.withheld,
             "incomplete": error is not None,
             "error": error,

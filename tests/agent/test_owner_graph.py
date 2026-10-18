@@ -248,3 +248,26 @@ def test_history_messages_alternate_roles() -> None:
         [Turn(role="user", content="q" * 50), Turn(role="assistant", content="a")], max_chars=10
     )
     assert isinstance(messages[0], HumanMessage) and messages[0].content == "q" * 10
+
+
+async def test_model_saying_not_in_vault_cites_nothing() -> None:
+    q = "and what did I conclude about it?"
+    agent = make_agent(
+        router=[route_json("kb_search", q)],
+        cloud=["I don\u2019t have that in the vault."],
+        hits=[hit("priv", Tier.PRIVATE, PRIV_TEXT)],
+    )
+    state, _ = await agent.run(q)
+    assert state["answer"].startswith("I don\u2019t have that in the vault.")
+    assert state["sources"] == []
+
+
+async def test_a_real_answer_keeps_its_sources() -> None:
+    q = "what did I learn at the meetup?"
+    agent = make_agent(
+        router=[route_json("kb_search", q)],
+        cloud=["Raft leader election [1]."],
+        hits=[hit("priv", Tier.PRIVATE, PRIV_TEXT)],
+    )
+    state, _ = await agent.run(q)
+    assert [s.document_id for s in state["sources"]] == ["priv"]
