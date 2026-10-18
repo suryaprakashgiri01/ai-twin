@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import structlog
 from beanie import PydanticObjectId
 
+from app.core.telemetry import tracer
 from app.db.documents import TERMINAL_STATUSES, ChunkFields, KbDocumentFields, TierLabel
 from app.kb import canaries
 from app.kb.embedding import Embedder
@@ -33,6 +34,7 @@ from app.kb.ingestion.parsers.image import OcrEngine
 from app.kb.ingestion.redaction import Redactor
 from app.kb.store import DocumentView, KbStore, SourceView
 from app.kb.vectors import ALL_COLLECTIONS, VectorIndex, VectorPoint, collection_for, point_id
+from app.observability.tracing import tracing
 from app.storage.blobs import BlobStore
 
 logger = structlog.get_logger(__name__)
@@ -69,6 +71,21 @@ class Pipeline:
         source = await self.store.get_source(source_id)
         if source is None or source.status in TERMINAL_STATUSES:
             return
+        # A job runs outside any request: its own span gives its log lines and its Langfuse
+        # trace one id.
+        with (
+            tracer().start_as_current_span("ingestion.job", record_exception=False),
+            tracing().run(
+                "ingestion",
+                "ingestion",
+                metadata={"job_id": str(source.id), "kind": source.kind},
+            ) as trace,
+        ):
+            status = await self._run(source)
+            trace.tag(f"status:{status}")
+            trace.meta(status=status)
+
+    async def _run(self, source: SourceView) -> str:
         await self._discard_partial(source.id)
         await self.store.update_source(
             source.id,
@@ -83,14 +100,15 @@ class Pipeline:
         except IngestError as exc:
             log.warning("ingestion failed", error_code=exc.code.value)
             await self._fail(source.id, exc.code.value, exc.message)
-            return
+            return "failed"
         except Exception as exc:
             log.error("ingestion crashed", error_type=type(exc).__name__)
             await self._fail(source.id, IngestErrorCode.INTERNAL.value, "Unexpected error")
-            return
+            return "failed"
         status = "quarantined" if quarantined else "done"
         await self.store.update_source(source.id, status=status, document_ids=document_ids)
         log.info("ingestion finished", status=status, documents=len(document_ids))
+        return status
 
     async def _fail(self, source_id: PydanticObjectId, code: str, message: str) -> None:
         await self._discard_partial(source_id)

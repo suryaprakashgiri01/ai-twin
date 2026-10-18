@@ -21,6 +21,11 @@ _EXTERNAL_LOGGERS = ("uvicorn", "uvicorn.error", "httpx", "httpcore", "pymongo")
 
 # Presidio attaches its own handlers at import time; ours (the root's) is the only one we keep.
 _PRESIDIO_LOGGERS = ("presidio-analyzer", "decision_process")
+# The Langfuse SDK adds a console handler to these at import; records reach ours via the root.
+_SDK_HANDLER_LOGGERS = ("httpx", "langfuse")
+# Exporters (Langfuse, OTLP) and our Langfuse facade: during an outage each failed batch would
+# log; together they get one line a minute.
+EXPORT_LOGGER_PREFIXES = ("langfuse", "opentelemetry", "app.observability.tracing")
 
 # uvicorn's `color_message` carries raw ANSI escapes, which break strict JSON parsers.
 _NOISY_RECORD_KEYS = ("color_message",)
@@ -115,12 +120,15 @@ def setup_logging(
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
+    handler.addFilter(PrefixRateLimitFilter(EXPORT_LOGGER_PREFIXES))
 
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(numeric_level)
 
+    for name in _SDK_HANDLER_LOGGERS:
+        drop_own_handlers(name)
     for name in _EXTERNAL_LOGGERS:
         logging.getLogger(name).propagate = True
     for name in ("httpx", "httpcore", "pymongo"):
@@ -176,6 +184,29 @@ class RateLimitFilter(logging.Filter):
         return True
 
 
+class PrefixRateLimitFilter(logging.Filter):
+    """A handler filter: records from loggers under `prefixes` share one `RateLimitFilter`
+    (warnings and above); everything else passes untouched."""
+
+    def __init__(self, prefixes: tuple[str, ...], interval: float = 60.0) -> None:
+        super().__init__()
+        self._prefixes = prefixes
+        self._limiter = RateLimitFilter(interval)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING or not record.name.startswith(self._prefixes):
+            return True
+        return self._limiter.filter(record)
+
+
+def drop_own_handlers(name: str) -> None:
+    target = logging.getLogger(name)
+    for handler in list(target.handlers):
+        if not isinstance(handler, logging.NullHandler):
+            target.removeHandler(handler)
+    target.propagate = True
+
+
 def attach_filter(name: str, make: Callable[[], logging.Filter]) -> None:
     """Attach one filter of `make`'s type to logger `name`, once (create_app runs per test)."""
     target = logging.getLogger(name)
@@ -188,11 +219,7 @@ def quiet_presidio() -> None:
     """Call after presidio is imported: drop its own handlers (records reach ours through the
     root, once) and let each warning through once."""
     for name in _PRESIDIO_LOGGERS:
-        target = logging.getLogger(name)
-        for handler in list(target.handlers):
-            if not isinstance(handler, logging.NullHandler):
-                target.removeHandler(handler)
-        target.propagate = True
+        drop_own_handlers(name)
         attach_filter(name, OnceFilter)
     # Presidio's per-decision trace is debug output; INFO would print one line per entity.
     logging.getLogger("decision_process").setLevel(logging.WARNING)

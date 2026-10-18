@@ -29,6 +29,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.34,<2", # optional OTLP export
     "langfuse>=3.6,<4", # agent traces (Langfuse Cloud Hobby or self-hosted), masked by policy
     "prometheus-client>=0.21", # GET /metrics
+    "langchain>=1.0,<2", # required by the Langfuse LangChain callback handler
 ]
 
 [tool.uv.workspace]

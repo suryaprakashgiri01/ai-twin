@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.exceptions import AppError, ErrorCode
+from app.observability.tracing import tracing
 from app.services.conversations import Turn
 from app.services.naming import describe, slugify_title, unique_name
 from app.services.owner_chat import ConversationIndex, ConversationMeta
@@ -92,7 +93,15 @@ class ConversationTitler:
             return self._skip(meta, "up_to_date")
         turns = await self.index.turns(conversation_id, limit=1000)
         tier = conversation_tier(meta, turns)
-        suggestion = await self._suggest(turns, tier)
+        with tracing().run(
+            "title-refresh",
+            "intake" if meta.mode == "intake" else "owner",
+            session_id=conversation_id,
+            metadata={"tier": tier.label, "turns": len(turns)},
+        ) as trace:
+            suggestion = await self._suggest(turns, tier)
+            trace.tag("outcome:no_model" if suggestion is None else "outcome:suggested")
+            trace.output(suggestion.model_dump() if suggestion is not None else None)
         if suggestion is None:
             return self._skip(meta, "no_model")
         name = None if meta.name_locked else await self._new_name(meta, suggestion.title)

@@ -29,6 +29,7 @@ from app.leads.models import LeadIn, LeadSource, dedupe_key, email_hash
 from app.leads.store import LeadStore
 from app.leads.triage import FitFactsSource, PublicFitFacts, fit_note, triage
 from app.leads.turnstile import Turnstile
+from app.observability.tracing import tracing
 from app.services.security_events import SecurityEventWriter, first_in_window
 from llm_orchestrator.classify import Classifier
 
@@ -97,6 +98,36 @@ class LeadService:
         turnstile_token: str | None = None,
         conversation_id: str | None = None,
         summary: str | None = None,
+    ) -> SubmitResult:
+        # Lead fields are masked in every trace; the run records outcome and triage only.
+        with tracing().run(
+            "lead-submit",
+            "leads",
+            input=lead.model_dump(include={"name", "email", "company", "role", "message"}),
+            session_id=conversation_id,
+            metadata={"source": source},
+        ) as trace:
+            result = await self._submit(
+                lead,
+                source=source,
+                visitor_hash=visitor_hash,
+                turnstile_token=turnstile_token,
+                conversation_id=conversation_id,
+                summary=summary,
+            )
+            trace.tag(f"outcome:{result.outcome}")
+            trace.meta(outcome=result.outcome, status=result.status, kind=result.refusal)
+            return result
+
+    async def _submit(
+        self,
+        lead: LeadIn,
+        *,
+        source: LeadSource,
+        visitor_hash: str,
+        turnstile_token: str | None,
+        conversation_id: str | None,
+        summary: str | None,
     ) -> SubmitResult:
         now = self._clock()
         hashed = email_hash(lead.email, self._salt)

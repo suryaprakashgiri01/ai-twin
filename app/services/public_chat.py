@@ -52,8 +52,10 @@ from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
 from app.kb.retrieval.retriever import Hit, MongoDocumentFilter
+from app.leads.capture import OPPORTUNITY as OPPORTUNITY_INTENT
 from app.leads.capture import CaptureDeps, CaptureSettings
 from app.leads.service import LeadService
+from app.observability.tracing import TraceRun, current_run, tracing
 from app.services.answer_cache import AnswerCache, CachedAnswer
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.owner_chat import ConversationIndex, MongoConversationIndex
@@ -166,6 +168,28 @@ class Outcome:
         )
 
 
+def guard_rules(guards: dict[str, Any]) -> list[str]:
+    """Rule names the guards fired this turn (input rules, the output rule), for traces."""
+    rules = list(guards.get("input_guard", {}).get("rules") or [])
+    if rule := guards.get("output_guard", {}).get("rule"):
+        rules.append(rule)
+    return rules
+
+
+def _trace_public(trace: TraceRun, outcome: Outcome) -> None:
+    if outcome.intent == OPPORTUNITY_INTENT:
+        trace.restrict("leads")
+    trace.tag(f"intent:{outcome.intent}", "cache_hit" if outcome.cache_hit else "")
+    trace.meta(
+        intent=outcome.intent,
+        cache_hit=outcome.cache_hit,
+        model=outcome.model_id,
+        verdicts=guard_rules(outcome.guards),
+        seq=outcome.seq,
+    )
+    trace.output(outcome.answer)
+
+
 def cacheable(state: dict[str, Any]) -> bool:
     """Guarded answers only: passed the output guard with grounding checked, or the fixed
     no-context reply. Refusals cost nothing to repeat and are never cached."""
@@ -215,6 +239,23 @@ class PublicChatService:
         self, prepared: PublicPrepared, decided: list[Outcome]
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         """The event stream; the decided outcome is also appended to `decided`."""
+        with tracing().run(
+            "public-chat",
+            "public",
+            input=prepared.request.message,
+            session_id=prepared.conversation_id,
+            metadata={"turns": len(prepared.history)},
+        ) as trace:
+            async for event in self._traced_events(prepared, decided):
+                yield event
+            if decided:
+                _trace_public(trace, decided[0])
+            else:
+                trace.tag("outcome:error")
+
+    async def _traced_events(
+        self, prepared: PublicPrepared, decided: list[Outcome]
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         started = time.perf_counter()
         try:
             version, cached = await self._lookup(prepared)
@@ -261,6 +302,9 @@ class PublicChatService:
             # One checkpoint per turn (or pause) instead of one per node.
             options["durability"] = "exit"
             snapshot = await self._graph.aget_state(config)
+            if snapshot.values.get("lead"):
+                # A lead is being gathered: whatever the visitor types may be its fields.
+                current_run().restrict("leads")
             if snapshot.interrupts:
                 graph_input = Command(resume=prepared.request.message, update=dict(values))
         async for item in self._graph.astream(

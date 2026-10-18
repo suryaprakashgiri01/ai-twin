@@ -100,6 +100,8 @@ class StreamingGenerator:
                 "llm_role": ctx.role.value,
                 "llm_tier": ctx.tier.label,
                 "llm_model": spec.id,
+                # Read by tracing callbacks (Langfuse) as the generation's model name.
+                "ls_model_name": spec.model,
             }
         }
         iterator = aiter(chat.astream(list(messages), config=config))

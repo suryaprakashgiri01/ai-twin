@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
@@ -22,6 +23,7 @@ from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.leads.outbox import build_outbox
 from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
+from app.observability.tracing import NOOP, Tracing, build_tracing, install
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
@@ -31,6 +33,8 @@ from app.services.resume import resume_provider
 from app.services.titling import ConversationTitler
 
 logger = structlog.get_logger(__name__)
+
+SHUTDOWN_FLUSH_SECONDS = 5.0
 
 
 def create_app(
@@ -46,7 +50,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        tracing = build_tracing(settings)
+        install(tracing)
+        app.state.tracing = tracing
         async with open_storage(settings) as resources, AsyncExitStack() as stack:
+            stack.push_async_callback(_stop_tracing, tracing)
             app.state.resources = resources
             # Tests may hand in stand-in resources and wire services themselves.
             if isinstance(resources, Resources):
@@ -130,6 +138,15 @@ async def _start_services(
         leads=app.state.leads,
         checkpointer=saver,
     )
+
+
+async def _stop_tracing(tracing: Tracing) -> None:
+    """Flush pending traces, but never hold shutdown hostage to an unreachable Langfuse."""
+    install(NOOP)
+    try:
+        await asyncio.wait_for(asyncio.to_thread(tracing.shutdown), timeout=SHUTDOWN_FLUSH_SECONDS)
+    except TimeoutError:
+        logger.warning("langfuse flush timed out at shutdown")
 
 
 def _overrides(app: FastAPI) -> OverrideStore | None:

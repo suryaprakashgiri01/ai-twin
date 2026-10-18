@@ -5,9 +5,10 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
@@ -159,6 +160,19 @@ class Settings(BaseSettings):
     turnstile_secret_key: SecretStr = SecretStr("")
     turnstile_verify_url: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
+    # --- observability: Langfuse tracing ----------------------------------------
+    # All three set = traces go to Langfuse (Cloud Hobby or self-hosted); otherwise a no-op.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: SecretStr = SecretStr("")
+    langfuse_base_url: str = ""
+    # Owner, intake, ingestion and title content is masked unless this is on; refused with a
+    # Langfuse Cloud URL (owner text never goes to a third party).
+    langfuse_owner_content: bool = False
+    # Public questions and answers are traced with identifiers masked; false masks them too.
+    langfuse_public_content: bool = True
+    # Fraction of runs traced (the Hobby plan has a monthly quota).
+    langfuse_sample_rate: float = Field(default=1.0, ge=0, le=1)
+
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False
@@ -171,6 +185,20 @@ class Settings(BaseSettings):
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"Unknown time zone {value!r} (use an IANA name)") from exc
         return value
+
+    @model_validator(mode="after")
+    def _owner_content_self_hosted(self) -> Settings:
+        if self.langfuse_owner_content and is_langfuse_cloud(self.langfuse_base_url):
+            raise ValueError(
+                "LANGFUSE_OWNER_CONTENT=true needs a self-hosted Langfuse; "
+                "owner content is never sent to Langfuse Cloud"
+            )
+        return self
+
+
+def is_langfuse_cloud(url: str) -> bool:
+    host = urlsplit(url.strip()).hostname or ""
+    return host == "langfuse.com" or host.endswith(".langfuse.com")
 
 
 def ingest_max_bytes(settings: Settings) -> int:
