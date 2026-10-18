@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import time
 
 from scripts._common import ENV_FILE, compose, fail, ok, service_states, warn
@@ -35,7 +37,13 @@ def main(argv: list[str] | None = None) -> int:
             "make setup  (Windows: ./scripts/dev.ps1 setup)"
         )
         return 1
-    compose("up", "-d")
+    try:
+        compose("up", "-d")
+    except subprocess.CalledProcessError:
+        hint = "podman machine start" if shutil.which("podman") else "start Docker Desktop"
+        fail(f"Could not start the stack; is the container engine running? Try: {hint}")
+        print("Then: make up  (Windows: ./scripts/dev.ps1 up). Details: make doctor")
+        return 1
     if wait_healthy(args.timeout):
         ok("Stack is healthy")
         print(render(service_states()))

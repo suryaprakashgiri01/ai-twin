@@ -213,3 +213,18 @@ def test_extensionless_windows_match_is_ignored(monkeypatch: pytest.MonkeyPatch)
     assert _common.resolve(["docker", "compose"]) is None
     monkeypatch.setattr("shutil.which", lambda name: script + ".exe")
     assert _common.resolve(["docker", "compose"]) == [script + ".exe", "compose"]
+
+
+def test_up_reports_a_stopped_engine_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import subprocess
+
+    def broken(*_args: str, **_kwargs: object) -> None:
+        raise subprocess.CalledProcessError(1, ["docker-compose", "up", "-d"])
+
+    monkeypatch.setattr(up, "ENV_FILE", Path(__file__))
+    monkeypatch.setattr(up, "compose", broken)
+    assert up.main([]) == 1
+    out = capsys.readouterr()
+    assert "container engine running" in out.err and "Traceback" not in out.err + out.out

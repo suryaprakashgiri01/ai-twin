@@ -434,7 +434,7 @@ PROFILE_FIELDS = ("availability", "notice_period", "preferred_roles", "locations
 UPDATE_RECORD = ActionSpec(
     name="update_record",
     label="Update a record",
-    description="change an existing application or interview record",
+    description="change an existing job-search record",
     fields={
         "record": "the company (or record id) of the record to change",
         "company": "new company name",
@@ -545,12 +545,18 @@ _SPECS = [
     ActionSpec(
         name="add_record",
         label="Add a record",
-        description="track a job application or an interview (company, role, stage, date)",
+        description=(
+            "track a job-search step: an application, an assessment (take-home assignment or "
+            "online test), an interview, an offer, a rejection or a withdrawal "
+            "(company, role, stage, date)"
+        ),
         fields={
-            "kind": "application or interview",
+            "kind": "application, assessment, interview, offer, rejection or withdrawal",
             "company": "the company",
             "role": "the role applied or interviewed for",
-            "stage": "e.g. applied, screen, round 2, onsite, offer, rejected",
+            "stage": (
+                "e.g. applied, take-home sent, screen, round 2, onsite, verbal offer, after HR"
+            ),
             "date": "when, in the owner's words (e.g. yesterday, last Friday, 12 Oct)",
             "notes": "anything else the owner said about it",
         },
@@ -565,7 +571,7 @@ _SPECS = [
     ActionSpec(
         name="delete_record",
         label="Delete a record",
-        description="delete an application or interview record",
+        description="delete a job-search record",
         fields={"record": "the company (or record id) of the record to delete"},
         required=("record",),
         destructive=True,

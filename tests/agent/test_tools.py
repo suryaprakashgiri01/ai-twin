@@ -23,7 +23,7 @@ def test_query_schema_is_closed_and_ordered() -> None:
     with pytest.raises(ValidationError):
         RecordsQuery.model_validate({"kind": "interview", "$where": "1"})
     with pytest.raises(ValidationError):
-        RecordsQuery.model_validate({"kind": "offer"})
+        RecordsQuery.model_validate({"kind": "coffee chat"})
     with pytest.raises(ValidationError):
         RecordsQuery(kind="interview", date_from=date(2026, 9, 30), date_to=date(2026, 9, 1))
 

@@ -138,6 +138,10 @@ PENDING = {
 
 def cli_handler(request: httpx.Request) -> httpx.Response:
     path = request.url.path
+    if path == "/healthz":
+        return httpx.Response(200, json={"status": "ok", "version": "0.0.0"})
+    if path == "/admin/v1/whoami":
+        return httpx.Response(200, json={"name": "owner", "scopes": ["admin"]})
     if path == "/admin/v1/conversations":
         rows = [
             {

@@ -21,6 +21,8 @@ import dateparser
 from dateparser.search import search_dates
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.agents.routing import canonical_kind
+
 if TYPE_CHECKING:
     from app.agents.intake.actions import ActionSpec
 
@@ -300,6 +302,8 @@ def normalise(
             value = day_value(day)
         if key in spec.lower_fields and isinstance(value, str):
             value = value.lower()
+        if key == "kind" and isinstance(value, str):
+            value = canonical_kind(value)
         out[key] = value
     return out, invalid
 

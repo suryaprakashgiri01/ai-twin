@@ -133,13 +133,26 @@ def _cleared() -> dict[str, Any]:
     return {"action": None, "payload": {}, "missing": [], "pending": None}
 
 
+def _for_owner(hint: str) -> str:
+    """Field hints are written for the extraction model ("the owner's words"); say "your"."""
+    return hint.replace("the owner's", "your").replace("the owner", "you")
+
+
+def _field_line(spec: ActionSpec, name: str) -> str:
+    hint = spec.fields.get(name, "")
+    return f"- {name}: {_for_owner(hint)}" if hint else f"- {name}"
+
+
 def _missing_text(spec: ActionSpec, missing: list[str], invalid: dict[str, str]) -> str:
+    """What is wrong or still needed, one field per line with its type or allowed values."""
     parts = []
     if invalid:
-        parts.append("; ".join(f"{name}: {why}" for name, why in invalid.items()))
+        lines = [f"- {name}: {why}" for name, why in invalid.items()]
+        parts.append("These values didn't fit:\n" + "\n".join(lines))
     if missing:
-        parts.append(f"To {spec.label.lower()}, I still need: {', '.join(missing)}.")
-    return " ".join(parts)
+        lines = [_field_line(spec, name) for name in missing]
+        parts.append(f"To {spec.label.lower()}, I still need:\n" + "\n".join(lines))
+    return "\n".join(parts)
 
 
 def _sentence(text: str) -> str:

@@ -45,6 +45,7 @@ def build_llm(settings: Settings, overrides: OverrideStore | None = None) -> LLM
             secrets=provider_secrets(settings),
             timeout_seconds=settings.llm_timeout_seconds,
             max_attempts=settings.llm_max_attempts,
+            local_timeout_seconds=settings.llm_local_timeout_seconds,
         ),
         overrides,
     )

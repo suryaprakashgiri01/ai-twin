@@ -113,6 +113,7 @@ async def test_slow_model_times_out_as_transient() -> None:
     object.__setattr__(factory.models["first"], "ainvoke", slow)
     orch = orchestrator(_pair(), factory, max_attempts=1)
     orch._executor._timeout = 0.01
+    orch._executor._timeout_for = None  # use the flat timeout above for every model
     result = await orch.chat(Role.GENERATOR, Tier.PRIVATE, MESSAGES)
     assert result.model_id == "second"
     assert result.attempts[0].error_type == "TimeoutError"

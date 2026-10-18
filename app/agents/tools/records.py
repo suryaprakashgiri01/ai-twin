@@ -1,4 +1,5 @@
-"""`query_records`: counts and lists of applications and interviews by aggregation.
+"""`query_records`: counts and lists of job-search records (applications, assessments, interviews,
+offers, rejections, withdrawals) by aggregation.
 
 The model never writes a query. It fills `RecordsQuery` (a closed schema) and this module turns
 that into a fixed MongoDB pipeline, so a count is always exact and nothing can be modified.

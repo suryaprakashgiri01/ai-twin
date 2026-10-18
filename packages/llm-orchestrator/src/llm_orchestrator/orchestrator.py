@@ -40,6 +40,14 @@ class OrchestratorSettings:
     secrets: ProviderSecrets
     timeout_seconds: float = 30.0
     max_attempts: int = 3
+    # Models tagged `local` (Ollama on a laptop CPU) can need minutes for a long prompt; None
+    # means they share timeout_seconds.
+    local_timeout_seconds: float | None = None
+
+    def timeout_for(self, spec: ModelSpec) -> float:
+        if self.local_timeout_seconds is not None and "local" in spec.tags:
+            return self.local_timeout_seconds
+        return self.timeout_seconds
 
 
 class Orchestrator:
@@ -55,13 +63,18 @@ class Orchestrator:
         self._inventory = inventory
         self._settings = settings
         self._store = override_store
-        self._factory = factory or default_factory(settings.secrets, settings.timeout_seconds)
+        self._factory = factory or default_factory(settings.secrets, settings.timeout_for)
         self._executor = Executor(
             self._factory,
             max_attempts=settings.max_attempts,
             timeout_seconds=settings.timeout_seconds,
+            timeout_for=settings.timeout_for,
             wait=wait,
         )
+
+    def timeout_for(self, spec: ModelSpec) -> float:
+        """Seconds a call (or a gap between streamed chunks) to this model may take."""
+        return self._settings.timeout_for(spec)
 
     @classmethod
     def from_config(

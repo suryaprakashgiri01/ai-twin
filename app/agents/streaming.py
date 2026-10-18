@@ -44,6 +44,12 @@ class StreamingGenerator:
         self._orchestrator = orchestrator
         self._idle_timeout = idle_timeout_seconds
 
+    def _idle_for(self, spec: ModelSpec) -> float:
+        """Local models get the orchestrator's (longer) local timeout for the first token too."""
+        if "local" in spec.tags:
+            return max(self._idle_timeout, self._orchestrator.timeout_for(spec))
+        return self._idle_timeout
+
     async def stream(
         self,
         tier: Tier,
@@ -99,7 +105,7 @@ class StreamingGenerator:
         iterator = aiter(chat.astream(list(messages), config=config))
         while True:
             try:
-                async with asyncio.timeout(self._idle_timeout):
+                async with asyncio.timeout(self._idle_for(spec)):
                     chunk = await anext(iterator)
             except StopAsyncIteration:
                 return

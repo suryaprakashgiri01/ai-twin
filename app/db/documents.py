@@ -28,6 +28,16 @@ JobStatus = Literal[
 ]
 TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "quarantined", "failed"})
 Scope = Literal["admin", "public:read", "leads:write"]
+# The job-search pipeline, in order: apply, take-home or online assessment, interviews, outcome.
+RecordKind = Literal["application", "assessment", "interview", "offer", "rejection", "withdrawal"]
+RECORD_KINDS: tuple[str, ...] = (
+    "application",
+    "assessment",
+    "interview",
+    "offer",
+    "rejection",
+    "withdrawal",
+)
 
 
 def utcnow() -> datetime:
@@ -197,7 +207,7 @@ class Canary(Document):
 
 
 class Record(Document):
-    kind: Literal["application", "interview"]
+    kind: RecordKind
     company: str
     role: str
     stage: str

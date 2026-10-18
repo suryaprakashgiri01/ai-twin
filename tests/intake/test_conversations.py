@@ -27,7 +27,7 @@ async def test_missing_fields_then_draft_then_yes_writes_once(make_twin: MakeTwi
     first = await twin.say("Add an interview with Acme Widgets")
     cid = first.conversation_id
     assert first.done["status"] == "asked"
-    assert "role, stage, date" in first.text
+    assert all(f"- {f}:" in first.text for f in ("role", "stage", "date"))
     assert "company" not in first.text.split("need:")[1]
     assert first.draft is None and twin.records.rows == {}
 
@@ -376,7 +376,7 @@ async def test_invented_values_are_dropped_and_asked_for(make_twin: MakeTwin) ->
     )
     reply = await twin.say("Add an interview with Quorvex Labs")
     assert reply.draft is None and reply.done["status"] == "asked"
-    assert "role, stage, date" in reply.text
+    assert all(f"- {f}:" in reply.text for f in ("role", "stage", "date"))
 
 
 async def test_model_no_without_a_no_word_is_an_edit(make_twin: MakeTwin) -> None:
@@ -424,3 +424,12 @@ async def test_an_id_the_owner_typed_wins(make_twin: MakeTwin) -> None:
     twin.factory.models["local"].calls = 1
     draft = await twin.say(f"Delete record {first.id}", cid)
     assert draft.draft is not None and first.id in draft.draft["summary"]
+
+
+def test_missing_kind_lists_the_allowed_values() -> None:
+    from app.agents.graphs.intake import _missing_text
+    from app.agents.intake.actions import ACTIONS
+
+    text = _missing_text(ACTIONS["add_record"], ["kind", "date"], {})
+    assert "- kind: application, assessment, interview, offer, rejection or withdrawal" in text
+    assert "owner" not in text and "your words" in text

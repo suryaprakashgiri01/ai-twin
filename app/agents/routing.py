@@ -33,7 +33,16 @@ _COUNT = re.compile(r"\b(how many|number of|count|list (?:my|all)|which compan(?
 _DATE_WORDS = re.compile(
     r"\b(this|last) (week|month|year)\b|\b(" + "|".join(calendar.month_name[1:]) + r")\b", re.I
 )
+# Checked in order: outcomes first, so "offer after the interview" counts offers.
 _KIND = {
+    "offer": re.compile(r"\b(offers?|offered)\b", re.I),
+    "rejection": re.compile(r"\b(rejections?|rejected|turned down)\b", re.I),
+    "withdrawal": re.compile(r"\b(withdr[ae]wn?|withdrawals?|pulled out)\b", re.I),
+    "assessment": re.compile(
+        r"\b(assessments?|assignments?|take[- ]?homes?|online tests?|coding tests?|"
+        r"coding challenges?|hackerrank|codility)\b",
+        re.I,
+    ),
     "interview": re.compile(r"\binterview(?:s|ed)?\b", re.I),
     "application": re.compile(r"\b(applications?|applied|apply)\b", re.I),
 }
@@ -57,6 +66,15 @@ def _kind(text: str) -> RecordKind | None:
         if pattern.search(text):
             return kind  # type: ignore[return-value]
     return None
+
+
+def canonical_kind(value: str) -> str:
+    """A record kind from loose wording ("take-home", "got rejected"); unknown text is returned
+    unchanged so validation can name it."""
+    cleaned = value.strip().lower()
+    if cleaned in _KIND:
+        return cleaned
+    return _kind(cleaned) or cleaned
 
 
 def _month_range(month: int, today: date) -> tuple[date, date]:

@@ -1,4 +1,5 @@
-"""The owner's profile singleton and structured records (applications, interviews).
+"""The owner's profile singleton and structured records (the job-search pipeline: applications,
+assessments, interviews, offers, rejections, withdrawals).
 
 Records are plain data for the owner's own tracking, not RAG content: they are never chunked,
 embedded or published.
@@ -7,14 +8,14 @@ embedded or published.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from beanie import PydanticObjectId
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.db.documents import PROFILE_ID, BlobRef, Profile, Record, utcnow
+from app.db.documents import PROFILE_ID, BlobRef, Profile, Record, RecordKind, utcnow
 
-RecordKind = Literal["application", "interview"]
+__all__ = ["RecordKind"]
 
 
 class ProfileIn(BaseModel):

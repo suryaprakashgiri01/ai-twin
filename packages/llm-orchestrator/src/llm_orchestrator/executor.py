@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -82,6 +82,7 @@ class Executor:
         *,
         max_attempts: int,
         timeout_seconds: float,
+        timeout_for: Callable[[ModelSpec], float] | None = None,
         wait: wait_base | None = None,
     ) -> None:
         if max_attempts < 1:
@@ -90,6 +91,7 @@ class Executor:
         self._models: dict[str, BaseChatModel] = {}
         self._max_attempts = max_attempts
         self._timeout = timeout_seconds
+        self._timeout_for = timeout_for
         self._wait = wait or wait_random_exponential(multiplier=0.5, max=8)
 
     def model_for(self, spec: ModelSpec) -> BaseChatModel:
@@ -134,7 +136,8 @@ class Executor:
         kwargs: dict[str, Any] = {} if ctx.max_tokens is None else {"max_tokens": ctx.max_tokens}
         started = time.perf_counter()
         try:
-            async with asyncio.timeout(self._timeout):
+            seconds = self._timeout_for(spec) if self._timeout_for else self._timeout
+            async with asyncio.timeout(seconds):
                 message = await model.ainvoke(list(messages), config=config, **kwargs)
         except Exception as exc:
             transient, status = classify_error(exc)
