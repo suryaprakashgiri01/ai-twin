@@ -174,7 +174,11 @@ def _message(subject: str, sender: str, to: str, reply_to: str | None) -> EmailM
 def render_lead(lead: StoredLead, mailer: Mailer, timezone: ZoneInfo) -> EmailMessage:
     subject = f"{SUBJECT_PREFIX} New opportunity: {lead.role} at {lead.company}"
     message = _message(subject, mailer.sender, mailer.owner, _reply_to(lead))
-    summary = lead.summary or "No conversation summary (sent through the contact form)."
+    summary = lead.summary or (
+        "No summary (the conversation summary was unavailable)."
+        if lead.source == "assistant"
+        else "No conversation summary (sent through the contact form)."
+    )
     fit = lead.fit_note or "No fit note."
     received = _received(lead, timezone)
     rows = _rows(lead)

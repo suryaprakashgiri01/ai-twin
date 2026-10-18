@@ -393,7 +393,8 @@ class CaptureNodes:
         except OrchestratorError as exc:
             logger.warning("lead summary failed", error_type=type(exc).__name__)
             return None
-        summary = result.text.strip()[:1000]
+        # The address is in the email's fields already; the guard would block it here.
+        summary = _EMAIL.sub("[email]", result.text.strip())[:1000]
         verdict = await self.deps.output_guard.check(
             summary, question="Summarise this conversation.", context=text
         )

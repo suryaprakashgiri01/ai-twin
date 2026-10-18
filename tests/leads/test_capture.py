@@ -296,3 +296,11 @@ async def test_the_answer_about_the_opportunity_is_kept_whole() -> None:
     state = await c.public.service._graph.aget_state(config)
     assert state.values["lead"]["draft"]["message"] == ABOUT
     assert state.values["lead"]["draft"]["location"] == "remote"
+
+
+async def test_an_address_in_the_summary_is_masked_so_the_guard_passes_it() -> None:
+    c = make_capture([*happy_script()[:-1], f"Ravi ({VISITOR}) from Acme is hiring."])
+    await fill(c)
+    await c.say("yes")
+    [lead] = c.store.leads.values()
+    assert lead.summary == "Ravi ([email]) from Acme is hiring."
