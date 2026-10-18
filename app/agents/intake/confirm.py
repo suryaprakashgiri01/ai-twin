@@ -83,7 +83,7 @@ EDIT_VERBS = frozenset(
         "put",
     }
 )
-EDIT_MARKERS = ("should be", "instead", " not ", " but ", "change", "wrong", " to ")
+EDIT_MARKERS = ("should be", "instead", " not ", " but ", "change", "wrong")
 SHORT = 4
 
 _PUNCT = re.compile(r"[^\w\s']+")
