@@ -8,6 +8,7 @@ from app.api.routes import (
     admin_assistant,
     admin_chat,
     admin_ingest,
+    admin_leads,
     admin_meta,
     admin_models,
     admin_profile,
@@ -26,6 +27,7 @@ def build_admin_router() -> APIRouter:
     router.include_router(admin_review.router)
     router.include_router(admin_profile.router)
     router.include_router(admin_records.router)
+    router.include_router(admin_leads.router)
     router.include_router(admin_chat.router)
     router.include_router(admin_assistant.router)
     return router

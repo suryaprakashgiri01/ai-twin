@@ -1,20 +1,26 @@
 """Visitor-facing API, mounted in both profiles; in `public` it is the only API besides health.
 
-Every route needs a key with `public:read`. The portfolio's server route holds that key and
-forwards the visitor's address in `X-Visitor-Address`; only its salted hash is used.
+Every route needs a key with `public:read`, except the opportunity form, which needs
+`leads:write`. The portfolio's server route holds the keys and forwards the visitor's address in
+`X-Visitor-Address`; only its salted hash is used.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Security
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 
 from app.auth.dependencies import Principal, api_key_header, require_scopes
 from app.auth.visitor import Visitor, resolve_visitor
 from app.core.config import Settings
+from app.db.documents import Scope
 from app.exceptions import AppError, ErrorCode
+from app.leads.models import LeadForm, LeadIn
+from app.leads.service import DAY, LeadService
 from app.services.assistant import AssistantInfo, assistant_info
 from app.services.public_chat import PublicChat, PublicChatRequest, PublicChatResponse
 from app.services.rate_limit import Limits, RateLimiter
@@ -30,35 +36,44 @@ AUTH_FAILURES = frozenset({ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_INVALID, Erro
 # A burst of the same failure is recorded once per this many seconds.
 AUTH_EVENT_WINDOW = 60
 
-_require_public_read = require_scopes("public:read")
-
 
 def _events(request: Request) -> SecurityEventWriter | None:
     return getattr(request.app.state.resources, "security_events", None)
 
 
-async def public_key(
-    request: Request, api_key: Annotated[str | None, Security(api_key_header)] = None
-) -> Principal:
-    """`require_scopes("public:read")`, recording failures as security events."""
-    try:
-        return await _require_public_read(request, api_key)
-    except AppError as exc:
-        events = _events(request)
-        if (
-            exc.code in AUTH_FAILURES
-            and events is not None
-            and await first_in_window(
-                request.app.state.resources.redis, f"auth:{exc.code.value}", AUTH_EVENT_WINDOW
-            )
-        ):
-            await events.record(
-                "auth_failed", "medium", rules=[exc.code.value], details={"path": request.url.path}
-            )
-        raise
+def recorded_key(scope: Scope) -> Callable[..., Awaitable[Principal]]:
+    """`require_scopes(scope)`, recording failures as security events (once per window)."""
+    required = require_scopes(scope)
+
+    async def dependency(
+        request: Request, api_key: Annotated[str | None, Security(api_key_header)] = None
+    ) -> Principal:
+        try:
+            return await required(request, api_key)
+        except AppError as exc:
+            events = _events(request)
+            if (
+                exc.code in AUTH_FAILURES
+                and events is not None
+                and await first_in_window(
+                    request.app.state.resources.redis, f"auth:{exc.code.value}", AUTH_EVENT_WINDOW
+                )
+            ):
+                await events.record(
+                    "auth_failed",
+                    "medium",
+                    rules=[exc.code.value],
+                    details={"path": request.url.path},
+                )
+            raise
+
+    return dependency
 
 
+public_key = recorded_key("public:read")
+lead_key = recorded_key("leads:write")
 PublicKey = Annotated[Principal, Depends(public_key)]
+LeadKey = Annotated[Principal, Depends(lead_key)]
 
 
 def limits(settings: Settings) -> Limits:
@@ -163,3 +178,54 @@ async def resume(request: Request, who: Annotated[Visitor, Depends(visitor)]) ->
 @router.get("/assistant", summary="Greeting, AI-twin disclosure, privacy note, availability")
 async def assistant(request: Request, _principal: PublicKey) -> AssistantInfo:
     return await assistant_info(request.app.state.settings, request.app.state.resources.profile)
+
+
+# --- opportunities --------------------------------------------------------------------------
+
+
+class OpportunityReceived(BaseModel):
+    status: Literal["received"] = "received"
+    message: str
+
+
+async def lead_visitor(request: Request, principal: LeadKey) -> Visitor:
+    return resolve_visitor(request, principal)
+
+
+def _leads(request: Request) -> LeadService:
+    service: LeadService | None = getattr(request.app.state, "leads", None)
+    if service is None:
+        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Opportunities are not available")
+    return service
+
+
+@router.post(
+    "/opportunities",
+    status_code=202,
+    summary="Share an opportunity with the owner (the portfolio contact form)",
+    responses={
+        403: {"description": "Turnstile verification failed"},
+        429: {"description": "Over the per-visitor or daily lead cap"},
+    },
+)
+async def opportunity(
+    body: LeadForm, request: Request, who: Annotated[Visitor, Depends(lead_visitor)]
+) -> OpportunityReceived:
+    """The same pipeline as the assistant: Turnstile (when configured), duplicate check, caps,
+    triage, store, then the owner's email from the outbox. A duplicate gets the same answer
+    and sends nothing. No mail ever goes to the address in the body."""
+    lead = LeadIn.model_validate(body.model_dump(exclude={"turnstile_token"}))
+    result = await _leads(request).submit(
+        lead, source="form", visitor_hash=who.hash, turnstile_token=body.turnstile_token
+    )
+    if result.refusal == "turnstile":
+        raise AppError(ErrorCode.FORBIDDEN, "Verification failed; please try again")
+    if result.outcome == "refused":
+        raise AppError(
+            ErrorCode.RATE_LIMITED,
+            "Thanks! No more messages can be sent right now; please try again tomorrow",
+            headers={"Retry-After": str(DAY)},
+        )
+    settings: Settings = request.app.state.settings
+    owner = settings.public_owner_name.strip() or "the owner"
+    return OpportunityReceived(message=f"Thanks, your message was passed to {owner}.")

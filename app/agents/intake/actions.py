@@ -65,6 +65,7 @@ REVIEW_SCAN = 200
 MIN_NAME = 3
 POLL_SECONDS = 0.5
 BODY_PREVIEW = 300
+LEADS_SHOWN = 10
 
 
 class InboxFileIn(MetaIn):
@@ -340,6 +341,23 @@ async def _show_review(ctx: RunContext, p: Payload) -> Outcome:
     }
 
 
+async def _show_leads(ctx: RunContext, p: Payload) -> Outcome:
+    leads = await ctx.ops.list_leads(limit=LEADS_SHOWN)
+    if not leads:
+        return {"action": "show_leads", "message": "No leads yet.", "leads": []}
+    lines = [f"{len(leads)} most recent leads:"]
+    lines += [
+        f"  {show_day(lead.created_at)}: {lead.name}, {lead.role} at {lead.company} "
+        f"({lead.status}, {lead.triage or 'untriaged'}) ({lead.id})"
+        for lead in leads
+    ]
+    return {
+        "action": "show_leads",
+        "message": "\n".join(lines),
+        "leads": [{"id": lead.id, "status": lead.status, "triage": lead.triage} for lead in leads],
+    }
+
+
 async def _source_status(ctx: RunContext, p: Payload) -> Outcome:
     status = await ctx.ops.source_status(str(p["source_id"]))
     docs = [_doc_info(await ctx.ops.get_document(d)) for d in status.document_ids]
@@ -578,6 +596,14 @@ _SPECS = [
         fields={},
         write=False,
         run=_show_review,
+    ),
+    ActionSpec(
+        name="show_leads",
+        label="Show recent leads",
+        description="list the latest opportunities visitors left (read only)",
+        fields={},
+        write=False,
+        run=_show_leads,
     ),
     ActionSpec(
         name="source_status",
