@@ -57,6 +57,9 @@ _WEEKDAY_IN_TEXT = re.compile(
 )
 # Share of a value's words that must appear in the owner's message for it to count as theirs.
 GROUNDED_SHARE = 0.6
+# References to existing things: resolved against real data and shown in the draft, so they
+# need not be in the owner's words ("delete it" names nothing).
+REFERENCES = frozenset({"record", "document", "source_id"})
 STEM = 5
 
 
@@ -219,7 +222,7 @@ def ground(
     for key, value in extracted.items():
         if _clean(value) is None:
             continue
-        if key in spec.inferred or current.get(key) == value:
+        if key in spec.inferred or key in REFERENCES or current.get(key) == value:
             kept[key] = value
         elif key in spec.date_fields:
             day = find_day(message, tz, now)

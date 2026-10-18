@@ -39,7 +39,8 @@ from app.services.profile import ProfileIn, RecordIn, RecordOut, RecordPatch
 Payload = dict[str, Any]
 Outcome = dict[str, Any]
 
-_OBJECT_ID = re.compile(r"^[0-9a-f]{24}$")
+# An id anywhere in the reference: the model often copies a whole line from an earlier reply.
+_OBJECT_ID = re.compile(r"\b[0-9a-f]{24}\b")
 PRONOUNS = frozenset(
     {
         "it",
@@ -61,6 +62,7 @@ PRONOUNS = frozenset(
     }
 )
 REVIEW_SCAN = 200
+MIN_NAME = 3
 POLL_SECONDS = 0.5
 BODY_PREVIEW = 300
 
@@ -654,7 +656,10 @@ def _norm(text: str) -> str:
 def _pick[T](items: list[T], key: Callable[[T], str], ref: str) -> list[T]:
     wanted = _norm(ref)
     exact = [i for i in items if _norm(key(i)) == wanted]
-    return exact or [i for i in items if wanted in _norm(key(i))]
+    inside = [i for i in items if wanted in _norm(key(i))]
+    # "the Acme Widgets interview record" names the company inside a longer phrase.
+    around = [i for i in items if len(key(i)) >= MIN_NAME and _norm(key(i)) in wanted]
+    return exact or inside or around
 
 
 async def resolve_target(
@@ -694,11 +699,11 @@ async def _resolve_document(
             return Resolution(payload)  # still missing: the owner is asked which document
         last = recent_docs[-1]
         return Resolution({**payload, "document_id": last["id"], "document_title": last["title"]})
-    if _OBJECT_ID.match(ref):
+    if found_id := _OBJECT_ID.search(ref):
         try:
-            doc = await ops.get_document(ref)
+            doc = await ops.get_document(found_id.group(0))
         except AppError:
-            return Resolution(payload, f"No document with id {ref}.")
+            return Resolution(payload, f"No document with id {found_id.group(0)}.")
         return Resolution({**payload, "document_id": doc.id, "document_title": doc.title})
     queue = await ops.review_queue(REVIEW_SCAN)
     candidates: dict[str, str] = {d.id: d.title for d in queue.items}
@@ -727,8 +732,8 @@ async def _resolve_record(
     if not ref or _norm(ref) in PRONOUNS:
         last = next((r for r in reversed(recent) if r.get("kind") == "record"), None)
         match = [r for r in records if last and r.id == last["id"]]
-    elif _OBJECT_ID.match(ref):
-        match = [r for r in records if r.id == ref]
+    elif found_id := _OBJECT_ID.search(ref):
+        match = [r for r in records if r.id == found_id.group(0)]
     else:
         match = _pick(records, lambda r: r.company, ref)
     if len(match) == 1:
