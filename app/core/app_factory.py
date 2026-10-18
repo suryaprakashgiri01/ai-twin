@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
+from functools import partial
 
 import structlog
 from fastapi import FastAPI
@@ -24,7 +25,7 @@ from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 from app.services.owner_chat import build_owner_chat_from, owner_deps
-from app.services.public_chat import build_public_chat
+from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
 
 logger = structlog.get_logger(__name__)
@@ -100,12 +101,25 @@ async def _start_services(
         await prune_checkpoints(saver, settings.intake_checkpoint_days)
     else:
         embedder = FastEmbedder(settings.models_dir / "fastembed")
-    outbox = build_outbox(settings, resources.leads, resources.security_events, resources.redis)
+    saver = public_checkpointer()
+    outbox = build_outbox(
+        settings,
+        resources.leads,
+        resources.security_events,
+        resources.redis,
+        hooks=[partial(prune_public, saver)],
+    )
     app.state.lead_outbox = await stack.enter_async_context(outbox.running())
     app.state.leads = build_lead_service(settings, resources, app.state.llm, outbox)
     app.state.resume = resume_provider(settings, resources.profile, resources.blobs)
     app.state.public_chat = build_public_chat(
-        settings, resources, app.state.llm, embedder, app.state.resume
+        settings,
+        resources,
+        app.state.llm,
+        embedder,
+        app.state.resume,
+        leads=app.state.leads,
+        checkpointer=saver,
     )
 
 

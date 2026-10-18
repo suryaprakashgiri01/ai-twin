@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     lead_email_to: str = ""
     lead_email_from: str = ""
 
+    # --- opportunities: capture in the public assistant -----------------------------
+    # Turns the assistant spends gathering details before it falls back to the contact form.
+    lead_max_turns: int = Field(default=6, ge=1, le=20)
+
     # --- opportunities: abuse controls and retention -----------------------------
     # Leads per visitor (salted address hash) per day, and every visitor together per UTC day.
     lead_visitor_daily_cap: int = Field(default=2, ge=1, le=100)

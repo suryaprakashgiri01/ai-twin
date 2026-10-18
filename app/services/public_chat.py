@@ -13,11 +13,17 @@ import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from functools import partial
 from typing import Any, Protocol, cast
 
 import structlog
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agents.checkpoint import MongoCheckpointSaver
 from app.agents.graphs.public import (
     PublicDeps,
     PublicGraph,
@@ -45,10 +51,13 @@ from app.guardrails.scope import ProfileTemplates, ScopeRouter
 from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
-from app.kb.retrieval.retriever import MongoDocumentFilter
+from app.kb.retrieval.retriever import Hit, MongoDocumentFilter
+from app.leads.capture import CaptureDeps, CaptureSettings
+from app.leads.service import LeadService
 from app.services.answer_cache import AnswerCache, CachedAnswer
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.owner_chat import ConversationIndex, MongoConversationIndex
+from app.services.profile import ProfileStore
 from app.services.resume import ResumeProvider
 from llm_orchestrator import Tier
 from llm_orchestrator.classify import Classifier, FlaggedClassifier
@@ -57,6 +66,10 @@ logger = structlog.get_logger(__name__)
 
 # A hard ceiling for the request body; the input guard enforces the real, lower cap.
 REQUEST_MAX_CHARS = 8000
+PUBLIC_THREAD_PREFIX = "public:"
+INTERRUPT_KEY = "__interrupt__"
+# Pending lead drafts (and every other public thread) are pruned after this long.
+DRAFT_HOURS = 24
 # Words per `token` event: the answer is already complete, this only paces the widget.
 WORDS_PER_TOKEN = 3
 
@@ -67,6 +80,8 @@ class PublicChatRequest(BaseModel):
 
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     message: str = Field(min_length=1, max_length=REQUEST_MAX_CHARS)
+    # Cloudflare Turnstile token from the widget; verified only when a lead is submitted.
+    turnstile_token: str | None = Field(default=None, max_length=2048)
 
 
 class PublicChatResponse(BaseModel):
@@ -98,6 +113,11 @@ class PublicChat(Protocol):
     async def answer(self, prepared: PublicPrepared) -> PublicChatResponse: ...
 
 
+def thread_id(prepared: PublicPrepared) -> str:
+    """Public checkpoint threads are namespaced, so their 24 h pruning touches nothing else."""
+    return f"{PUBLIC_THREAD_PREFIX}{prepared.conversation_id}"
+
+
 def token_pieces(answer: str, words: int = WORDS_PER_TOKEN) -> list[str]:
     parts = re.findall(r"\S+\s*", answer)
     return ["".join(parts[i : i + words]) for i in range(0, len(parts), words)] or [answer]
@@ -121,10 +141,11 @@ class Outcome:
     @classmethod
     def from_state(cls, state: dict[str, Any]) -> Outcome:
         names = ("input_guard", "scope", "output_guard")
-        guards: dict[str, Any] = {name: state[name] for name in names if name in state}
+        # A guard that did not run this turn is left empty by `initial_state`.
+        guards: dict[str, Any] = {name: state[name] for name in names if state.get(name)}
         return cls(
-            intent=state.get("intent", "about_owner"),
-            answer=state.get("answer", prompts.NO_CONTEXT),
+            intent=state.get("intent") or "about_owner",
+            answer=state.get("answer") or prompts.NO_CONTEXT,
             sources=state.get("sources", []),
             guards=guards,
             text=state.get("text") or state["question"],
@@ -151,7 +172,7 @@ def cacheable(state: dict[str, Any]) -> bool:
     if state.get("intent") != "about_owner":
         return False
     guard = state.get("output_guard")
-    if guard is None:
+    if not guard:
         return bool(state.get("answer") == prompts.NO_CONTEXT)
     return bool(guard["passed"]) and guard["grounding"] in ("supported", "skipped")
 
@@ -223,19 +244,33 @@ class PublicChatService:
     async def _run_graph(
         self, prepared: PublicPrepared, state: dict[str, Any]
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-        """Run the graph into `state`, announcing the intent as soon as it is known."""
-        state.update(
-            initial_state(
-                conversation_id=prepared.conversation_id,
-                question=prepared.request.message,
-                history=prepared.history,
-                visitor_hash=prepared.visitor.hash,
-            )
+        """Run the graph into `state`, announcing the intent as soon as it is known. A thread
+        paused on a lead confirmation is resumed with the message instead of started anew."""
+        values = initial_state(
+            conversation_id=prepared.conversation_id,
+            question=prepared.request.message,
+            history=prepared.history,
+            visitor_hash=prepared.visitor.hash,
+            turnstile_token=prepared.request.turnstile_token,
         )
-        async for item in self._graph.astream(cast(Any, dict(state)), stream_mode="updates"):
+        state.update(values)
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id(prepared)}}
+        graph_input: Any = dict(values)
+        options: dict[str, Any] = {}
+        if self._graph.checkpointer is not None:
+            # One checkpoint per turn (or pause) instead of one per node.
+            options["durability"] = "exit"
+            snapshot = await self._graph.aget_state(config)
+            if snapshot.interrupts:
+                graph_input = Command(resume=prepared.request.message, update=dict(values))
+        async for item in self._graph.astream(
+            graph_input, config, stream_mode="updates", **options
+        ):
             for node, update in cast(dict[str, Any], item).items():
+                if node == INTERRUPT_KEY:
+                    continue
                 state.update(update or {})
-                if node == "scope" or (node == "input_guard" and "intent" in (update or {})):
+                if node == "scope" or (node == "input_guard" and update and "intent" in update):
                     yield "meta", self._meta(prepared, state["intent"])
 
     async def _lookup(self, prepared: PublicPrepared) -> tuple[int | None, CachedAnswer | None]:
@@ -353,13 +388,38 @@ def canary_source(settings: Settings) -> CanaryHashSource:
     return StaticCanaryHashes()
 
 
+def public_serde() -> JsonPlusSerializer:
+    """Checkpoint serialisation for public threads: only the state's own types are revived."""
+    return JsonPlusSerializer(allowed_msgpack_modules=[Hit, Source, Turn, Tier])
+
+
+def public_checkpointer() -> MongoCheckpointSaver:
+    return MongoCheckpointSaver(serde=public_serde())
+
+
+async def prune_public(saver: MongoCheckpointSaver, now: datetime) -> int:
+    """Drop public threads idle for DRAFT_HOURS, a pending lead confirmation included."""
+    return await saver.prune_finished(
+        now - timedelta(hours=DRAFT_HOURS), prefix=PUBLIC_THREAD_PREFIX, keep_waiting=False
+    )
+
+
+async def _reply_time(profile: ProfileStore) -> str | None:
+    return (await profile.get()).reply_time
+
+
 def build_public_chat(
     settings: Settings,
     resources: Resources,
     llm: LLMServices,
     embedder: Embedder,
     resume: ResumeProvider,
+    *,
+    leads: LeadService | None = None,
+    checkpointer: MongoCheckpointSaver | None = None,
 ) -> PublicChatService:
+    """With `leads` (and a checkpointer) an opportunity starts the capture loop; without, it
+    gets the fixed contact-form reply."""
     orchestrator, classifier = llm.orchestrator, llm.classifier
     input_guard = InputGuard(
         OrchestratorGuardModel(orchestrator),
@@ -402,9 +462,20 @@ def build_public_chat(
             context_tokens=settings.public_context_tokens,
             history_turns=settings.public_history_turns,
         ),
+        capture=None
+        if leads is None or checkpointer is None
+        else CaptureDeps(
+            orchestrator=orchestrator,
+            service=leads,
+            output_guard=output_guard,
+            reply_time=partial(_reply_time, resources.profile),
+            settings=CaptureSettings(
+                max_turns=settings.lead_max_turns, owner_name=settings.public_owner_name
+            ),
+        ),
     )
     return PublicChatService(
-        build_public_graph(deps),
+        build_public_graph(deps, checkpointer if deps.capture is not None else None),
         resources.conversations,
         MongoConversationIndex(),
         AnswerCache(resources.redis, settings.public_answer_cache_ttl_seconds),

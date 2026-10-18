@@ -14,6 +14,7 @@ threads idle for longer than the retention period unless they still wait on a co
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
 from typing import Any, cast
@@ -217,10 +218,17 @@ class MongoCheckpointSaver(BaseCheckpointSaver[str]):
         latest = await self.aget_tuple({"configurable": {"thread_id": thread_id}})
         return latest is not None and any(w[1] == INTERRUPT for w in latest.pending_writes or [])
 
-    async def prune_finished(self, older_than: datetime) -> int:
-        """Delete threads last touched before `older_than` that wait on nothing. Returns how
-        many threads were deleted."""
+    async def prune_finished(
+        self, older_than: datetime, *, prefix: str | None = None, keep_waiting: bool = True
+    ) -> int:
+        """Delete threads last touched before `older_than` that wait on nothing (or, with
+        `keep_waiting=False`, whatever they wait on). `prefix` limits it to thread ids starting
+        with it (`public:`). Returns how many threads were deleted."""
+        match: list[dict[str, Any]] = (
+            [{"$match": {"thread_id": {"$regex": f"^{re.escape(prefix)}"}}}] if prefix else []
+        )
         pipeline: list[dict[str, Any]] = [
+            *match,
             {"$group": {"_id": "$thread_id", "last": {"$max": "$updated_at"}}},
             {"$match": {"last": {"$lt": older_than}}},
             {"$sort": {"last": ASCENDING}},
@@ -228,7 +236,7 @@ class MongoCheckpointSaver(BaseCheckpointSaver[str]):
         stale = [row["_id"] async for row in await self.checkpoints.aggregate(pipeline)]
         deleted = 0
         for thread_id in stale:
-            if await self.waiting(cast(str, thread_id)):
+            if keep_waiting and await self.waiting(cast(str, thread_id)):
                 continue
             await self.adelete_thread(thread_id)
             deleted += 1
