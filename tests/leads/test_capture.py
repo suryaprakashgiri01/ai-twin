@@ -273,3 +273,26 @@ async def test_without_capture_an_opportunity_keeps_the_fixed_reply() -> None:
 
     public = make_public(label="opportunity")
     assert answer_of(await public.ask(OPENING)) == FIXED_REPLIES["opportunity"]
+
+
+async def test_a_wrong_optional_guess_is_dropped_quietly() -> None:
+    c = make_capture([extraction(role="backend", company="Acme", employment_type="senior")])
+    reply = await c.say(OPENING)
+    assert "doesn't look right" not in reply
+    assert reply.endswith(capture.QUESTIONS["message"])
+
+
+async def test_the_answer_about_the_opportunity_is_kept_whole() -> None:
+    c = make_capture(
+        [
+            extraction(role="backend", company="Acme"),
+            extraction(message="Python", location="remote"),
+        ]
+    )
+    await c.say(OPENING)
+    assert await c.say(ABOUT) == capture.QUESTIONS["name"]
+    assert c.conversation_id is not None
+    config: Any = {"configurable": {"thread_id": f"public:{c.conversation_id}"}}
+    state = await c.public.service._graph.aget_state(config)
+    assert state.values["lead"]["draft"]["message"] == ABOUT
+    assert state.values["lead"]["draft"]["location"] == "remote"

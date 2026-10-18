@@ -33,7 +33,7 @@ from app.agents.intake.confirm import classify_rules
 from app.agents.prompts import public as prompts
 from app.guardrails.output import OutputGuard
 from app.guardrails.scope import FIXED_REPLIES
-from app.leads.models import FIELDS, LIMITS, LeadDraft, check, clean
+from app.leads.models import FIELDS, LIMITS, REQUIRED, LeadDraft, check, clean
 from app.leads.service import LeadService
 from app.services.conversations import Turn
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
@@ -240,6 +240,12 @@ class CaptureNodes:
             return self._end(lead, self._confirm_text(lead["draft"]))
         return self._gathered(lead, found, opening, started)
 
+    @staticmethod
+    def _reported(invalid: dict[str, str], asked: str | None) -> dict[str, str]:
+        """Invalid values worth telling the visitor about: required fields and the one just
+        asked for. An optional value the model inferred wrongly is dropped quietly."""
+        return {k: v for k, v in invalid.items() if k in REQUIRED or k == asked}
+
     def _gathered(
         self, lead: dict[str, Any], found: dict[str, str], opening: bool, started: float
     ) -> Command[str]:
@@ -249,6 +255,7 @@ class CaptureNodes:
             return self._end(None, FIXED_REPLIES["opportunity"])
         result = check({**lead["draft"], **found})
         lead["draft"] = dict(result.values)
+        invalid = self._reported(result.invalid, lead.get("asked"))
         _step(
             "capture",
             started,
@@ -261,13 +268,13 @@ class CaptureNodes:
         parts = [INTRO.format(owner=self.owner)] if opening else []
         parts += [
             INVALID.format(label=LABELS[name].lower(), reason=reason)
-            for name, reason in result.invalid.items()
+            for name, reason in invalid.items()
         ]
         if result.missing:
             lead |= {"stage": "gathering", "asked": result.missing[0]}
             return self._end(lead, " ".join([*parts, QUESTIONS[result.missing[0]]]))
-        if result.invalid:
-            lead["asked"] = next(iter(result.invalid))
+        if invalid:
+            lead["asked"] = next(iter(invalid))
             return self._end(lead, " ".join(parts))
         lead |= {"stage": "confirm", "asked": None}
         reply = self._confirm_text(lead["draft"])
@@ -292,9 +299,12 @@ class CaptureNodes:
             if value and str(value).strip() and grounded(name, str(value), said)
         }
         found |= pattern_values(text)
+        asked = lead.get("asked")
+        if asked == "message" and not question_like(text) and text.strip():
+            # The answer to "tell me about it" is the visitor's own words, not a model's digest.
+            found["message"] = text.strip()
         if found or question_like(text):
             return found
-        asked = lead.get("asked")
         if asked and (answer := short_answer(asked, text)):
             return {asked: answer}
         if opening and len(text) >= 30:
