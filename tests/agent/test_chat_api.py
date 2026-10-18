@@ -32,13 +32,17 @@ Q = "what did I learn at the meetup?"
 class MemoryIndex:
     def __init__(self, store: MemoryConversationStore) -> None:
         self.store = store
+        self.titles: dict[str, tuple[str | None, str | None]] = {}
 
     def _meta(self, conversation_id: str) -> ConversationMeta:
         meta = self.store.conversations[conversation_id]
         turns = self.store.turns.get(conversation_id, {})
         stamps = [t.created_at for t in turns.values()]
+        name, description = self.titles.get(conversation_id, (None, None))
         return ConversationMeta(
             id=conversation_id,
+            name=name,
+            description=description,
             channel=meta["channel"],
             created_at=min(stamps),
             updated_at=max(stamps),
@@ -59,6 +63,22 @@ class MemoryIndex:
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]
+
+    async def by_name(self, name: str) -> ConversationMeta | None:
+        for conversation_id, (title, _) in self.titles.items():
+            if title == name and conversation_id in self.store.conversations:
+                return self._meta(conversation_id)
+        return None
+
+    async def names_like(self, base: str) -> set[str]:
+        names = {title for title, _ in self.titles.values() if title}
+        return {n for n in names if n == base or n.startswith(f"{base}-")}
+
+    async def set_title(
+        self, conversation_id: str, name: str | None, description: str | None
+    ) -> None:
+        old_name, old_description = self.titles.get(conversation_id, (None, None))
+        self.titles[conversation_id] = (name or old_name, description or old_description)
 
 
 @dataclass
@@ -226,3 +246,38 @@ async def test_chat_without_the_service_is_unavailable() -> None:
             "/admin/v1/chat", json={"message": Q}, headers={"X-API-Key": key}
         )
     assert response.status_code == 503
+
+
+async def test_new_conversations_get_unique_names(api: ChatApi) -> None:
+    first = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    second = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    listed = {
+        c["id"]: c
+        for c in (await api.client.get("/admin/v1/conversations", headers=api.headers)).json()
+    }
+    base = listed[first]["name"]
+    assert base and listed[second]["name"] == f"{base}-2"
+    assert listed[first]["description"] == Q[:100]
+    found = await api.client.get(f"/admin/v1/conversations/by-name/{base}", headers=api.headers)
+    assert found.status_code == 200 and found.json()["id"] == first
+    missing = await api.client.get("/admin/v1/conversations/by-name/nope", headers=api.headers)
+    assert missing.status_code == 404
+
+
+async def test_rename_validates_and_refuses_taken_names(api: ChatApi) -> None:
+    first = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    second = (await api.sse({"message": "another question entirely"}))[0][1]["conversation_id"]
+    url = f"/admin/v1/conversations/{second}"
+    renamed = await api.client.patch(
+        url, json={"name": "raft-notes", "description": "Raft study"}, headers=api.headers
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "raft-notes"
+    assert renamed.json()["description"] == "Raft study"
+    first_name = (
+        await api.client.get(f"/admin/v1/conversations/{first}", headers=api.headers)
+    ).json()["name"]
+    taken = await api.client.patch(url, json={"name": first_name}, headers=api.headers)
+    assert taken.status_code == 409 and taken.json()["error"]["code"] == "CONFLICT"
+    invalid = await api.client.patch(url, json={"name": "Not A Slug"}, headers=api.headers)
+    assert invalid.status_code == 422

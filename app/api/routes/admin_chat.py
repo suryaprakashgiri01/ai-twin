@@ -9,18 +9,22 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
+from app.services.audit import AuditLog
+from app.services.naming import NAME_MAX, NAME_PATTERN
 from app.services.owner_chat import (
     ChatRequest,
     ChatResponse,
     ConversationDetail,
     ConversationSummary,
     OwnerChatService,
+    TitleUpdate,
 )
 
 router = APIRouter(tags=["admin: chat"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
 ConversationId = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
+ConversationName = Annotated[str, Path(pattern=NAME_PATTERN, max_length=NAME_MAX)]
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -66,6 +70,30 @@ async def list_conversations(
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
 ) -> list[ConversationSummary]:
     return await _service(request).list_conversations(limit)
+
+
+@router.get("/conversations/by-name/{name}", summary="One owner conversation, found by its name")
+async def conversation_by_name(
+    name: ConversationName, _principal: AdminKey, request: Request
+) -> ConversationSummary:
+    return await _service(request).conversation_by_name(name)
+
+
+@router.patch(
+    "/conversations/{conversation_id}", summary="Rename or re-describe a conversation (audited)"
+)
+async def update_conversation(
+    conversation_id: ConversationId, body: TitleUpdate, principal: AdminKey, request: Request
+) -> ConversationSummary:
+    summary = await _service(request).update_title(conversation_id, body)
+    audit: AuditLog = request.app.state.resources.audit
+    await audit.record(
+        actor=f"key:{principal.name}",
+        action="conversation.update",
+        target=conversation_id,
+        details={"fields": sorted(body.model_dump(exclude_none=True))},
+    )
+    return summary
 
 
 @router.get("/conversations/{conversation_id}", summary="One owner conversation with its turns")

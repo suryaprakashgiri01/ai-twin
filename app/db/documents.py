@@ -256,6 +256,9 @@ class Conversation(Document):
     message_count: int = 0
     # Set for public conversations only; the TTL index deletes them then.
     expires_at: datetime | None = None
+    # Owner conversations only: a short unique slug and a one-line description.
+    name: str | None = None
+    description: str | None = None
 
     class Settings:
         name = "conversations"
@@ -264,6 +267,7 @@ class Conversation(Document):
             IndexModel(
                 [("channel", ASCENDING), ("updated_at", DESCENDING)], name="channel_updated_at"
             ),
+            IndexModel([("channel", ASCENDING), ("name", ASCENDING)], name="channel_name"),
         ]
 
 

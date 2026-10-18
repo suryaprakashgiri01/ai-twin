@@ -7,6 +7,7 @@
 #   ./scripts/dev.ps1 ollama start   (status | install | start | stop | pull [model] | smoke)
 #   ./scripts/dev.ps1 import vault/exports/<archive>.atv --apply
 #   ./scripts/dev.ps1 seed --apply            (remove: seed --remove --apply)
+#   ./scripts/dev.ps1 chat                    (chat list | chat continue <name|id> | chat rename <name|id> <new-name>)
 param(
     [Parameter(Position = 0)][string]$Command = "help",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
@@ -14,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "chat")
 
 switch ($Command) {
     "help" {
