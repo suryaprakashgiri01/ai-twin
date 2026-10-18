@@ -5,8 +5,9 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
@@ -89,6 +90,16 @@ class Settings(BaseSettings):
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
 
+    # --- owner intake assistant (vault) -----------------------------------------
+    # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.
+    intake_checkpoint_days: int = Field(default=30, ge=1, le=3650)
+    # `ingest_file` reads only from this folder, by file name.
+    intake_inbox_dir: Path = Path("vault/inbox")
+    # Natural dates ("yesterday", "12 Oct") resolve in this zone, day first.
+    owner_timezone: str = "Asia/Kolkata"
+    # After an ingest the assistant waits this long for the job before reporting its status.
+    intake_ingest_wait_seconds: float = Field(default=30, ge=0, le=600)
+
     # --- public agent ----------------------------------------------------------
     # Per visitor (salted hash of the address the portfolio server forwards) and in total.
     public_messages_per_minute: int = Field(default=8, ge=1, le=1000)
@@ -118,6 +129,15 @@ class Settings(BaseSettings):
     # --- feature flags -------------------------------------------------------
     # Hosted classifier for non-sensitive decisions; capped at the public tier.
     ff_jev_enabled: bool = False
+
+    @field_validator("owner_timezone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"Unknown time zone {value!r} (use an IANA name)") from exc
+        return value
 
 
 def ingest_max_bytes(settings: Settings) -> int:

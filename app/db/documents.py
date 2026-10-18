@@ -17,6 +17,8 @@ from pymongo import ASCENDING, DESCENDING, TEXT, IndexModel
 
 Tier = Literal["public", "private", "confidential", "restricted"]
 Channel = Literal["public", "owner"]
+# Owner conversations: `ask` questions the vault, `intake` adds knowledge through the assistant.
+ConversationMode = Literal["ask", "intake"]
 Role = Literal["user", "assistant", "system", "tool"]
 SourceKind = Literal["text", "file", "url", "github", "linkedin_export"]
 ReviewStatus = Literal["pending", "approved", "rejected", "quarantined"]
@@ -259,6 +261,7 @@ class Conversation(Document):
     # Owner conversations only: a short unique slug and a one-line description.
     name: str | None = None
     description: str | None = None
+    mode: ConversationMode = "ask"
 
     class Settings:
         name = "conversations"
@@ -358,6 +361,70 @@ class AppliedMigration(Document):
         name = "schema_migrations"
 
 
+class CheckpointEntry(Document):
+    """One LangGraph checkpoint of the intake assistant, keyed by conversation (`thread_id`).
+
+    `checkpoint` and `metadata` are LangGraph-serialised bytes. Finished threads are pruned after
+    the retention period; a thread waiting on a confirmation is kept.
+    """
+
+    thread_id: str
+    checkpoint_ns: str = ""
+    checkpoint_id: str
+    parent_checkpoint_id: str | None = None
+    checkpoint_type: str
+    checkpoint: bytes
+    metadata_type: str
+    metadata: bytes
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "checkpoints"
+        indexes: ClassVar[list[IndexModel]] = [
+            IndexModel(
+                [
+                    ("thread_id", ASCENDING),
+                    ("checkpoint_ns", ASCENDING),
+                    ("checkpoint_id", DESCENDING),
+                ],
+                name="thread_checkpoint",
+                unique=True,
+            ),
+            IndexModel([("updated_at", ASCENDING)], name="updated_at"),
+        ]
+
+
+class CheckpointWrite(Document):
+    """A pending write recorded against one checkpoint (task output, interrupt, resume value)."""
+
+    thread_id: str
+    checkpoint_ns: str = ""
+    checkpoint_id: str
+    task_id: str
+    idx: int
+    channel: str
+    value_type: str
+    value: bytes
+    task_path: str = ""
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "checkpoint_writes"
+        indexes: ClassVar[list[IndexModel]] = [
+            IndexModel(
+                [
+                    ("thread_id", ASCENDING),
+                    ("checkpoint_ns", ASCENDING),
+                    ("checkpoint_id", ASCENDING),
+                    ("task_id", ASCENDING),
+                    ("idx", ASCENDING),
+                ],
+                name="thread_checkpoint_task",
+                unique=True,
+            ),
+        ]
+
+
 # Every collection Beanie manages; startup creates their indexes.
 DOCUMENT_MODELS: list[type[Document]] = [
     ApiKey,
@@ -374,4 +441,6 @@ DOCUMENT_MODELS: list[type[Document]] = [
     AuditEntry,
     ModelOverride,
     AppliedMigration,
+    CheckpointEntry,
+    CheckpointWrite,
 ]

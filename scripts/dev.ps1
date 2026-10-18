@@ -8,6 +8,8 @@
 #   ./scripts/dev.ps1 import vault/exports/<archive>.atv --apply
 #   ./scripts/dev.ps1 seed --apply            (remove: seed --remove --apply)
 #   ./scripts/dev.ps1 chat                    (chat list | chat continue <name|id> | chat rename <name|id> <new-name>)
+#   ./scripts/dev.ps1 migrate status         (migrate upgrade | migrate downgrade 0003 --apply)
+#   ./scripts/dev.ps1 twin                    (intake assistant: add notes, records, files in plain language)
 param(
     [Parameter(Position = 0)][string]$Command = "help",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
@@ -15,17 +17,20 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "chat")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "chat", "migrate")
 
 switch ($Command) {
     "help" {
-        Write-Host "Commands: $($scripts -join ', '), run, test"
+        Write-Host "Commands: $($scripts -join ', '), run, test, twin"
     }
     "run" {
         uv run python -m app.main --reload
     }
     "test" {
         uv run pytest @Rest
+    }
+    "twin" {
+        uv run python -m scripts.chat twin @Rest
     }
     default {
         if ($scripts -notcontains $Command) {

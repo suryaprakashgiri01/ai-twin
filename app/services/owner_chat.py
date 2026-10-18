@@ -31,7 +31,7 @@ from app.agents.tools.records import MongoRecordsTool, RecordsResult
 from app.core.config import Settings
 from app.core.llm import LLMServices
 from app.core.resources import Resources
-from app.db.documents import Channel, Conversation, Message, utcnow
+from app.db.documents import Channel, Conversation, ConversationMode, Message, utcnow
 from app.exceptions import AppError, ErrorCode
 from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
@@ -96,6 +96,7 @@ class ConversationSummary(BaseModel):
     created_at: datetime
     updated_at: datetime
     message_count: int
+    mode: ConversationMode = "ask"
 
 
 class TitleUpdate(BaseModel):
@@ -177,6 +178,23 @@ class MongoConversationIndex:
             upsert=True,
         )
 
+    async def set_mode(self, conversation_id: str, mode: ConversationMode) -> None:
+        now = utcnow()
+        await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id},
+            {
+                "$setOnInsert": {
+                    "channel": "owner",
+                    "visitor_hash": None,
+                    "created_at": now,
+                    "updated_at": now,
+                    "message_count": 0,
+                },
+                "$set": {"mode": mode},
+            },
+            upsert=True,
+        )
+
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
         found = (
             await Conversation.find(Conversation.channel == "owner")
@@ -192,6 +210,7 @@ class MongoConversationIndex:
                 created_at=c.created_at,
                 updated_at=c.updated_at,
                 message_count=c.message_count,
+                mode=c.mode,
             )
             for c in found
         ]
@@ -217,6 +236,7 @@ def _meta(found: Conversation) -> ConversationMeta:
         created_at=found.created_at,
         updated_at=found.updated_at,
         message_count=found.message_count,
+        mode=found.mode,
     )
 
 
@@ -432,16 +452,16 @@ class OwnerChatService:
         )
 
 
-def build_owner_chat(
+def owner_deps(
     settings: Settings, resources: Resources, llm: LLMServices, embedder: Embedder
-) -> OwnerChatService:
+) -> OwnerDeps:
     retriever = Retriever(
         resources.qdrant,
         embedder,
         MongoDocumentFilter(),
         prefetch_limit=settings.retrieval_prefetch,
     )
-    deps = OwnerDeps(
+    return OwnerDeps(
         orchestrator=llm.orchestrator,
         retriever=retriever,
         reranker=CrossEncoderReranker(
@@ -459,6 +479,17 @@ def build_owner_chat(
             history_turns=settings.owner_history_turns,
         ),
     )
+
+
+def build_owner_chat(
+    settings: Settings, resources: Resources, llm: LLMServices, embedder: Embedder
+) -> OwnerChatService:
+    return build_owner_chat_from(owner_deps(settings, resources, llm, embedder), resources, llm)
+
+
+def build_owner_chat_from(
+    deps: OwnerDeps, resources: Resources, llm: LLMServices
+) -> OwnerChatService:
     return OwnerChatService(
         build_owner_graph(deps),
         resources.conversations,
