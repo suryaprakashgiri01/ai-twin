@@ -45,6 +45,7 @@ from app.agents.intake.confirm import Decision, classify_reply, retype_matches
 from app.agents.intake.drafts import (
     IntakeDraft,
     check,
+    ground,
     local_today,
     merge,
     normalise,
@@ -182,9 +183,11 @@ class IntakeNodes:
         spec = ACTIONS[action]
         switched = current is not None and action != current
         base = {} if switched or current is None else dict(state.get("payload") or {})
-        payload = merge(base, extracted.payload)
-        payload = self._defaults(spec, payload, state["message"])
-        return await self._settle(spec, payload, state, started, model_id, switched)
+        given, dropped = ground(
+            spec, extracted.payload, state["message"], base, self.deps.timezone, self.deps.now()
+        )
+        payload = self._defaults(spec, merge(base, given), state["message"])
+        return await self._settle(spec, payload, state, started, model_id, switched, dropped)
 
     async def _settle(
         self,
@@ -194,6 +197,7 @@ class IntakeNodes:
         started: float,
         model_id: str | None,
         switched: bool,
+        dropped: list[str],
     ) -> Command[str]:
         deps = self.deps
         payload, invalid = normalise(spec, payload, deps.timezone, deps.now())
@@ -208,6 +212,7 @@ class IntakeNodes:
             action=spec.name,
             model=model_id,
             switched=switched,
+            ungrounded=sorted(dropped),
             missing=result.missing,
             invalid=sorted(invalid),
             unresolved=resolution.problem is not None,
