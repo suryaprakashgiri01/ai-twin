@@ -221,8 +221,9 @@ def quiet_presidio() -> None:
     for name in _PRESIDIO_LOGGERS:
         drop_own_handlers(name)
         attach_filter(name, OnceFilter)
-    # Presidio's per-decision trace is debug output; INFO would print one line per entity.
-    logging.getLogger("decision_process").setLevel(logging.WARNING)
+    # Presidio's per-decision trace and its recogniser-loading chatter are debug output.
+    for name in _PRESIDIO_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> Any:
