@@ -57,7 +57,7 @@ GENERIC = frozenset(
         "in",
     }
 )
-_WORD = re.compile(r"[a-z0-9+#.]+")
+_WORD = re.compile(r"[a-z0-9+#]+(?:\.[a-z0-9+#]+)*")
 
 
 @dataclass(frozen=True)

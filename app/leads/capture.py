@@ -111,7 +111,8 @@ _LEAD_IN = re.compile(
     r"the role is|role is|at|for)\s+",
     re.IGNORECASE,
 )
-_WORDS = re.compile(r"[a-z0-9@.+#-]+")
+# Words, emails and dotted names ("node.js"), without trailing punctuation.
+_WORDS = re.compile(r"[a-z0-9@+#]+(?:[.'-][a-z0-9@+#]+)*")
 SHORT_ANSWER = {"name", "company", "role", "location"}
 
 
