@@ -31,6 +31,8 @@ EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
 RECAP_TURNS = 4
 RECAP_CHARS = 280
 LIST_LIMIT_MAX = 200
+# Names are at most 48 characters; generated ones at most 40 plus a short suffix.
+NAME_WIDTH = 44
 
 
 class CliError(Exception):
@@ -188,12 +190,12 @@ def _short(text: str, width: int) -> str:
 def render_list(conversations: Sequence[dict[str, Any]]) -> str:
     if not conversations:
         return "No conversations yet. Start one: make chat (Windows: ./scripts/dev.ps1 chat)"
-    rows = [f"{'NAME':<32} {'ID':<32} {'UPDATED':<16} {'TURNS':>5}  DESCRIPTION"]
+    rows = [f"{'NAME':<{NAME_WIDTH}} {'ID':<32} {'UPDATED':<16} {'TURNS':>5}  DESCRIPTION"]
     for c in conversations:
         updated = str(c.get("updated_at", ""))[:16].replace("T", " ")
-        name = _short(str(c.get("name") or "-"), 32)
+        name = _short(str(c.get("name") or "-"), NAME_WIDTH)
         rows.append(
-            f"{name:<32} {c['id']:<32} {updated:<16} {c.get('message_count', 0):>5}  "
+            f"{name:<{NAME_WIDTH}} {c['id']:<32} {updated:<16} {c.get('message_count', 0):>5}  "
             f"{_short(str(c.get('description') or ''), 60)}"
         )
     return "\n".join(rows)

@@ -246,3 +246,38 @@ async def test_chat_without_the_service_is_unavailable() -> None:
             "/admin/v1/chat", json={"message": Q}, headers={"X-API-Key": key}
         )
     assert response.status_code == 503
+
+
+async def test_new_conversations_get_unique_names(api: ChatApi) -> None:
+    first = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    second = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    listed = {
+        c["id"]: c
+        for c in (await api.client.get("/admin/v1/conversations", headers=api.headers)).json()
+    }
+    base = listed[first]["name"]
+    assert base and listed[second]["name"] == f"{base}-2"
+    assert listed[first]["description"] == Q[:100]
+    found = await api.client.get(f"/admin/v1/conversations/by-name/{base}", headers=api.headers)
+    assert found.status_code == 200 and found.json()["id"] == first
+    missing = await api.client.get("/admin/v1/conversations/by-name/nope", headers=api.headers)
+    assert missing.status_code == 404
+
+
+async def test_rename_validates_and_refuses_taken_names(api: ChatApi) -> None:
+    first = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    second = (await api.sse({"message": "another question entirely"}))[0][1]["conversation_id"]
+    url = f"/admin/v1/conversations/{second}"
+    renamed = await api.client.patch(
+        url, json={"name": "raft-notes", "description": "Raft study"}, headers=api.headers
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "raft-notes"
+    assert renamed.json()["description"] == "Raft study"
+    first_name = (
+        await api.client.get(f"/admin/v1/conversations/{first}", headers=api.headers)
+    ).json()["name"]
+    taken = await api.client.patch(url, json={"name": first_name}, headers=api.headers)
+    assert taken.status_code == 409 and taken.json()["error"]["code"] == "CONFLICT"
+    invalid = await api.client.patch(url, json={"name": "Not A Slug"}, headers=api.headers)
+    assert invalid.status_code == 422
