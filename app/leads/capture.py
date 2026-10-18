@@ -314,7 +314,7 @@ class CaptureNodes:
         ]
         try:
             result = await self.deps.orchestrator.structured_call(
-                Role.GENERATOR, LEAD_TIER, LeadDraft, messages, max_tokens=400
+                Role.GENERATOR, LEAD_TIER, LeadDraft, messages
             )
         except OrchestratorError as exc:
             logger.warning("lead extraction failed", error_type=type(exc).__name__)
@@ -379,9 +379,7 @@ class CaptureNodes:
             HumanMessage(content=f"Transcript:\n{text}"),
         ]
         try:
-            result = await self.deps.orchestrator.chat(
-                Role.GENERATOR, LEAD_TIER, messages, max_tokens=300
-            )
+            result = await self.deps.orchestrator.chat(Role.GENERATOR, LEAD_TIER, messages)
         except OrchestratorError as exc:
             logger.warning("lead summary failed", error_type=type(exc).__name__)
             return None
