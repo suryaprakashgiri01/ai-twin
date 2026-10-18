@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -54,10 +54,13 @@ check: ## Quality gate: ruff, mypy strict, pytest + coverage
 chat: ## Chat with the vault in the terminal (new conversation; ARGS="rename X new-name")
 	$(PY) scripts.chat $(ARGS)
 
-chat-list: ## List conversations: name, id, updated, turns, description
+twin: ## Add knowledge in plain language (intake assistant; confirms before every write)
+	$(PY) scripts.chat twin $(ARGS)
+
+chat-list: ## List conversations: name, mode, id, updated, turns, description
 	$(PY) scripts.chat list $(ARGS)
 
-chat-continue: ## Continue a conversation: ARGS="<name|id>"
+chat-continue: ## Continue a conversation (ask or intake, at a pending draft): ARGS="<name|id>"
 	$(PY) scripts.chat continue $(ARGS)
 
 run: ## Run the API locally (reload)

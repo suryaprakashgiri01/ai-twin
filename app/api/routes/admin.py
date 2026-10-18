@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes import (
+    admin_assistant,
     admin_chat,
     admin_ingest,
     admin_meta,
@@ -26,4 +27,5 @@ def build_admin_router() -> APIRouter:
     router.include_router(admin_profile.router)
     router.include_router(admin_records.router)
     router.include_router(admin_chat.router)
+    router.include_router(admin_assistant.router)
     return router

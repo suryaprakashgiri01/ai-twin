@@ -19,8 +19,9 @@ from app.kb.embedding import Embedder, FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.middleware.request_context import RequestContextMiddleware
 from app.services.health import DependencyCheck, default_checks
+from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
-from app.services.owner_chat import build_owner_chat
+from app.services.owner_chat import build_owner_chat_from, owner_deps
 from app.services.public_chat import build_public_chat
 from app.services.resume import resume_provider
 
@@ -90,7 +91,11 @@ async def _start_services(
         app.state.ingestion = await stack.enter_async_context(run_ingestion(ingestion))
         # One embedder for indexing and search, so its models load once.
         embedder = ingestion.pipeline.embedder
-        app.state.owner_chat = build_owner_chat(settings, resources, app.state.llm, embedder)
+        owner = owner_deps(settings, resources, app.state.llm, embedder)
+        app.state.owner_chat = build_owner_chat_from(owner, resources, app.state.llm)
+        intake, saver = build_intake(settings, resources, app.state.llm, ingestion, owner)
+        app.state.intake = intake
+        await prune_checkpoints(saver, settings.intake_checkpoint_days)
     else:
         embedder = FastEmbedder(settings.models_dir / "fastembed")
     app.state.resume = resume_provider(settings, resources.profile, resources.blobs)

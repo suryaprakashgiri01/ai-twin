@@ -1,9 +1,14 @@
-"""Chat with the vault from the terminal: `python -m scripts.chat [list|new|continue|rename]`.
+"""Chat with the vault from the terminal: `python -m scripts.chat [list|new|twin|continue|rename]`.
 
-  list [--limit N]                         your conversations: name, id, updated, turns, description
-  new                                      start a conversation (the default)
-  continue <name|id>                       recap the last turns, then keep chatting
+  list [--limit N]                         your conversations: name, mode, id, updated, turns, ...
+  new                                      ask the vault questions (the default)
+  twin                                     add knowledge in plain language (intake assistant)
+  continue <name|id>                       recap the last turns, then keep going in that mode
+                                           (an intake conversation resumes at its pending draft)
   rename <name|id> <new-name> [--description TEXT]
+
+The intake assistant (`twin`) asks for anything missing, shows a draft and writes nothing until
+you answer yes; deletes also ask you to retype the title or company.
 
 It talks to the running API (`make run`) with the admin key in AI_TWIN_ADMIN_KEY (.env or the
 environment); the key is never printed. Context is the server's job: it reads the conversation
@@ -33,6 +38,7 @@ RECAP_CHARS = 280
 LIST_LIMIT_MAX = 200
 # Names are at most 48 characters; generated ones at most 40 plus a short suffix.
 NAME_WIDTH = 44
+MODE_WIDTH = 6
 
 
 class CliError(Exception):
@@ -147,14 +153,18 @@ class Api:
         ).json()
         return result
 
+    def assistant_state(self, conversation_id: str) -> dict[str, Any]:
+        result: dict[str, Any] = self._request("GET", f"/assistant/{conversation_id}").json()
+        return result
+
     def chat(
-        self, message: str, conversation_id: str | None
+        self, message: str, conversation_id: str | None, path: str = "/chat"
     ) -> Iterator[tuple[str, dict[str, Any]]]:
         body: dict[str, Any] = {"message": message}
         if conversation_id:
             body["conversation_id"] = conversation_id
         try:
-            with self._client.stream("POST", "/chat", json=body) as response:
+            with self._client.stream("POST", path, json=body) as response:
                 if response.status_code >= 400:
                     response.read()
                     self._check(response)
@@ -190,13 +200,17 @@ def _short(text: str, width: int) -> str:
 def render_list(conversations: Sequence[dict[str, Any]]) -> str:
     if not conversations:
         return "No conversations yet. Start one: make chat (Windows: ./scripts/dev.ps1 chat)"
-    rows = [f"{'NAME':<{NAME_WIDTH}} {'ID':<32} {'UPDATED':<16} {'TURNS':>5}  DESCRIPTION"]
+    rows = [
+        f"{'NAME':<{NAME_WIDTH}} {'MODE':<{MODE_WIDTH}} {'ID':<32} {'UPDATED':<16} {'TURNS':>5}  "
+        "DESCRIPTION"
+    ]
     for c in conversations:
         updated = str(c.get("updated_at", ""))[:16].replace("T", " ")
         name = _short(str(c.get("name") or "-"), NAME_WIDTH)
+        mode = str(c.get("mode") or "ask")
         rows.append(
-            f"{name:<{NAME_WIDTH}} {c['id']:<32} {updated:<16} {c.get('message_count', 0):>5}  "
-            f"{_short(str(c.get('description') or ''), 60)}"
+            f"{name:<{NAME_WIDTH}} {mode:<{MODE_WIDTH}} {c['id']:<32} {updated:<16} "
+            f"{c.get('message_count', 0):>5}  {_short(str(c.get('description') or ''), 60)}"
         )
     return "\n".join(rows)
 
@@ -237,8 +251,43 @@ def ask(api: Api, message: str, conversation_id: str | None) -> str | None:
     return conversation_id
 
 
-def chat_loop(api: Api, conversation_id: str | None) -> int:
-    print(paint("Type your message; /exit to leave.", "dim"))
+def print_draft(draft: dict[str, Any]) -> None:
+    print(paint("  " + json.dumps(draft.get("payload", {}), ensure_ascii=False), "dim"))
+    print(paint(str(draft.get("prompt", "")), "yellow"))
+
+
+def tell(api: Api, message: str, conversation_id: str | None) -> str | None:
+    """One intake turn: the reply, a pending draft if any; returns the conversation id."""
+    print(paint("twin: ", "green"), end="", flush=True)
+    for event, data in api.chat(message, conversation_id, path="/assistant"):
+        conversation_id = data.get("conversation_id", conversation_id)
+        if event == "token":
+            print(data.get("text", ""), end="", flush=True)
+        elif event == "draft":
+            print()
+            print_draft(data)
+        elif event == "done":
+            if not data.get("pending"):
+                print()
+            parts = [str(data.get("status")), str(data.get("action") or "-"), "local model"]
+            print(paint("  " + " · ".join(parts), "dim"))
+        elif event == "error":
+            print()
+            warn(f"{data.get('code')}: {data.get('message')}")
+    return conversation_id
+
+
+def print_pending(api: Api, conversation_id: str) -> None:
+    pending = api.assistant_state(conversation_id).get("pending")
+    if pending:
+        info("Waiting for your answer:")
+        print_draft(pending)
+
+
+def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
+    hint = "Tell me what to add; I confirm before saving." if mode == "intake" else ""
+    print(paint(f"{hint} Type your message; /exit to leave.".strip(), "dim"))
+    turn = tell if mode == "intake" else ask
     named = conversation_id is not None
     while True:
         try:
@@ -251,7 +300,7 @@ def chat_loop(api: Api, conversation_id: str | None) -> int:
         if message.lower() in EXIT_WORDS:
             break
         try:
-            conversation_id = ask(api, message, conversation_id)
+            conversation_id = turn(api, message, conversation_id)
         except KeyboardInterrupt:
             print()
             warn("Answer interrupted")
@@ -278,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     listing = sub.add_parser("list", help="list conversations")
     listing.add_argument("--limit", type=int, default=20)
     sub.add_parser("new", help="start a conversation")
+    sub.add_parser("twin", help="add knowledge in plain language (intake assistant)")
     resume = sub.add_parser("continue", help="continue a conversation")
     resume.add_argument("ref", help="name, unique name prefix, or id")
     rename = sub.add_parser("rename", help="rename a conversation")
@@ -296,12 +346,17 @@ def execute(args: argparse.Namespace, api: Api) -> int:
         found = resolve(api, args.ref)
         detail = api.get(found["id"]) or found
         print_recap(detail)
-        return chat_loop(api, found["id"])
+        mode = str(detail.get("mode") or "ask")
+        if mode == "intake":
+            print_pending(api, found["id"])
+        return chat_loop(api, found["id"], mode)
     if command == "rename":
         found = resolve(api, args.ref)
         updated = api.rename(found["id"], args.name, args.description)
         ok(f"Renamed to {updated.get('name')}")
         return 0
+    if command == "twin":
+        return chat_loop(api, None, "intake")
     return chat_loop(api, None)
 
 

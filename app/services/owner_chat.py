@@ -452,16 +452,16 @@ class OwnerChatService:
         )
 
 
-def build_owner_chat(
+def owner_deps(
     settings: Settings, resources: Resources, llm: LLMServices, embedder: Embedder
-) -> OwnerChatService:
+) -> OwnerDeps:
     retriever = Retriever(
         resources.qdrant,
         embedder,
         MongoDocumentFilter(),
         prefetch_limit=settings.retrieval_prefetch,
     )
-    deps = OwnerDeps(
+    return OwnerDeps(
         orchestrator=llm.orchestrator,
         retriever=retriever,
         reranker=CrossEncoderReranker(
@@ -479,6 +479,17 @@ def build_owner_chat(
             history_turns=settings.owner_history_turns,
         ),
     )
+
+
+def build_owner_chat(
+    settings: Settings, resources: Resources, llm: LLMServices, embedder: Embedder
+) -> OwnerChatService:
+    return build_owner_chat_from(owner_deps(settings, resources, llm, embedder), resources, llm)
+
+
+def build_owner_chat_from(
+    deps: OwnerDeps, resources: Resources, llm: LLMServices
+) -> OwnerChatService:
     return OwnerChatService(
         build_owner_graph(deps),
         resources.conversations,
