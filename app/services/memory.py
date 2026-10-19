@@ -224,6 +224,10 @@ class MemoryService:
             raise AppError(ErrorCode.NOT_FOUND, "Memory not found")
         return found
 
+    async def pending_count(self, conversation_id: str) -> int:
+        pending = await self._store.by_status(["pending"])
+        return sum(1 for m in pending if m.source_conversation_id == conversation_id)
+
     # --- learning ------------------------------------------------------------------------------
 
     async def learn(

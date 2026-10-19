@@ -257,11 +257,18 @@ class Learner:
         self.calls.append((list(candidates), owner_text, conversation_id, tier))
         return len(candidates)
 
+    async def pending_count(self, conversation_id: str) -> int:
+        if self.fail:
+            raise RuntimeError("store down")
+        return sum(len(c[0]) for c in self.calls if c[2] == conversation_id)
+
 
 def long_chat(n: int, *, error_at: int | None = None) -> list[Turn]:
     chat: list[Turn] = []
     for i in range(1, n + 1):
-        chat.append(Turn(seq=2 * i - 1, role="user", content=f"owner question {i} on raft"))
+        chat.append(
+            Turn(seq=2 * i - 1, role="user", content=f"owner question {i} on raft consensus notes")
+        )
         route = "intake:error" if i == error_at else "kb_search"
         chat.append(Turn(seq=2 * i, role="assistant", content=f"assistant reply {i}", route=route))
     return chat
@@ -402,3 +409,38 @@ async def test_digest_logs_carry_no_conversation_text() -> None:
     text = json.dumps(logs, default=str)
     assert "Secret raft summary" not in text and "owner question" not in text
     assert any(e["event"] == "conversation digested" for e in logs)
+
+
+async def test_a_title_the_owner_never_spoke_of_keeps_the_old_name() -> None:
+    index = MemoryIndex()
+    index.add("c1", long_chat(2), name="raft-questions")
+    copied = json.dumps(
+        {
+            "title": "System design interview prep",  # the small model copied an example
+            "description": "Questions about raft.",
+            "summary": "Raft.",
+            "memories": [],
+        }
+    )
+    t, _ = titler(index, cloud=[copied], local=[])
+    result = await t.refresh("c1")
+    assert result.name == "raft-questions" and not result.renamed
+    assert result.description == "Questions about raft."
+
+
+async def test_exit_reports_pending_memories_from_the_whole_conversation() -> None:
+    index = MemoryIndex()
+    index.add("c1", long_chat(3))
+    learner = Learner()
+    candidate = {"kind": "preference", "text": "Concise bullets", "confidence": 0.9}
+    t, _ = titler(
+        index,
+        cloud=[digest_json("Raft.", [candidate]), digest_json("Raft again.")],
+        local=[],
+        learner=learner,
+    )
+    t.after_turn("c1", 6)  # the periodic run learns one
+    await t.drain(1)
+    index.add("c1", long_chat(4), summary="Raft.", summarized_turns=6)
+    result = await t.refresh("c1")  # learns nothing new itself
+    assert result.new_memories == 1

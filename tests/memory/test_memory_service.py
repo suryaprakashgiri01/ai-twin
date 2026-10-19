@@ -162,3 +162,15 @@ async def test_no_memory_text_in_logs() -> None:
     text = json.dumps(logs, default=str)
     assert "Concise" not in text and "British" not in text
     assert any(e["event"] == "memories learned" for e in logs)
+
+
+async def test_pending_count_is_per_conversation() -> None:
+    svc, _, _ = service()
+    await learn(svc, cand("preference", "Concise bullets with sources first"))
+    await svc.learn(
+        [cand("alias", "magnus-eval = Magnus Eval project")],
+        owner_text=OWNER,
+        conversation_id="c2",
+        tier=Tier.PRIVATE,
+    )
+    assert await svc.pending_count("c1") == 1 and await svc.pending_count("c3") == 0

@@ -55,23 +55,24 @@ MAX_CANDIDATES = 8
 PERSIST_WAIT_SECONDS = 5.0
 PERSIST_POLL_SECONDS = 0.2
 
-PROMPT_VERSION = "digest-v1"
+PROMPT_VERSION = "digest-v2"
 DIGEST_PROMPT_V1 = """You keep the record of a private conversation between the owner and \
 their assistant. You get the summary so far (if any), then every message the owner sent after \
 it, in order, and each assistant reply's outcome.
 Return:
-- `title`: 2 to 5 plain words for the topic MOST of the conversation is about. Weigh the whole \
-conversation, the summary so far included. No punctuation, dates or names of people, e.g. \
-"system design interview prep" or "magnus eval tech stack".
+- `title`: 2 to 5 plain words, taken from the owner's own messages, for the topic MOST of the \
+conversation is about. Weigh the whole conversation, the summary so far included. No \
+punctuation, dates or names of people.
 - `description`: one sentence of at most 100 characters on what the owner asked or did.
 - `summary`: at most 1000 characters. The summary so far merged with the new messages: the \
 topics, what was decided, and what happened.
 - `memories`: what the OWNER asked of the assistant that should last beyond this conversation, \
 taken from the owner's messages only, never from replies. Each has `kind` and `text` (one \
-short sentence) and `confidence` (0 to 1, how sure you are the owner meant it to last):
-  - `instruction`: a standing rule, e.g. "Show dates as 12 Oct 2026".
-  - `preference`: how they like answers, e.g. "Concise bullets with sources first".
-  - `alias`: a name they use, e.g. "magnus-eval = Magnus Eval project".
+short sentence in the owner's words) and `confidence` (0 to 1, how sure you are the owner \
+meant it to last):
+  - `instruction`: a standing rule ("always ...", "never ...").
+  - `preference`: how they like answers.
+  - `alias`: a name they use for something, written "short name = what it means".
   Facts about the owner's jobs, interviews, projects or life are NOT memories. Most \
 conversations have none: return [].
 Rules: say an action happened only when its outcome is `done`; for `error` or `failed` say it \
@@ -126,6 +127,10 @@ class Learner(Protocol):
         tier: Tier,
     ) -> int:
         """Store what the owner's own words support; returns how many new items are pending."""
+        ...
+
+    async def pending_count(self, conversation_id: str) -> int:
+        """Learned items from this conversation still waiting for the owner's review."""
         ...
 
 
@@ -204,6 +209,21 @@ def truthful_summary(summary: str, turns: list[Turn]) -> str:
     return text + note
 
 
+_TITLE_WORD = re.compile(r"[a-z0-9]+")
+STEM = 4
+
+
+def title_grounded(title: str, owner: str, summary: str | None) -> bool:
+    """At least half of the title's words (a shared stem counts) come from the owner's messages
+    or the summary: a small model that copies an example or invents a topic keeps the old name."""
+    want = [w for w in _TITLE_WORD.findall(title.casefold()) if len(w) > 2]
+    have = set(_TITLE_WORD.findall(f"{owner} {summary or ''}".casefold()))
+    if not want:
+        return False
+    hits = sum(1 for w in want if w in have or any(h[:STEM] == w[:STEM] for h in have))
+    return hits * 2 >= len(want)
+
+
 def owner_text(turns: list[Turn]) -> str:
     """The owner's own messages: the only text a memory may come from."""
     return "\n".join(t.content for t in turns if t.role == "user")
@@ -233,8 +253,12 @@ class ConversationDigester:
         result = await self._digest(meta, turns, "exit")
         if result is None:
             return self._skip(meta, "no_model")
-        digest, new_memories = result
-        name = None if meta.name_locked else await self._new_name(meta, digest.title)
+        digest, _ = result
+        new_memories = await self._pending(conversation_id)
+        grounded = title_grounded(digest.title, owner_text(turns), meta.summary)
+        name = (
+            None if meta.name_locked or not grounded else await self._new_name(meta, digest.title)
+        )
         description = describe(digest.description)
         await self.index.save_refresh(conversation_id, name, description, meta.message_count)
         changed = name is not None or description != meta.description
@@ -361,6 +385,16 @@ class ConversationDigester:
         except Exception as exc:
             # The summary and title are saved already; a failed learn loses only candidates.
             logger.warning("memory learning failed", error_type=type(exc).__name__)
+            return 0
+
+    async def _pending(self, conversation_id: str) -> int:
+        """Pending memories from the whole conversation, the periodic runs' included."""
+        if self.learner is None:
+            return 0
+        try:
+            return await self.learner.pending_count(conversation_id)
+        except Exception as exc:
+            logger.warning("pending memories not counted", error_type=type(exc).__name__)
             return 0
 
     # --- helpers -----------------------------------------------------------------------------
