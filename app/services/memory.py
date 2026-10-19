@@ -71,6 +71,38 @@ def supported(text: str, owner_text: str) -> bool:
     return sum(1 for t in want if seen(t)) / len(want) >= SUPPORT_SHARE
 
 
+_ALIAS_FORM = re.compile(r"=|\bmeans\b|\bstands for\b|\brefers to\b|\bis short for\b", re.I)
+# Words a lasting rule or preference uses; a candidate without any is usually a fact.
+_CUES = frozenset(
+    (
+        "always", "never", "prefer", "prefers", "preferred", "like", "likes", "want", "wants",
+        "use", "show", "answer", "answers", "reply", "replies", "keep", "avoid", "don't", "dont",
+        "do", "format", "write", "call", "give", "include", "list", "cite", "bullet", "bullets",
+        "concise", "short", "shorter", "brief", "detailed", "tables", "table", "spelling",
+        "dates", "date", "sources", "tone", "language", "english", "first", "last", "plain",
+        "simple", "examples", "code", "steps", "summary", "summaries",
+    )
+)  # fmt: skip
+# A candidate that narrates what happened ("learned about raft") is a fact, not a preference.
+_NARRATION = frozenset(
+    (
+        "learned", "asked", "discussed", "had", "applied", "interviewed", "did", "was", "were",
+        "went", "met", "worked", "talked", "they", "user", "i'm", "the owner", "i am",
+    )
+)  # fmt: skip
+
+
+def preference_shaped(kind: str, text: str) -> bool:
+    """An alias reads "short = long"; a rule or preference carries a directive word and does not
+    narrate an event."""
+    if kind == "alias":
+        return bool(_ALIAS_FORM.search(text))
+    words = text.casefold().replace(",", " ").split()
+    if not words or words[0] in _NARRATION or " ".join(words[:2]) in _NARRATION:
+        return False
+    return any(w.strip(".!") in _CUES for w in words)
+
+
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
@@ -279,7 +311,7 @@ class MemoryService:
         text = " ".join(candidate.text.split())
         if kind not in MEMORY_KINDS or not text or len(text) > TEXT_MAX:
             return None, ""
-        if not supported(text, owner_text):
+        if not supported(text, owner_text) or not preference_shaped(kind, text):
             return None, ""
         return cast(MemoryKind, kind), mask_identifiers(text)
 

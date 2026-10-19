@@ -17,7 +17,7 @@ from tests.memory.fakes import FakeAudit, FakeMemoryStore, WordEmbedder
 OWNER = (
     "Please answer in concise bullets with sources first. "
     "When I say magnus-eval I mean the Magnus Eval project. "
-    "Always show dates like 12 Oct 2026. My phone is +91 98765 43210."
+    "Always show dates like 12 Oct 2026. Always call me on +91 98765 43210 if urgent."
 )
 
 
@@ -45,14 +45,14 @@ async def test_learned_candidates_are_filtered_masked_and_pending() -> None:
         cand("fact", "Works at Globex"),  # unknown kind
         cand("preference", "x " * 150),  # over the cap
         cand("preference", "Prefers long essays with no sources"),  # not the owner's words
-        cand("instruction", "My phone is +91 98765 43210"),
+        cand("instruction", "Always call me on +91 98765 43210"),
     )
     assert new == 4
     items = await svc.listing("pending")
     assert {m.kind for m in items} == {"preference", "instruction", "alias"}
     assert all(m.status == "pending" and m.tier == "private" for m in items)
     texts = {m.text for m in items}
-    assert "My phone is [PHONE]" in texts  # identifiers masked by the shared recognisers
+    assert "Always call me on [PHONE]" in texts  # identifiers masked by the shared recognisers
     assert not any("98765" in t for t in texts)
     assert await svc.active() == []  # nothing learned is active
     assert {e[1] for e in audit.entries} == {"memory.learn"}
@@ -174,3 +174,14 @@ async def test_pending_count_is_per_conversation() -> None:
         tier=Tier.PRIVATE,
     )
     assert await svc.pending_count("c1") == 1 and await svc.pending_count("c3") == 0
+
+
+def test_facts_and_loose_aliases_are_not_preference_shaped() -> None:
+    from app.services.memory import preference_shaped
+
+    assert not preference_shaped("instruction", "learned about Raft leader election")
+    assert not preference_shaped("preference", "The owner asked about notice period")
+    assert not preference_shaped("alias", "magnus-eval Magnus Eval project")
+    assert preference_shaped("alias", "rl-svc means the rate limiter service")
+    assert preference_shaped("instruction", "Always show dates as 12 Oct 2026")
+    assert preference_shaped("preference", "Concise bullets with sources first")
