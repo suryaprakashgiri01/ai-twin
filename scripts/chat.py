@@ -271,7 +271,8 @@ def render_list(conversations: Sequence[dict[str, Any]]) -> str:
 
 ASK_INTRO = (
     "Ask anything about your vault: notes, projects, documents, records (applications, "
-    "assessments, interviews, offers, rejections, withdrawals) and your profile.",
+    "assessments, interviews, offers, rejections, withdrawals, HR calls, invites) and your "
+    "profile.",
     "Answers cite their sources. Confidential sources are read by the local model only; "
     "private ones may use Groq/Cerebras.",
     'Try: "How many interviews did I have this month?" · "What did I learn building <project>?"',
@@ -280,8 +281,9 @@ INTAKE_INTRO = (
     "Tell me what to add or change in plain language. I ask for anything missing, show a "
     "draft, and save nothing until you say yes. Runs on your local model only.",
     "I can: add notes · ingest a URL, an inbox file (INTAKE_INBOX_DIR, default vault/inbox) "
-    "or a GitHub repo · add, update or delete records (application, assessment, interview, "
-    "offer, rejection, withdrawal) · update your profile · show the review queue and leads · "
+    "or a GitHub repo · add, update or delete records (invite from Naukri/LinkedIn, "
+    "application, HR call with contact, assessment, interview, offer, rejection, withdrawal) · "
+    "update your profile · show the review queue and leads · "
     "approve, publish, unpublish, relabel or delete documents · answer questions.",
     'Try: "I had a technical round 2 with Acme yesterday for an AI Engineer role"',
 )

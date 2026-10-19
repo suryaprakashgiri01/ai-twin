@@ -96,3 +96,34 @@ def test_history_lines_carry_real_outcomes_and_the_prompt_explains_them() -> Non
     assert history_line(asked) == {"role": "user", "content": "publish it"}
     assert "[done] means it already happened" in prompts.EXTRACT_V2
     assert "Never repeat an action" in prompts.EXTRACT_V2
+
+
+async def test_hr_call_with_contact_and_naukri_invite(make_twin: MakeTwin) -> None:
+    twin = make_twin(
+        [
+            extract(
+                "add_record",
+                kind="hr call",
+                company="Acme Test",
+                role="AI Engineer",
+                date="yesterday",
+                contact="Priya priya@acme.example",
+            ),
+            extract(
+                "add_record", kind="invite", company="Globex Test", role="ML Engineer", date="today"
+            ),
+        ]
+    )
+    call = await twin.say(
+        "Had an HR call with Acme Test yesterday for AI Engineer, HR was Priya priya@acme.example"
+    )
+    assert call.draft is not None
+    payload = call.draft["payload"]
+    assert (payload["kind"], payload["stage"]) == ("hr_call", "HR call")
+    assert payload["contact"] == "Priya priya@acme.example"
+    saved = await twin.say("yes", call.conversation_id)
+    assert "contact: Priya priya@acme.example" in saved.text
+    invite = await twin.say("Got an invite on naukri today from Globex Test for ML Engineer")
+    assert invite.draft is not None
+    assert invite.draft["payload"]["platform"] == "Naukri"
+    assert invite.draft["payload"]["stage"] == "invited to apply"

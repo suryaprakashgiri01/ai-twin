@@ -57,6 +57,7 @@ from app.agents.intake.drafts import (
 )
 from app.agents.intake.suggest import suggest
 from app.agents.prompts import intake as prompts
+from app.agents.routing import canonical_kind, canonical_platform, platform_in
 from app.db.documents import utcnow
 from app.exceptions import AppError
 from app.services.admin_ops import AdminOps, intake_actor
@@ -179,6 +180,23 @@ def _owner_context(state: IntakeState) -> OwnerContext | None:
 _REMEMBER_PREFIX = re.compile(r"^\s*(please\s+)?remember\s*(that|this|:)?\s*", re.I)
 _ALIAS = re.compile(r"\bwhen i say\b|\bi mean\b|\bstands for\b|=|\bmeans\b", re.I)
 _RULE = re.compile(r"\b(always|never|every time|from now on|don't|do not)\b", re.I)
+
+
+# A stage the owner rarely says for these kinds; asking for it would only slow them down.
+DEFAULT_STAGE = {"invite": "invited to apply", "hr_call": "HR call"}
+
+
+def _record_defaults(payload: dict[str, Any], message: str) -> dict[str, Any]:
+    """A known platform's usual spelling (from the owner's words when the model missed it) and
+    the default stage of an invite or HR call."""
+    out = dict(payload)
+    platform = out.get("platform") or platform_in(message)
+    if platform:
+        out["platform"] = canonical_platform(str(platform))
+    kind = canonical_kind(str(out.get("kind") or ""))
+    if kind in DEFAULT_STAGE and not out.get("stage"):
+        out["stage"] = DEFAULT_STAGE[kind]
+    return out
 
 
 def _remember_defaults(payload: dict[str, Any], message: str) -> dict[str, Any]:
@@ -370,6 +388,8 @@ class IntakeNodes:
             payload = {**payload, "source_id": typed_id.group(0)}
         if spec.name == "remember":
             payload = _remember_defaults(payload, message)
+        if spec.name in ("add_record", "update_record"):
+            payload = _record_defaults(payload, message)
         if spec.name == "add_note":
             if not payload.get("body"):
                 payload = {**payload, "body": message}

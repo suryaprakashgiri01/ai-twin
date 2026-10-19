@@ -285,9 +285,16 @@ async def _ingest_github(ctx: RunContext, p: Payload) -> Outcome:
 
 
 def _record_line(record: RecordOut) -> str:
+    """Shown in the intake assistant only (local model, confidential tier), so the contact may
+    appear here; ask-chat record answers never include it."""
+    extra = "".join(
+        f" · {label}{value}"
+        for label, value in (("via ", record.platform), ("contact: ", record.contact))
+        if value
+    )
     return (
         f"{record.kind} {record.company} · {record.role} · {record.stage} · "
-        f"{show_day(record.date)} ({record.id})"
+        f"{show_day(record.date)}{extra} ({record.id})"
     )
 
 
@@ -512,11 +519,13 @@ UPDATE_RECORD = ActionSpec(
         "stage": "new stage",
         "date": "new date, in the owner's words",
         "notes": "new notes",
+        "platform": "new platform (Naukri, LinkedIn, Instahyre, a referral, ...)",
+        "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
     },
     required=("record",),
-    needs_any=("company", "role", "stage", "date", "notes"),
+    needs_any=("company", "role", "stage", "date", "notes", "platform", "contact"),
     model=RecordChanges,
-    model_keys=("company", "role", "stage", "date", "notes"),
+    model_keys=("company", "role", "stage", "date", "notes", "platform", "contact"),
     target="record",
     date_fields=("date",),
     resolved=_RECORD_RESOLVED,
@@ -616,12 +625,17 @@ _SPECS = [
         name="add_record",
         label="Add a record",
         description=(
-            "track a job-search step: an application, an assessment (take-home assignment or "
-            "online test), an interview, an offer, a rejection or a withdrawal "
+            "track a job-search step: an invite (a recruiter or a job platform such as Naukri "
+            "or LinkedIn invited the owner to apply), an application, an HR call (a call or "
+            "screening with HR or a recruiter), an assessment (take-home assignment or online "
+            "test), an interview, an offer, a rejection or a withdrawal "
             "(company, role, stage, date)"
         ),
         fields={
-            "kind": "application, assessment, interview, offer, rejection or withdrawal",
+            "kind": (
+                "invite, application, hr_call, assessment, interview, offer, rejection or "
+                "withdrawal"
+            ),
             "company": "the company",
             "role": "the role applied or interviewed for",
             "stage": (
@@ -629,6 +643,8 @@ _SPECS = [
             ),
             "date": "when, in the owner's words (e.g. yesterday, last Friday, 12 Oct)",
             "notes": "anything else the owner said about it",
+            "platform": "where it came from: Naukri, LinkedIn, Instahyre, a referral, ...",
+            "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
         },
         required=("kind", "company", "role", "stage", "date"),
         model=RecordIn,

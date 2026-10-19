@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.agents.tools.records import RecordsQuery
+from app.agents.tools.records import GroupBy, RecordsQuery
 from app.services.profile import RecordKind
 
 Route = Literal["kb_search", "records", "profile", "chat", "write"]
@@ -38,6 +38,18 @@ _KIND = {
     "offer": re.compile(r"\b(offers?|offered)\b", re.I),
     "rejection": re.compile(r"\b(rejections?|rejected|turned down)\b", re.I),
     "withdrawal": re.compile(r"\b(withdr[ae]wn?|withdrawals?|pulled out)\b", re.I),
+    # Before interview and application: "HR interview call", "invited to apply".
+    "hr_call": re.compile(
+        r"\b(hr|recruiter|talent acquisition|ta)[- ](calls?|screens?|screening|chats?|"
+        r"discussions?|conversations?)\b|\bcalls? (from|with) (an? |the )?(hr|recruiter)\b|"
+        r"\bhr[_ ]calls?\b",
+        re.I,
+    ),
+    "invite": re.compile(
+        r"\b(application )?invit(es?|ations?|ed)\b|\brecruiter (messages?|outreach|reached out)\b|"
+        r"\breached out\b",
+        re.I,
+    ),
     "assessment": re.compile(
         r"\b(assessments?|assignments?|take[- ]?homes?|online tests?|coding tests?|"
         r"coding challenges?|hackerrank|codility)\b",
@@ -143,13 +155,53 @@ def date_range(text: str, today: date) -> tuple[date | None, date | None]:
     return _month_range(month, today)
 
 
+# Job platforms an invite or application comes through, by the name the owner uses.
+PLATFORMS: dict[str, str] = {
+    "naukri": "Naukri",
+    "linkedin": "LinkedIn",
+    "instahyre": "Instahyre",
+    "indeed": "Indeed",
+    "hirist": "Hirist",
+    "iimjobs": "iimjobs",
+    "cutshort": "Cutshort",
+    "wellfound": "Wellfound",
+    "angellist": "Wellfound",
+    "foundit": "foundit",
+    "monster": "foundit",
+    "glassdoor": "Glassdoor",
+    "referral": "Referral",
+}
+_PLATFORM = re.compile(r"\b(" + "|".join(PLATFORMS) + r")\b", re.I)
+_BY_PLATFORM = re.compile(r"\b(which|what|per|by) (platform|site|portal|source)s?\b", re.I)
+
+
+def platform_in(text: str) -> str | None:
+    match = _PLATFORM.search(text)
+    return PLATFORMS[match.group(1).lower()] if match else None
+
+
+def canonical_platform(value: str) -> str:
+    """A known platform's usual spelling ("naukri.com" → "Naukri"); anything else as given."""
+    return platform_in(value) or value.strip()
+
+
 def records_query(text: str, today: date) -> RecordsQuery | None:
     kind = _kind(text)
     if kind is None:
         return None
     date_from, date_to = date_range(text, today)
-    group_by = "company" if re.search(r"\bwhich compan", text, re.I) else None
-    return RecordsQuery(kind=kind, date_from=date_from, date_to=date_to, group_by=group_by)
+    group_by: GroupBy | None = None
+    if re.search(r"\bwhich compan", text, re.I):
+        group_by = "company"
+    elif _BY_PLATFORM.search(text):
+        group_by = "platform"
+    return RecordsQuery(
+        kind=kind,
+        platform=platform_in(text),
+        date_from=date_from,
+        date_to=date_to,
+        group_by=group_by,
+    )
 
 
 def standalone(question: str, previous_question: str | None) -> str:
@@ -203,7 +255,7 @@ def guard_records(
     lowered = text.casefold()
     dropped = tuple(
         name
-        for name in ("company", "stage")
+        for name in ("company", "stage", "platform")
         if (value := getattr(decision.records, name)) and value.casefold() not in lowered
     )
     if not dropped:

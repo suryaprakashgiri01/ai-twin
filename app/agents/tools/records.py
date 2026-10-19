@@ -1,5 +1,5 @@
-"""`query_records`: counts and lists of job-search records (applications, assessments, interviews,
-offers, rejections, withdrawals) by aggregation.
+"""`query_records`: counts and lists of job-search records (invites, applications, HR calls,
+assessments, interviews, offers, rejections, withdrawals) by aggregation.
 
 The model never writes a query. It fills `RecordsQuery` (a closed schema) and this module turns
 that into a fixed MongoDB pipeline, so a count is always exact and nothing can be modified.
@@ -16,7 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.db.documents import Record
 from app.services.profile import RecordKind
 
-GroupBy = Literal["company", "stage", "role", "month"]
+GroupBy = Literal["company", "stage", "role", "month", "platform"]
+# How a kind reads in an answer: (one, many).
+KIND_NOUNS: dict[str, tuple[str, str]] = {
+    "hr_call": ("HR call", "HR calls"),
+    "invite": ("application invite", "application invites"),
+}
 
 # Items listed alongside a count; the count itself is never capped.
 ITEM_LIMIT = 20
@@ -26,6 +31,7 @@ _GROUP_KEYS: dict[GroupBy, Any] = {
     "stage": "$stage",
     "role": "$role",
     "month": {"$dateToString": {"format": "%Y-%m", "date": "$date"}},
+    "platform": {"$ifNull": ["$platform", "unknown"]},
 }
 
 
@@ -35,6 +41,7 @@ class RecordsQuery(BaseModel):
     kind: RecordKind
     company: str | None = Field(default=None, max_length=200)
     stage: str | None = Field(default=None, max_length=100)
+    platform: str | None = Field(default=None, max_length=100)
     date_from: date | None = None
     date_to: date | None = None
     group_by: GroupBy | None = None
@@ -56,6 +63,7 @@ class RecordItem(BaseModel):
     role: str
     stage: str
     date: date
+    platform: str | None = None
 
 
 class RecordsResult(BaseModel):
@@ -66,13 +74,16 @@ class RecordsResult(BaseModel):
 
     def summary(self) -> str:
         """A plain-text answer built from the numbers alone; no model involved."""
-        noun = self.query.kind if self.total == 1 else f"{self.query.kind}s"
+        one, many = KIND_NOUNS.get(self.query.kind, (self.query.kind, f"{self.query.kind}s"))
+        noun = one if self.total == 1 else many
         lines = [f"You have {self.total} {noun}{_scope(self.query)}."]
         if self.groups:
             lines += [f"- {g.key}: {g.count}" for g in self.groups]
         elif self.items:
             lines += [
-                f"- {i.date.isoformat()} · {i.company} · {i.role} · {i.stage}" for i in self.items
+                f"- {i.date.isoformat()} · {i.company} · {i.role} · {i.stage}"
+                + (f" · via {i.platform}" if i.platform else "")
+                for i in self.items
             ]
             if self.total > len(self.items):
                 lines.append(f"(latest {len(self.items)} of {self.total} shown)")
@@ -85,6 +96,8 @@ def _scope(query: RecordsQuery) -> str:
         parts.append(f" at {query.company}")
     if query.stage:
         parts.append(f" in stage {query.stage}")
+    if query.platform:
+        parts.append(f" via {query.platform}")
     if query.date_from and query.date_to:
         parts.append(f" from {query.date_from.isoformat()} to {query.date_to.isoformat()}")
     elif query.date_from:
@@ -104,6 +117,8 @@ def match_stage(query: RecordsQuery) -> dict[str, Any]:
         match["company"] = _exact(query.company)
     if query.stage:
         match["stage"] = _exact(query.stage)
+    if query.platform:
+        match["platform"] = _exact(query.platform)
     bounds: dict[str, datetime] = {}
     if query.date_from:
         bounds["$gte"] = datetime.combine(query.date_from, time.min)
@@ -121,7 +136,16 @@ def build_pipeline(query: RecordsQuery, item_limit: int = ITEM_LIMIT) -> list[di
         "items": [
             {"$sort": {"date": -1}},
             {"$limit": item_limit},
-            {"$project": {"_id": 0, "company": 1, "role": 1, "stage": 1, "date": 1}},
+            {
+                "$project": {
+                    "_id": 0,
+                    "company": 1,
+                    "role": 1,
+                    "stage": 1,
+                    "date": 1,
+                    "platform": 1,
+                }
+            },
         ],
     }
     if query.group_by:
@@ -142,7 +166,11 @@ def parse_result(query: RecordsQuery, row: dict[str, Any]) -> RecordsResult:
         ],
         items=[
             RecordItem(
-                company=i["company"], role=i["role"], stage=i["stage"], date=i["date"].date()
+                company=i["company"],
+                role=i["role"],
+                stage=i["stage"],
+                date=i["date"].date(),
+                platform=i.get("platform"),
             )
             for i in row.get("items", [])
         ],

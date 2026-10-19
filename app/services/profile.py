@@ -1,5 +1,5 @@
 """The owner's profile singleton and structured records (the job-search pipeline: applications,
-assessments, interviews, offers, rejections, withdrawals).
+assessments, interviews, offers, rejections, withdrawals, HR calls, invites).
 
 Records are plain data for the owner's own tracking, not RAG content: they are never chunked,
 embedded or published.
@@ -49,6 +49,10 @@ class RecordIn(BaseModel):
     stage: str = Field(min_length=1, max_length=100)
     date: datetime
     notes: str | None = Field(default=None, max_length=10_000)
+    # Naukri, LinkedIn, Instahyre, a referral, a recruiter, ...
+    platform: str | None = Field(default=None, max_length=100)
+    # The HR or recruiter's name, phone or e-mail, as the owner gave it.
+    contact: str | None = Field(default=None, max_length=300)
 
 
 class RecordPatch(BaseModel):
@@ -59,6 +63,8 @@ class RecordPatch(BaseModel):
     stage: str | None = Field(default=None, min_length=1, max_length=100)
     date: datetime | None = None
     notes: str | None = Field(default=None, max_length=10_000)
+    platform: str | None = Field(default=None, max_length=100)
+    contact: str | None = Field(default=None, max_length=300)
 
 
 class RecordOut(RecordIn):

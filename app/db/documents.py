@@ -28,10 +28,22 @@ JobStatus = Literal[
 ]
 TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "quarantined", "failed"})
 Scope = Literal["admin", "public:read", "leads:write"]
-# The job-search pipeline, in order: apply, take-home or online assessment, interviews, outcome.
-RecordKind = Literal["application", "assessment", "interview", "offer", "rejection", "withdrawal"]
-RECORD_KINDS: tuple[str, ...] = (
+# The job-search pipeline, in order: an invite from a recruiter or job platform, apply, an HR or
+# recruiter call, take-home or online assessment, interviews, outcome.
+RecordKind = Literal[
+    "invite",
     "application",
+    "hr_call",
+    "assessment",
+    "interview",
+    "offer",
+    "rejection",
+    "withdrawal",
+]
+RECORD_KINDS: tuple[str, ...] = (
+    "invite",
+    "application",
+    "hr_call",
     "assessment",
     "interview",
     "offer",
@@ -218,6 +230,11 @@ class Record(Document):
     stage: str
     date: datetime
     notes: str | None = None
+    # Where it came from: a job platform (Naukri, LinkedIn, ...), a referral, a recruiter.
+    platform: str | None = None
+    # The HR or recruiter contact as the owner gave it (name, phone, e-mail). Third-party
+    # details: shown to the owner and the local intake model only, never in ask-chat answers.
+    contact: str | None = None
 
     class Settings:
         name = "records"
