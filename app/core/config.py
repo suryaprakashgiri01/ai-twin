@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     memory_auto_accept: bool = False
     # Embedding similarity at which a learned memory counts as a duplicate (bumped, not added).
     memory_similarity: float = Field(default=0.90, ge=0.5, le=1)
+    # Prompt budgets for the owner agents: active memories (count and tokens) and the summary.
+    memory_context_items: int = Field(default=20, ge=0, le=100)
+    memory_context_tokens: int = Field(default=400, ge=0, le=4000)
+    summary_context_tokens: int = Field(default=300, ge=0, le=2000)
 
     # --- owner intake assistant (vault) -----------------------------------------
     # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.

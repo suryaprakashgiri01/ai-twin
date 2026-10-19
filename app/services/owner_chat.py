@@ -16,6 +16,7 @@ from typing import Any, Literal, Protocol, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agents.context import ContextBuilder, OwnerContext
 from app.agents.graphs.owner import (
     ErrorInfo,
     OwnerDeps,
@@ -313,6 +314,7 @@ class Prepared:
     request: ChatRequest
     conversation_id: str
     history: list[Turn]
+    context: OwnerContext | None = None
 
 
 @dataclass
@@ -331,7 +333,9 @@ class OwnerChatService:
         index: ConversationIndex,
         known_models: frozenset[str] = frozenset(),
         on_turn: TurnHook | None = None,
+        context: ContextBuilder | None = None,
     ) -> None:
+        self._context = context
         self._graph = graph
         self._conversations = conversations
         self._index = index
@@ -349,13 +353,21 @@ class OwnerChatService:
         if request.conversation_id is None:
             ref = await self._conversations.start("owner")
             await self._title(ref.id, request.message)
-            return Prepared(request, ref.id, [])
+            return Prepared(request, ref.id, [], await self._load_context(None, []))
         meta = await self._index.get(request.conversation_id)
         history = await self._conversations.history(request.conversation_id)
         # A brand-new conversation may not have reached MongoDB yet; Redis already has it.
         if (meta is not None and meta.channel != "owner") or (meta is None and not history):
             raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
-        return Prepared(request, request.conversation_id, history)
+        context = await self._load_context(request.conversation_id, history)
+        return Prepared(request, request.conversation_id, history, context)
+
+    async def _load_context(
+        self, conversation_id: str | None, history: list[Turn]
+    ) -> OwnerContext | None:
+        if self._context is None:
+            return None
+        return await self._context.load(conversation_id, history[-1].seq if history else 0)
 
     async def events(self, prepared: Prepared) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         async for event in self._drive(self._start(prepared)):
@@ -372,6 +384,7 @@ class OwnerChatService:
             filters=request.filters,
             model=request.model,
             prefer=request.prefer,
+            context=prepared.context,
         )
         return _Run(prepared.conversation_id, dict(state)), state
 
@@ -594,6 +607,7 @@ def build_owner_chat_from(
     llm: LLMServices,
     *,
     on_turn: TurnHook | None = None,
+    context: ContextBuilder | None = None,
 ) -> OwnerChatService:
     return OwnerChatService(
         build_owner_graph(deps),
@@ -601,4 +615,5 @@ def build_owner_chat_from(
         MongoConversationIndex(),
         known_models=frozenset(llm.orchestrator.inventory.models),
         on_turn=on_turn,
+        context=context,
     )

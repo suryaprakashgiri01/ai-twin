@@ -10,6 +10,7 @@ from functools import partial
 import structlog
 from fastapi import FastAPI
 
+from app.agents.context import ContextBuilder
 from app.api.routes import health, public
 from app.api.routes.admin import build_admin_router
 from app.core.config import Settings, get_settings
@@ -128,11 +129,24 @@ async def _start_services(
             every_turns=settings.summary_every_turns,
         )
         app.state.digester = digester
+        context = ContextBuilder(
+            app.state.memory,
+            MongoConversationIndex(),
+            memory_items=settings.memory_context_items,
+            memory_tokens=settings.memory_context_tokens,
+            summary_tokens=settings.summary_context_tokens,
+        )
         app.state.owner_chat = build_owner_chat_from(
-            owner, resources, app.state.llm, on_turn=digester.after_turn
+            owner, resources, app.state.llm, on_turn=digester.after_turn, context=context
         )
         intake, saver = build_intake(
-            settings, resources, app.state.llm, ingestion, owner, on_turn=digester.after_turn
+            settings,
+            resources,
+            app.state.llm,
+            ingestion,
+            owner,
+            on_turn=digester.after_turn,
+            context=context,
         )
         app.state.intake = intake
         await prune_checkpoints(saver, settings.intake_checkpoint_days)

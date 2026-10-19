@@ -24,6 +24,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.checkpoint import MongoCheckpointSaver
+from app.agents.context import ContextBuilder, OwnerContext
 from app.agents.graphs.intake import (
     INTAKE_TIER,
     IntakeDeps,
@@ -96,6 +97,7 @@ class Prepared:
     conversation_id: str
     key_name: str
     history: list[Turn]
+    context: OwnerContext | None = None
 
 
 # A turn's status as the intake outcome score: a write, a discarded draft, or a question back.
@@ -130,7 +132,9 @@ class IntakeService:
         index: IntakeIndex,
         orchestrator: Orchestrator,
         on_turn: TurnHook | None = None,
+        context: ContextBuilder | None = None,
     ) -> None:
+        self._context = context
         self._graph = graph
         self._conversations = conversations
         self._index = index
@@ -152,12 +156,20 @@ class IntakeService:
             ref = await self._conversations.start("owner")
             await self._index.set_mode(ref.id, "intake")
             await self._title(ref.id, request.message)
-            return Prepared(request, ref.id, key_name, [])
+            return Prepared(request, ref.id, key_name, [], await self._load_context(None, []))
         meta = await self._require(request.conversation_id)
         history = await self._conversations.history(request.conversation_id)
         if meta is None and not history:
             raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
-        return Prepared(request, request.conversation_id, key_name, history)
+        context = await self._load_context(request.conversation_id, history)
+        return Prepared(request, request.conversation_id, key_name, history, context)
+
+    async def _load_context(
+        self, conversation_id: str | None, history: list[Turn]
+    ) -> OwnerContext | None:
+        if self._context is None:
+            return None
+        return await self._context.load(conversation_id, history[-1].seq if history else 0)
 
     async def _require(self, conversation_id: str) -> ConversationMeta | None:
         meta = await self._index.get(conversation_id)
@@ -200,6 +212,7 @@ class IntakeService:
             "history": [
                 {"role": t.role, "content": t.content} for t in prepared.history[-HISTORY_TURNS:]
             ],
+            "context": prepared.context.model_dump() if prepared.context else None,
         }
         graph_input: Any = (
             Command(resume=prepared.request.message, update=values) if resumed else values
@@ -329,6 +342,7 @@ def build_intake(
     owner: OwnerDeps,
     *,
     on_turn: TurnHook | None = None,
+    context: ContextBuilder | None = None,
 ) -> tuple[IntakeService, MongoCheckpointSaver]:
     """`owner` is the owner graph's dependencies (`OwnerDeps`); its graph runs inside `answer`
     without checkpoints of its own."""
@@ -363,6 +377,7 @@ def build_intake(
         MongoConversationIndex(),
         llm.orchestrator,
         on_turn=on_turn,
+        context=context,
     )
     return service, saver
 

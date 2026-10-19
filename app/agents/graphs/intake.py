@@ -32,6 +32,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Checkpointer, Command, interrupt
 
+from app.agents.context import OwnerContext
 from app.agents.graphs.owner import OwnerGraph, initial_state
 from app.agents.intake.actions import (
     ACTIONS,
@@ -105,6 +106,8 @@ class IntakeState(TypedDict, total=False):
     message: str
     key_name: str
     history: list[dict[str, str]]
+    # OwnerContext as plain data: the owner's preferences and the conversation summary.
+    context: dict[str, Any] | None
     # the draft being gathered (kept across turns by the checkpointer)
     action: str | None
     payload: dict[str, Any]
@@ -139,6 +142,11 @@ def _ms(started: float) -> float:
 
 def _step(step: str, started: float, **fields: Any) -> None:
     logger.info("intake step", step=step, latency_ms=_ms(started), **fields)
+
+
+def _owner_context(state: IntakeState) -> OwnerContext | None:
+    raw = state.get("context")
+    return OwnerContext.model_validate(raw) if raw else None
 
 
 def reset_values() -> dict[str, Any]:
@@ -326,6 +334,9 @@ class IntakeNodes:
             draft=draft,
             recent=recent,
         )
+        owner = _owner_context(state)
+        if owner is not None:
+            system = owner.system(system, INTAKE_TIER, HISTORY_TURNS)
         messages: list[BaseMessage] = [SystemMessage(content=system)]
         for turn in (state.get("history") or [])[-HISTORY_TURNS:]:
             text = turn["content"][:HISTORY_CHARS]
@@ -466,6 +477,7 @@ class IntakeNodes:
             history=history,
             max_tier=INTAKE_TIER,
             min_tier=INTAKE_TIER,
+            context=_owner_context(state),
         )
         writer = get_stream_writer()
         final: dict[str, Any] = {}
