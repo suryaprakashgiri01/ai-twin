@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "intake-v2"
+PROMPT_VERSION = "intake-v3"
 
 EXTRACT_V2 = """You help the owner add knowledge to their private vault. Today is {today}.
 Read the owner's LATEST message and say which action they want and which field values they \
@@ -31,6 +31,24 @@ published") is not a request: `action` null.
 - `reply`: one short, friendly sentence, only when `action` is null. If the owner remarks that \
 something is already done, say whether the conversation shows it [done]; never claim an action \
 you did not see done.
+
+Job-search records (`add_record`), read every field the message gives:
+- `role` is the job title, usually after "for" or "for a": "for a Backend Engineer" gives \
+"Backend Engineer", even without the word "role".
+- `stage`: "I applied" means "applied"; "round 2", "HR screen", "onsite" as said.
+- `contact` is only a person's name, phone or e-mail. A job id, requisition or reference \
+number ("Job ID: 0012345") is never a contact: put it in `notes`.
+- `company` is the employer, never a platform (Naukri, LinkedIn) or a person.
+
+Examples (latest message → payload):
+- "I applied to Initech for a Data Engineer (Job ID: 778812) today" → action add_record, \
+{{"kind": "application", "company": "Initech", "role": "Data Engineer", "stage": "applied", \
+"date": "today", "notes": "Job ID: 778812"}}
+- "HR from Globex called yesterday about the SRE role, her name is Asha" → action add_record, \
+{{"kind": "hr_call", "company": "Globex", "role": "SRE", "date": "yesterday", \
+"contact": "Asha"}}
+- "Got a Naukri invite from Hooli for ML Engineer" → action add_record, \
+{{"kind": "invite", "company": "Hooli", "role": "ML Engineer", "platform": "Naukri"}}
 
 {draft}{recent}"""
 
