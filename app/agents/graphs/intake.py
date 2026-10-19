@@ -222,12 +222,23 @@ _RULE = re.compile(r"\b(always|never|every time|from now on|don't|do not)\b", re
 
 
 # A stage the owner rarely says for these kinds; asking for it would only slow them down.
-DEFAULT_STAGE = {"invite": "invited to apply", "hr_call": "HR call"}
+DEFAULT_STAGE = {"application": "applied", "invite": "invited to apply", "hr_call": "HR call"}
 
 
 _COMPANY = re.compile(r"\b(?:with|from|at|to)\s+((?:[A-Z][\w&.'-]*)(?:\s+(?:[A-Z][\w&.'-]*|&))*)")
 _ROLE = re.compile(
     r"\bfor (?:an? |the )?([A-Za-z][\w .+/#-]{1,60}?) (?:role|position|opening|job)\b", re.I
+)
+# "for a Senior AI Engineer (Job ID …)": a capitalised title that ends at the first lower-case
+# word, bracket or punctuation.
+_TITLED_ROLE = re.compile(
+    r"\bfor (?:an? |the )?((?:[A-Z][\w.+/#-]*)(?: (?:[A-Z][\w.+/#-]*|of|and|&))*)(?=$|[\s(,.;])"
+)
+# A posting's reference ("Job ID: 0006955", "Req #R-1234"), kept as a note and never a phone.
+_REFERENCE = re.compile(
+    r"\b(?:job|req(?:uisition)?|ref(?:erence)?|posting|opening)\s*"
+    r"(?:id|no\.?|number|#)\s*[:#]?\s*([A-Za-z0-9][\w-]{2,})",
+    re.I,
 )
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE = re.compile(r"\+?\d[\d\s-]{7,}\d")
@@ -258,6 +269,9 @@ def _drop_misreads(
         out["company"] = said
     if out.get("notes") and out.get("notes") == (out.get("contact") or _contact(message)):
         out.pop("notes")
+    reference = _REFERENCE.search(message)
+    if reference and reference.group(1) in str(out.get("contact") or ""):
+        out.pop("contact")
     return out
 
 
@@ -270,23 +284,47 @@ def _first_company(message: str) -> str | None:
 
 
 def _contact(message: str) -> str | None:
+    message = _REFERENCE.sub(" ", message)
     parts = [m.group(1) for m in [_CONTACT_NAME.search(message)] if m]
     parts += _EMAIL.findall(message) + [p.strip() for p in _PHONE.findall(message)]
     return " ".join(dict.fromkeys(parts)) or None
 
 
+def _role(message: str, company: str | None) -> str | None:
+    if m := _ROLE.search(message):
+        return m.group(1).strip()
+    for m in _TITLED_ROLE.finditer(message):
+        role = m.group(1).strip()
+        if role != company and role not in _NOT_COMPANIES and not platform_in(role):
+            return role
+    return None
+
+
+def _reference_note(message: str) -> str | None:
+    m = _REFERENCE.search(message)
+    return f"Job ID: {m.group(1)}" if m else None
+
+
+def _with_reference(notes: str | None, message: str) -> str | None:
+    note = _reference_note(message)
+    if not note or (notes and note.split(": ", 1)[1] in notes):
+        return notes or note
+    return f"{notes}; {note}" if notes else note
+
+
 def _record_defaults(
-    payload: dict[str, Any], message: str, tz: ZoneInfo, now: datetime
+    payload: dict[str, Any], message: str, tz: ZoneInfo, now: datetime, *, adding: bool = True
 ) -> dict[str, Any]:
     """Fields a small model missed or misread, from the owner's own words: the kind, company,
-    role, date, platform (in its usual spelling) and HR contact, and the default stage of an
-    invite or HR call. Nothing here is invented: each value is in the message or left for a
-    question."""
+    role, date, platform (in its usual spelling), HR contact and a posting's job id, and, when
+    adding, the default stage of an application, invite or HR call. Nothing here is invented:
+    each value is in the message or left for a question."""
     out = _drop_misreads(dict(payload), message, tz, now)
+    company = _first_company(message)
     found: dict[str, Any] = {
         "kind": record_kind_in(message),
-        "company": _first_company(message),
-        "role": (m.group(1).strip() if (m := _ROLE.search(message)) else None),
+        "company": company,
+        "role": _role(message, str(out.get("company") or company or "")),
         "platform": platform_in(message),
         "contact": _contact(message),
     }
@@ -295,10 +333,12 @@ def _record_defaults(
     for key, value in found.items():
         if value and not out.get(key):
             out[key] = value
+    if notes := _with_reference(out.get("notes"), message):
+        out["notes"] = notes
     if out.get("platform"):
         out["platform"] = canonical_platform(str(out["platform"]))
     kind = canonical_kind(str(out.get("kind") or ""))
-    if kind in DEFAULT_STAGE and not out.get("stage"):
+    if adding and kind in DEFAULT_STAGE and not out.get("stage"):
         out["stage"] = DEFAULT_STAGE[kind]
     return out
 
@@ -472,7 +512,11 @@ class IntakeNodes:
         payload = self._defaults(spec, merge(base, given), state["message"])
         if spec.name in ("add_record", "update_record"):
             payload = _record_defaults(
-                payload, state["message"], self.deps.timezone, self.deps.now()
+                payload,
+                state["message"],
+                self.deps.timezone,
+                self.deps.now(),
+                adding=spec.name == "add_record",
             )
         return await self._settle(spec, payload, state, started, model_id, switched, dropped)
 
