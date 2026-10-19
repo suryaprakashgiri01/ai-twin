@@ -111,6 +111,18 @@ _REPORT = re.compile(
     re.I,
 )
 _BARE_REPLY = 3
+# An imperative on a document: "publish the Lumenrail note", "please approve it".
+_DOC_COMMAND = re.compile(
+    r"^\s*(?:please\s+|can you\s+|could you\s+)?(publish|unpublish|approve)\b", re.I
+)
+# A remark that something already happened: nothing to do.
+_ALREADY = re.compile(r"\balready\b.*\b(done|published|approved|saved|added|there)\b", re.I)
+# A chat reply may never claim an action happened: actions report through `execute`.
+_CLAIMS = re.compile(
+    r"\b(done|saved|published|added|deleted|updated|approved|synced|ingested|recorded)\b", re.I
+)
+ACK_REPLY = "Glad that helped. Anything else to add or change?"
+ALREADY_REPLY = "Then there's nothing to do; I haven't changed anything."
 _RETRY = re.compile(r"\b(try (it )?again|retry|one more time|redo)\b", re.I)
 _LAST_SOURCE = re.compile(
     r"\b(last|latest|previous) (upload|source|ingest\w*|sync|file|link)\b", re.I
@@ -129,6 +141,8 @@ def rule_action(message: str, action: str | None) -> str | None:
         return "remember"
     if _FORGET.search(message):
         return "forget"
+    if action is None and (verb := _DOC_COMMAND.match(message)):
+        return {"delete": "delete_document"}.get(verb.group(1).lower(), verb.group(1).lower())
     reports = record_kind_in(message) and _REPORT.search(message) and not is_question(message)
     if action is None and reports:
         return "add_record"
@@ -224,6 +238,29 @@ _CONTACT_NAME = re.compile(
 _NOT_COMPANIES = frozenset({"HR", "Naukri", "LinkedIn", "Instahyre", "Indeed", "Monday", "Today"})
 
 
+def _drop_misreads(
+    out: dict[str, Any], message: str, tz: ZoneInfo, now: datetime
+) -> dict[str, Any]:
+    """A small model's usual slips: a date as the stage, the company as the platform, a cut
+    company name, and the contact copied into the notes."""
+    stage = str(out.get("stage") or "")
+    if stage and find_day(stage, tz, now) is not None:
+        out.pop("stage")
+    platform = str(out.get("platform") or "")
+    if (
+        platform
+        and platform_in(platform) is None
+        and f"via {platform}".casefold() not in (message.casefold())
+    ):
+        out.pop("platform")
+    company, said = str(out.get("company") or ""), _first_company(message)
+    if said and company and company != said and said.casefold().startswith(company.casefold()):
+        out["company"] = said
+    if out.get("notes") and out.get("notes") == (out.get("contact") or _contact(message)):
+        out.pop("notes")
+    return out
+
+
 def _first_company(message: str) -> str | None:
     for match in _COMPANY.finditer(message):
         name = match.group(1).strip()
@@ -241,10 +278,11 @@ def _contact(message: str) -> str | None:
 def _record_defaults(
     payload: dict[str, Any], message: str, tz: ZoneInfo, now: datetime
 ) -> dict[str, Any]:
-    """Fields a small model missed, read from the owner's own words: the kind, company, role,
-    date, platform (in its usual spelling) and HR contact, and the default stage of an invite
-    or HR call. Nothing here is invented: each value is in the message or left for a question."""
-    out = dict(payload)
+    """Fields a small model missed or misread, from the owner's own words: the kind, company,
+    role, date, platform (in its usual spelling) and HR contact, and the default stage of an
+    invite or HR call. Nothing here is invented: each value is in the message or left for a
+    question."""
+    out = _drop_misreads(dict(payload), message, tz, now)
     found: dict[str, Any] = {
         "kind": record_kind_in(message),
         "company": _first_company(message),
@@ -263,6 +301,22 @@ def _record_defaults(
     if kind in DEFAULT_STAGE and not out.get("stage"):
         out["stage"] = DEFAULT_STAGE[kind]
     return out
+
+
+def _settled_without_model(message: str, current: str | None) -> tuple[str, str] | None:
+    """(rule, reply) for messages that need no model and must never start a draft."""
+    if _ACK.match(message):
+        return "ack", ACK_REPLY
+    if current is None and _bare_reply(message):
+        return "bare_reply", NOTHING_PENDING
+    if _ALREADY.search(message) and not _DOC_COMMAND.match(message):
+        return "already", ALREADY_REPLY
+    return None
+
+
+def _chat_reply(reply: str) -> str:
+    """The model's small talk, unless it claims something was done (only `execute` may)."""
+    return reply if reply and not _CLAIMS.search(reply) else CHAT_DEFAULT
 
 
 def _bare_reply(message: str) -> bool:
@@ -366,32 +420,42 @@ class IntakeNodes:
     async def gather(self, state: IntakeState) -> Command[str]:
         started = time.perf_counter()
         current = state.get("action")
+        message = state["message"]
+        settled = _settled_without_model(message, current)
+        if settled is not None:
+            # Thanks, a lone yes, or "it's already done": no model call, and never a draft.
+            _step("gather", started, action=None, rule=settled[0])
+            return Command(goto=END, update=_cleared() | {"reply": settled[1], "status": "chat"})
         try:
             extracted, model_id = await self._extract(state)
         except OrchestratorError as exc:
-            _step("gather", started, outcome="model_failed", error_type=type(exc).__name__)
-            return Command(
-                goto=END,
-                update={
-                    "reply": "The local model couldn't read that. Please try again "
-                    "(is Ollama running? make ollama ARGS=status).",
-                    "status": "error",
-                },
+            # The model could not read it; the owner's words may still name the action.
+            fallback = rule_action(message, None)
+            _step(
+                "gather",
+                started,
+                outcome="model_failed",
+                error_type=type(exc).__name__,
+                fallback=fallback,
             )
-        action = rule_action(state["message"], extracted.action or current)
-        if _ACK.match(state["message"]):
-            action = None
-        if current is None and _bare_reply(state["message"]):
-            # "yes" with nothing waiting: never let a small model invent a draft from history.
-            _step("gather", started, action=None, model=model_id, bare_reply=True)
-            return Command(goto=END, update={"reply": NOTHING_PENDING, "status": "chat"})
+            if fallback is None or fallback == "answer":
+                return Command(
+                    goto=END,
+                    update={
+                        "reply": "The local model couldn't read that. Please say it another "
+                        "way (is Ollama running? make ollama ARGS=status).",
+                        "status": "error",
+                    },
+                )
+            extracted, model_id = IntakeDraft(action=fallback), None
+        action = rule_action(message, extracted.action or current)
         retry = self._retry(state, action)
         if retry is not None:
             action = retry["action"]
         if action is None:
             _step("gather", started, action=None, model=model_id)
             return Command(
-                goto=END, update={"reply": extracted.reply or CHAT_DEFAULT, "status": "chat"}
+                goto=END, update={"reply": _chat_reply(extracted.reply), "status": "chat"}
             )
         if action == "answer":
             question = str(extracted.payload.get("question") or state["message"])

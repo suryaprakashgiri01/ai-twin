@@ -60,7 +60,7 @@ async def test_remark_on_a_pending_draft_is_read_again(make_twin: MakeTwin) -> N
     twin.h.classifier.label = "public"
     cid = await published_note(twin)
     remark = await twin.say("I think its already published", cid)
-    assert remark.draft is None and "already published" in remark.text
+    assert remark.draft is None and "nothing to do" in remark.text
 
 
 async def test_try_again_retries_the_failed_action_with_its_fields(make_twin: MakeTwin) -> None:
@@ -172,3 +172,37 @@ async def test_publish_by_title_finds_a_published_document(make_twin: MakeTwin) 
     cid = await published_note(twin)
     again = await twin.say("please publish the Rate limiter retro note", cid)
     assert again.draft is None and "already published" in again.text
+
+
+async def test_model_slips_are_corrected_from_the_owners_words(make_twin: MakeTwin) -> None:
+    misread = extract(
+        "add_record",
+        kind="hr_call",
+        company="Initech",
+        role="Platform Engineer",
+        stage="yesterday",
+        date="yesterday",
+        platform="Initech Test",
+        notes="Meera meera@initech.example",
+        contact="Meera meera@initech.example",
+    )
+    twin = make_twin([misread])
+    reply = await twin.say(
+        "Had an HR call with Initech Test yesterday for a Platform Engineer role, "
+        "the HR was Meera meera@initech.example"
+    )
+    payload = reply.draft["payload"] if reply.draft else {}
+    assert payload["company"] == "Initech Test" and payload["stage"] == "HR call"
+    assert "platform" not in payload and "notes" not in payload
+
+
+async def test_rules_still_work_when_the_model_cannot_be_read(make_twin: MakeTwin) -> None:
+    twin = make_twin([ValueError("not JSON")])
+    reply = await twin.say("Got an invite on naukri today from Globex Test for an ML Engineer role")
+    assert reply.draft is not None and reply.draft["payload"]["kind"] == "invite"
+
+
+async def test_small_talk_never_claims_an_action(make_twin: MakeTwin) -> None:
+    twin = make_twin([extract(None, reply="Done")])
+    reply = await twin.say("hmm, the Lumenrail one")
+    assert reply.draft is None and "Done" not in reply.text
