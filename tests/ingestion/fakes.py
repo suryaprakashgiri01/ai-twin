@@ -63,6 +63,15 @@ class MemoryKbStore:
         ]
         return sorted(docs, key=lambda d: d.created_at, reverse=True)[:limit]
 
+    async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:
+        words = set(text.casefold().split())
+        docs = [
+            d
+            for d in self.documents.values()
+            if d.deleted_at is None and words & set(d.title.casefold().split())
+        ]
+        return docs[:limit]
+
     async def purge_document(self, document_id: PydanticObjectId) -> None:
         await self.delete_chunks(document_id)
         await self.delete_canaries(document_id)

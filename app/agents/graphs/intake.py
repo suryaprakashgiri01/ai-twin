@@ -44,10 +44,18 @@ from app.agents.intake.actions import (
     recent_items,
     resolve_target,
 )
-from app.agents.intake.confirm import Decision, classify_reply, retype_matches
+from app.agents.intake.confirm import (
+    NO_WORDS,
+    YES_WORDS,
+    Decision,
+    classify_reply,
+    retype_matches,
+)
 from app.agents.intake.drafts import (
     IntakeDraft,
     check,
+    day_value,
+    find_day,
     github_repos,
     ground,
     local_today,
@@ -57,7 +65,13 @@ from app.agents.intake.drafts import (
 )
 from app.agents.intake.suggest import suggest
 from app.agents.prompts import intake as prompts
-from app.agents.routing import canonical_kind, canonical_platform, platform_in
+from app.agents.routing import (
+    canonical_kind,
+    canonical_platform,
+    is_question,
+    platform_in,
+    record_kind_in,
+)
 from app.db.documents import utcnow
 from app.exceptions import AppError
 from app.services.admin_ops import AdminOps, intake_actor
@@ -90,6 +104,13 @@ _ACK = re.compile(
     r"(\s+(a lot|so much|very much|again|mate|buddy))?[\s!.🙂👍🙏]*$",
     re.I,
 )
+# A message that reports a job-search step ("had an HR call", "got an invite", "applied to").
+_REPORT = re.compile(
+    r"\b(had|have|got|received|attended|gave|cleared|scheduled|applied|did|took|finished|"
+    r"completed|was invited|invited)\b",
+    re.I,
+)
+_BARE_REPLY = 3
 _RETRY = re.compile(r"\b(try (it )?again|retry|one more time|redo)\b", re.I)
 _LAST_SOURCE = re.compile(
     r"\b(last|latest|previous) (upload|source|ingest\w*|sync|file|link)\b", re.I
@@ -108,6 +129,9 @@ def rule_action(message: str, action: str | None) -> str | None:
         return "remember"
     if _FORGET.search(message):
         return "forget"
+    reports = record_kind_in(message) and _REPORT.search(message) and not is_question(message)
+    if action is None and reports:
+        return "add_record"
     if action in (None, "ingest_url") and only_github_repo_urls(message):
         return "ingest_github"
     return action
@@ -178,6 +202,7 @@ def _owner_context(state: IntakeState) -> OwnerContext | None:
 
 
 _REMEMBER_PREFIX = re.compile(r"^\s*(please\s+)?remember\s*(that|this|:)?\s*", re.I)
+_SAY_MEAN = re.compile(r"^when i say\s+(.+?),?\s+i mean\s+(.+?)[.!]?$", re.I)
 _ALIAS = re.compile(r"\bwhen i say\b|\bi mean\b|\bstands for\b|=|\bmeans\b", re.I)
 _RULE = re.compile(r"\b(always|never|every time|from now on|don't|do not)\b", re.I)
 
@@ -186,23 +211,98 @@ _RULE = re.compile(r"\b(always|never|every time|from now on|don't|do not)\b", re
 DEFAULT_STAGE = {"invite": "invited to apply", "hr_call": "HR call"}
 
 
-def _record_defaults(payload: dict[str, Any], message: str) -> dict[str, Any]:
-    """A known platform's usual spelling (from the owner's words when the model missed it) and
-    the default stage of an invite or HR call."""
+_COMPANY = re.compile(r"\b(?:with|from|at|to)\s+((?:[A-Z][\w&.'-]*)(?:\s+(?:[A-Z][\w&.'-]*|&))*)")
+_ROLE = re.compile(
+    r"\bfor (?:an? |the )?([A-Za-z][\w .+/#-]{1,60}?) (?:role|position|opening|job)\b", re.I
+)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"\+?\d[\d\s-]{7,}\d")
+_CONTACT_NAME = re.compile(
+    r"\b(?i:hr|recruiter|contact)(?: person)? (?i:was|is|named|called)\s+"
+    r"([A-Z][a-z]+(?: [A-Z][a-z]+)?)"
+)
+_NOT_COMPANIES = frozenset({"HR", "Naukri", "LinkedIn", "Instahyre", "Indeed", "Monday", "Today"})
+
+
+def _first_company(message: str) -> str | None:
+    for match in _COMPANY.finditer(message):
+        name = match.group(1).strip()
+        if name not in _NOT_COMPANIES and not platform_in(name):
+            return name
+    return None
+
+
+def _contact(message: str) -> str | None:
+    parts = [m.group(1) for m in [_CONTACT_NAME.search(message)] if m]
+    parts += _EMAIL.findall(message) + [p.strip() for p in _PHONE.findall(message)]
+    return " ".join(dict.fromkeys(parts)) or None
+
+
+def _record_defaults(
+    payload: dict[str, Any], message: str, tz: ZoneInfo, now: datetime
+) -> dict[str, Any]:
+    """Fields a small model missed, read from the owner's own words: the kind, company, role,
+    date, platform (in its usual spelling) and HR contact, and the default stage of an invite
+    or HR call. Nothing here is invented: each value is in the message or left for a question."""
     out = dict(payload)
-    platform = out.get("platform") or platform_in(message)
-    if platform:
-        out["platform"] = canonical_platform(str(platform))
+    found: dict[str, Any] = {
+        "kind": record_kind_in(message),
+        "company": _first_company(message),
+        "role": (m.group(1).strip() if (m := _ROLE.search(message)) else None),
+        "platform": platform_in(message),
+        "contact": _contact(message),
+    }
+    if (day := find_day(message, tz, now)) is not None:
+        found["date"] = day_value(day)
+    for key, value in found.items():
+        if value and not out.get(key):
+            out[key] = value
+    if out.get("platform"):
+        out["platform"] = canonical_platform(str(out["platform"]))
     kind = canonical_kind(str(out.get("kind") or ""))
     if kind in DEFAULT_STAGE and not out.get("stage"):
         out["stage"] = DEFAULT_STAGE[kind]
     return out
 
 
+def _bare_reply(message: str) -> bool:
+    """A lone yes or no ("yes", "ok", "nope"), with no request in it ("publish it" is one)."""
+    words = re.sub(r"[^\w\s']", " ", message.casefold()).split()
+    return 0 < len(words) <= _BARE_REPLY and all(w in YES_WORDS | NO_WORDS for w in words)
+
+
+_DOC_VERBS = {
+    "publish": "publish",
+    "approve": "approve",
+    "unpublish": "unpublish",
+    "delete_document": "delete",
+    "relabel": "relabel",
+}
+
+
+def _document_ref(action: str, message: str) -> str | None:
+    """`publish the Lumenrail note` → "Lumenrail note" when the model left the target out."""
+    verb = _DOC_VERBS.get(action)
+    if verb is None:
+        return None
+    match = re.match(
+        rf"^\s*(?:please\s+|can you\s+|could you\s+)?{verb}\s+(?:the\s+|my\s+)?(.+?)[\s.!?]*$",
+        message,
+        re.I,
+    )
+    ref = match.group(1).strip() if match else ""
+    return ref if ref and ref.casefold() not in {"it", "that", "this", "it again"} else None
+
+
 def _remember_defaults(payload: dict[str, Any], message: str) -> dict[str, Any]:
     """The owner's own words when the model left the text out, and a kind from their wording
     when it left that out too."""
-    text = str(payload.get("text") or "").strip() or _REMEMBER_PREFIX.sub("", message).strip()
+    # The owner's own words win over a small model's paraphrase.
+    said = _REMEMBER_PREFIX.sub("", message).strip() if _REMEMBER.search(message) else ""
+    text = said or str(payload.get("text") or "").strip()
+    if (alias := _SAY_MEAN.match(text)) is not None:
+        text = f"{alias.group(1).strip()} = {alias.group(2).strip()}"
+        payload = {**payload, "kind": "alias"}
     kind = payload.get("kind")
     if kind not in ("instruction", "preference", "alias"):
         kind = "alias" if _ALIAS.search(text) else "instruction" if _RULE.search(text) else None
@@ -281,6 +381,10 @@ class IntakeNodes:
         action = rule_action(state["message"], extracted.action or current)
         if _ACK.match(state["message"]):
             action = None
+        if current is None and _bare_reply(state["message"]):
+            # "yes" with nothing waiting: never let a small model invent a draft from history.
+            _step("gather", started, action=None, model=model_id, bare_reply=True)
+            return Command(goto=END, update={"reply": NOTHING_PENDING, "status": "chat"})
         retry = self._retry(state, action)
         if retry is not None:
             action = retry["action"]
@@ -302,6 +406,10 @@ class IntakeNodes:
             spec, extracted.payload, state["message"], base, self.deps.timezone, self.deps.now()
         )
         payload = self._defaults(spec, merge(base, given), state["message"])
+        if spec.name in ("add_record", "update_record"):
+            payload = _record_defaults(
+                payload, state["message"], self.deps.timezone, self.deps.now()
+            )
         return await self._settle(spec, payload, state, started, model_id, switched, dropped)
 
     async def _settle(
@@ -388,8 +496,10 @@ class IntakeNodes:
             payload = {**payload, "source_id": typed_id.group(0)}
         if spec.name == "remember":
             payload = _remember_defaults(payload, message)
-        if spec.name in ("add_record", "update_record"):
-            payload = _record_defaults(payload, message)
+        if spec.target == "document" and not payload.get("document") and not typed_id:
+            ref = _document_ref(spec.name, message)
+            if ref:
+                payload = {**payload, "document": ref}
         if spec.name == "add_note":
             if not payload.get("body"):
                 payload = {**payload, "body": message}

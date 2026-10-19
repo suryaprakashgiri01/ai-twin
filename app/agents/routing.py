@@ -108,6 +108,15 @@ def looks_like_records(text: str) -> bool:
     return bool(_COUNT.search(text) or _DATE_WORDS.search(text))
 
 
+def record_kind_in(text: str) -> RecordKind | None:
+    """The record kind a message talks about, if any ("had an HR call", "got an invite")."""
+    return _kind(text)
+
+
+def is_question(text: str) -> bool:
+    return bool(_QUESTION.match(text)) or text.rstrip().endswith("?")
+
+
 def _kind(text: str) -> RecordKind | None:
     for kind, pattern in _KIND.items():
         if pattern.search(text):

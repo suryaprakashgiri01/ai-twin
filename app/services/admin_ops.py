@@ -505,6 +505,11 @@ class AdminOps:
         docs = await self._d.kb.review_queue(limit)
         return ReviewList(items=[document_out(d, preview=True) for d in docs])
 
+    async def find_documents(self, text: str, limit: int) -> list[DocumentOut]:
+        """Any document by title words: published ones too, not only the review queue."""
+        docs = await self._d.kb.find_by_title(text, limit)
+        return [document_out(d, preview=True) for d in docs]
+
     async def get_document(self, document_id: str) -> DocumentOut:
         return document_out(await self._publisher().get(parse_id(document_id)))
 

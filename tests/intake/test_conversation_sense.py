@@ -127,3 +127,48 @@ async def test_hr_call_with_contact_and_naukri_invite(make_twin: MakeTwin) -> No
     assert invite.draft is not None
     assert invite.draft["payload"]["platform"] == "Naukri"
     assert invite.draft["payload"]["stage"] == "invited to apply"
+
+
+# --- the owner's live session, replayed with a model that misses (null action, no fields) ---
+
+
+async def test_record_reports_become_drafts_from_the_owners_words(make_twin: MakeTwin) -> None:
+    twin = make_twin([extract(None, reply=""), extract(None, reply="")])
+    call = await twin.say(
+        "Had an HR call with Initech Test yesterday for a Platform Engineer role, "
+        "the HR was Meera meera@initech.example"
+    )
+    assert call.draft is not None and call.draft["action"] == "add_record"
+    payload = call.draft["payload"]
+    assert payload["kind"] == "hr_call" and payload["company"] == "Initech Test"
+    assert payload["role"] == "Platform Engineer" and payload["stage"] == "HR call"
+    assert payload["contact"] == "Meera meera@initech.example"
+    assert payload["date"] == "2026-10-18"  # yesterday in the harness clock
+    invite = await twin.say(
+        "Got an invite on naukri today from Globex Test for an ML Engineer role"
+    )
+    payload = invite.draft["payload"] if invite.draft else {}
+    assert (payload.get("kind"), payload.get("platform")) == ("invite", "Naukri")
+    assert (payload.get("company"), payload.get("role")) == ("Globex Test", "ML Engineer")
+
+
+async def test_a_bare_yes_with_nothing_pending_is_not_a_draft(make_twin: MakeTwin) -> None:
+    twin = make_twin([extract("add_note", title="yes", body="yes", category="experience")])
+    reply = await twin.say("yes")
+    assert reply.draft is None and "Nothing is waiting for a yes" in reply.text
+
+
+async def test_remember_keeps_the_owners_words_and_reads_aliases(make_twin: MakeTwin) -> None:
+    paraphrase = "Remember that I mean the Quorvex project when you say qrx"
+    twin = make_twin([extract("remember", text=paraphrase, kind="alias")])
+    reply = await twin.say("remember that when I say qrx I mean the Quorvex project")
+    assert reply.draft is not None
+    assert reply.draft["payload"] == {"text": "Qrx = the Quorvex project", "kind": "alias"}
+
+
+async def test_publish_by_title_finds_a_published_document(make_twin: MakeTwin) -> None:
+    twin = make_twin(scripts(extract("publish")))
+    twin.h.classifier.label = "public"
+    cid = await published_note(twin)
+    again = await twin.say("please publish the Rate limiter retro note", cid)
+    assert again.draft is None and "already published" in again.text

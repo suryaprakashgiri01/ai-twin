@@ -942,14 +942,17 @@ async def _resolve_document(
     candidates: dict[str, str] = {d.id: d.title for d in queue.items}
     candidates |= {r["id"]: r["title"] for r in recent_docs}
     found = _pick(list(candidates.items()), lambda item: item[1], ref)
+    if not found:
+        # Published or approved documents are not in the review queue: search every title.
+        titled = {d.id: d.title for d in await ops.find_documents(ref, REVIEW_SCAN)}
+        found = _pick(list(titled.items()), lambda item: item[1], ref)
     if len(found) == 1:
         doc_id, title = found[0]
         return Resolution({**payload, "document_id": doc_id, "document_title": title})
     if not found:
         return Resolution(
             payload,
-            f"I can't find a document titled “{ref}” in the review queue or this conversation. "
-            "Give its id (see: show the review queue).",
+            f"I can't find a document titled “{ref}”. Give its id (see: show the review queue).",
         )
     names = "; ".join(f"“{t}” ({i})" for i, t in found[:8])
     return Resolution(payload, f"Several documents match “{ref}”: {names}. Which one (id)?")
