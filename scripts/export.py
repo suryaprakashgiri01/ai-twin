@@ -106,6 +106,11 @@ def main(argv: list[str] | None = None) -> int:
         with _vault.staging_dir("export") as staging:
             mongo_version, mongo_counts = _vault.mongo_state(settings)
             info(f"MongoDB {mongo_version}: {sum(mongo_counts.values())} documents")
+            owner = _vault.owner_state(settings)
+            info(
+                f"Owner memories: {owner['memories_active']} active, "
+                f"{owner['memories_pending']} pending · summaries: {owner['summaries']}"
+            )
             with (staging / _vault.MONGO_PART).open("wb") as handle:
                 compose_exec_binary(
                     "mongodb", [*_vault.MONGODUMP, settings.mongodb_database], stdout=handle
@@ -124,7 +129,12 @@ def main(argv: list[str] | None = None) -> int:
                 staging=staging,
                 database=settings.mongodb_database,
                 versions={"mongodb": mongo_version, "qdrant": qdrant.version()},
-                counts={"mongodb": mongo_counts, "qdrant": points, "blobs": len(blobs)},
+                counts={
+                    "mongodb": mongo_counts,
+                    "qdrant": points,
+                    "blobs": len(blobs),
+                    "owner": owner,
+                },
                 blobs=blobs,
             )
             (staging / _vault.MANIFEST).write_text(json.dumps(manifest, indent=2), "utf-8")

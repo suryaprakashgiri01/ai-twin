@@ -55,6 +55,10 @@ class KbStore(Protocol):
 
     async def review_queue(self, limit: int) -> list[DocumentView]: ...
 
+    async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:
+        """Documents (not deleted) whose title shares words with `text`, best match first."""
+        ...
+
     async def purge_document(self, document_id: PydanticObjectId) -> None:
         """Hard delete a document with its chunks and canaries (an unfinished job's output)."""
         ...
@@ -137,6 +141,15 @@ class MongoKbStore:
                 {"review_status": {"$in": list(REVIEW_STATUSES)}, "deleted_at": None}
             )
             .sort("-created_at")
+            .limit(limit)
+            .to_list()
+        )
+        return [_document_view(d) for d in docs]
+
+    async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:
+        docs = (
+            await KbDocument.find({"$text": {"$search": text}, "deleted_at": None})
+            .sort([("score", {"$meta": "textScore"})])  # type: ignore[list-item]
             .limit(limit)
             .to_list()
         )

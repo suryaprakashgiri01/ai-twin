@@ -86,6 +86,8 @@ EDIT_VERBS = frozenset(
     }
 )
 EDIT_MARKERS = ("should be", "instead", " not ", " but ", "change", "wrong")
+# A remark or a question about the draft: it is read again as a new message, never as a yes.
+REMARK_MARKERS = (" already ", " i think ", " i guess ", " i believe ")
 SHORT = 4
 
 _PUNCT = re.compile(r"[^\w\s']+")
@@ -115,6 +117,8 @@ def classify_rules(text: str) -> Decision | None:
     edit_marked = any(marker in padded for marker in EDIT_MARKERS)
     if words[0] in EDIT_VERBS or (edit_marked and len(words) > 1):
         return "edit"
+    if any(marker in padded for marker in REMARK_MARKERS):
+        return "new"
     if words[0] in YES_WORDS and len(words) <= SHORT:
         return "yes"
     if words[0] in NO_WORDS and len(words) <= SHORT:
@@ -130,7 +134,7 @@ async def classify_reply(
     if decided is not None:
         return decided
     messages = [
-        SystemMessage(content=prompts.CONFIRM_V1),
+        SystemMessage(content=prompts.CONFIRM_V2),
         HumanMessage(content=f"Draft:\n{summary}\n\nOwner's reply: {text}"),
     ]
     try:

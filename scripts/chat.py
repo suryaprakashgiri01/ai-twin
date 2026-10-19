@@ -18,6 +18,7 @@ from Redis/Valkey while the TTL lasts and from MongoDB after that. Type /exit (o
 from __future__ import annotations
 
 import argparse
+import builtins
 import json
 import os
 import re
@@ -183,6 +184,29 @@ class Api:
         ).json()
         return result
 
+    def memories(self, status: str | None = None) -> builtins.list[dict[str, Any]]:
+        params = {"status": status} if status else {}
+        result: builtins.list[dict[str, Any]] = self._request(
+            "GET", "/memories", params=params
+        ).json()
+        return result
+
+    def remember(
+        self, text: str, kind: str = "preference", tier: str = "private"
+    ) -> dict[str, Any]:
+        body = {"text": text, "kind": kind, "tier": tier}
+        result: dict[str, Any] = self._request("POST", "/memories", json=body).json()
+        return result
+
+    def update_memory(self, memory_id: str, **changes: Any) -> dict[str, Any]:
+        result: dict[str, Any] = self._request(
+            "PATCH", f"/memories/{memory_id}", json=changes
+        ).json()
+        return result
+
+    def delete_memory(self, memory_id: str) -> None:
+        self._request("DELETE", f"/memories/{memory_id}")
+
     def assistant_state(self, conversation_id: str) -> dict[str, Any]:
         result: dict[str, Any] = self._request("GET", f"/assistant/{conversation_id}").json()
         return result
@@ -247,7 +271,8 @@ def render_list(conversations: Sequence[dict[str, Any]]) -> str:
 
 ASK_INTRO = (
     "Ask anything about your vault: notes, projects, documents, records (applications, "
-    "assessments, interviews, offers, rejections, withdrawals) and your profile.",
+    "assessments, interviews, offers, rejections, withdrawals, HR calls, invites) and your "
+    "profile.",
     "Answers cite their sources. Confidential sources are read by the local model only; "
     "private ones may use Groq/Cerebras.",
     'Try: "How many interviews did I have this month?" · "What did I learn building <project>?"',
@@ -256,12 +281,20 @@ INTAKE_INTRO = (
     "Tell me what to add or change in plain language. I ask for anything missing, show a "
     "draft, and save nothing until you say yes. Runs on your local model only.",
     "I can: add notes · ingest a URL, an inbox file (INTAKE_INBOX_DIR, default vault/inbox) "
-    "or a GitHub repo · add, update or delete records (application, assessment, interview, "
-    "offer, rejection, withdrawal) · update your profile · show the review queue and leads · "
+    "or a GitHub repo · add, update or delete records (invite from Naukri/LinkedIn, "
+    "application, HR call with contact, assessment, interview, offer, rejection, withdrawal) · "
+    "update your profile · show the review queue and leads · "
     "approve, publish, unpublish, relabel or delete documents · answer questions.",
     'Try: "I had a technical round 2 with Acme yesterday for an AI Engineer role"',
 )
-COMMANDS = "Commands: /exit (or Ctrl+C) leaves; the conversation is kept for make chat-continue."
+COMMANDS = (
+    "Commands: /remember <text> (followed from your next message) · /memory (what I remember) · "
+    "/exit (or Ctrl+C) leaves; the conversation is kept for make chat-continue."
+)
+REMEMBER = "/remember"
+MEMORY = "/memory"
+SUMMARY_CHARS = 400
+MEMORY_HINT = "make memory (Windows: ./scripts/dev.ps1 memory)"
 
 
 def _when(value: object) -> str:
@@ -291,6 +324,10 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
         )
         if conversation.get("description"):
             print(f"About: {_short(str(conversation['description']), 100)}")
+        if conversation.get("summary"):
+            covered = conversation.get("summarized_turns", 0)
+            summary = _short(str(conversation["summary"]), SUMMARY_CHARS)
+            print(f"Summary of the first {covered} turns: {summary}")
         print(
             paint(
                 "Earlier turns are reloaded by the server: from the Valkey cache while it lasts "
@@ -379,6 +416,10 @@ def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
         warn(f"Title not refreshed ({type(exc).__name__}); the conversation is kept as it was")
         return None
     status = result.get("status")
+    new = int(result.get("new_memories") or 0)
+    if new:
+        noun = "memory" if new == 1 else "memories"
+        info(f"{new} new {noun} to review: {MEMORY_HINT}")
     if status == "updated" and result.get("renamed"):
         ok(f"Renamed to {paint(str(result.get('name')), 'bold')}")
     if status == "updated" and result.get("description"):
@@ -387,6 +428,38 @@ def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
         info("The local model is still titling it; the new title shows in make chat-list")
     name = result.get("name")
     return str(name) if name else None
+
+
+def render_memories(items: Sequence[dict[str, Any]]) -> str:
+    if not items:
+        return "Nothing remembered yet. Add one: /remember <text>"
+    rows = []
+    for m in items:
+        flag = "" if m.get("status") == "active" else f" [{m.get('status')}]"
+        tier = " (confidential)" if m.get("tier") == "confidential" else ""
+        rows.append(f"  {m['id']}  {m.get('kind', '?'):<11} {m.get('text', '')}{flag}{tier}")
+    return "\n".join(rows)
+
+
+def memory_command(api: Api, message: str) -> bool:
+    """Handle /remember and /memory; returns False for any other message."""
+    command, _, rest = message.partition(" ")
+    if command == REMEMBER:
+        text = rest.strip()
+        if not text:
+            warn("Usage: /remember <what to remember>")
+            return True
+        try:
+            item = api.remember(text)
+        except CliError as exc:
+            warn(str(exc))
+            return True
+        ok(f"Remembered ({item.get('kind')}, {item.get('id')}); followed from your next message")
+        return True
+    if command == MEMORY and not rest.strip():
+        print(render_memories(api.memories()))
+        return True
+    return False
 
 
 def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
@@ -403,6 +476,8 @@ def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
             continue
         if message.lower() in EXIT_WORDS:
             break
+        if memory_command(api, message):
+            continue
         try:
             conversation_id = turn(api, message, conversation_id)
             spoke = True

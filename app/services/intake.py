@@ -24,6 +24,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.checkpoint import MongoCheckpointSaver
+from app.agents.context import ContextBuilder, OwnerContext
 from app.agents.graphs.intake import (
     INTAKE_TIER,
     IntakeDeps,
@@ -43,8 +44,9 @@ from app.kb.ingestion.runtime import Ingestion
 from app.observability.tracing import TraceRun, tracing
 from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.memory import MemoryService
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import ConversationMeta, MongoConversationIndex
+from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook
 from llm_orchestrator import Orchestrator, OrchestratorError, Role
 
 logger = structlog.get_logger(__name__)
@@ -96,6 +98,7 @@ class Prepared:
     conversation_id: str
     key_name: str
     history: list[Turn]
+    context: OwnerContext | None = None
 
 
 # A turn's status as the intake outcome score: a write, a discarded draft, or a question back.
@@ -118,6 +121,15 @@ def _trace_intake(trace: TraceRun, state: dict[str, Any], pending: bool, resumed
         trace.score("intake_outcome", outcome, data_type="CATEGORICAL")
 
 
+def history_line(turn: Turn) -> dict[str, str]:
+    """A turn for the extraction prompt; an intake reply carries its real outcome, so the model
+    can tell what already happened from what only was drafted or failed."""
+    route = turn.route or ""
+    if turn.role == "assistant" and route.startswith(f"{TURN_ROUTE}:"):
+        return {"role": "assistant", "content": f"[{route.split(':', 1)[1]}] {turn.content}"}
+    return {"role": turn.role, "content": turn.content}
+
+
 def _config(conversation_id: str) -> RunnableConfig:
     return {"configurable": {"thread_id": conversation_id}}
 
@@ -129,11 +141,15 @@ class IntakeService:
         conversations: ConversationService,
         index: IntakeIndex,
         orchestrator: Orchestrator,
+        on_turn: TurnHook | None = None,
+        context: ContextBuilder | None = None,
     ) -> None:
+        self._context = context
         self._graph = graph
         self._conversations = conversations
         self._index = index
         self._orchestrator = orchestrator
+        self._on_turn = on_turn
 
     async def ensure_local(self) -> None:
         """Refuse before any model call when no local model may read confidential text."""
@@ -150,12 +166,20 @@ class IntakeService:
             ref = await self._conversations.start("owner")
             await self._index.set_mode(ref.id, "intake")
             await self._title(ref.id, request.message)
-            return Prepared(request, ref.id, key_name, [])
+            return Prepared(request, ref.id, key_name, [], await self._load_context(None, []))
         meta = await self._require(request.conversation_id)
         history = await self._conversations.history(request.conversation_id)
         if meta is None and not history:
             raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
-        return Prepared(request, request.conversation_id, key_name, history)
+        context = await self._load_context(request.conversation_id, history)
+        return Prepared(request, request.conversation_id, key_name, history, context)
+
+    async def _load_context(
+        self, conversation_id: str | None, history: list[Turn]
+    ) -> OwnerContext | None:
+        if self._context is None:
+            return None
+        return await self._context.load(conversation_id, history[-1].seq if history else 0)
 
     async def _require(self, conversation_id: str) -> ConversationMeta | None:
         meta = await self._index.get(conversation_id)
@@ -195,9 +219,8 @@ class IntakeService:
             "conversation_id": cid,
             "message": prepared.request.message,
             "key_name": prepared.key_name,
-            "history": [
-                {"role": t.role, "content": t.content} for t in prepared.history[-HISTORY_TURNS:]
-            ],
+            "history": [history_line(t) for t in prepared.history[-HISTORY_TURNS:]],
+            "context": prepared.context.model_dump() if prepared.context else None,
         }
         graph_input: Any = (
             Command(resume=prepared.request.message, update=values) if resumed else values
@@ -257,6 +280,8 @@ class IntakeService:
         else:
             text = "\n\n".join(part for part in (reply, pending.prompt if pending else "") if part)
             seq = await self._store(cid, prepared.request.message, text, status)
+        if self._on_turn is not None:
+            self._on_turn(cid, seq)
         if status == "answer" and (outcome or {}).get("error"):
             error = outcome["error"] if outcome else {}
             events.append(("error", self._error(cid, ErrorCode(error["code"]), error["message"])))
@@ -323,6 +348,10 @@ def build_intake(
     llm: LLMServices,
     ingestion: Ingestion,
     owner: OwnerDeps,
+    *,
+    on_turn: TurnHook | None = None,
+    context: ContextBuilder | None = None,
+    memory: MemoryService | None = None,
 ) -> tuple[IntakeService, MongoCheckpointSaver]:
     """`owner` is the owner graph's dependencies (`OwnerDeps`); its graph runs inside `answer`
     without checkpoints of its own."""
@@ -350,12 +379,15 @@ def build_intake(
         wait_seconds=settings.intake_ingest_wait_seconds,
         owner_graph=build_owner_graph(owner, checkpointer=False),
         conversations=resources.conversations,
+        memory=memory,
     )
     service = IntakeService(
         build_intake_graph(deps, saver),
         resources.conversations,
         MongoConversationIndex(),
         llm.orchestrator,
+        on_turn=on_turn,
+        context=context,
     )
     return service, saver
 

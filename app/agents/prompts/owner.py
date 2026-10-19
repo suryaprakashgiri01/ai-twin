@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "owner-v1"
+PROMPT_VERSION = "owner-v2"
 
 NOT_IN_VAULT = "I don't have that in the vault."
 WRITE_REDIRECT = (
@@ -25,17 +25,19 @@ ROUTE_V1 = """You route questions for the owner's private knowledge assistant. T
 Choose one route:
 - kb_search: anything answered from the owner's notes and documents (projects, skills, \
 experience, interview notes, learnings).
-- records: counting or listing the owner's job-search records: applications, assessments \
-(take-home assignments, online tests), interviews, offers, rejections, withdrawals \
-("how many", "which companies", "list my interviews").
+- records: counting or listing the owner's job-search records: invites (from recruiters or \
+job platforms such as Naukri or LinkedIn), applications, HR calls, assessments (take-home \
+assignments, online tests), interviews, offers, rejections, withdrawals ("how many", "which \
+companies", "list my interviews", "invites from Naukri").
 - profile: the owner's availability, notice period, preferred roles or locations.
 - chat: greetings, thanks, or questions about this conversation itself.
 
 Rewrite the question as a standalone question in `query`, resolving pronouns and follow-ups \
 ("and the one before that?") from the conversation so far. Keep the owner's wording otherwise.
-For records, fill `records`: `kind` is one of "application", "assessment", "interview", "offer", \
-"rejection", "withdrawal"; add company, stage, \
-date_from and date_to (ISO dates, inclusive) and group_by only when the question implies them."""
+For records, fill `records`: `kind` is one of "invite", "application", "hr_call", \
+"assessment", "interview", "offer", "rejection", "withdrawal"; add company, stage, platform, \
+date_from and date_to (ISO dates, inclusive) and group_by (company, stage, role, month or \
+platform) only when the question implies them."""
 
 GENERATE_KB_V1 = """You are the owner's private assistant over their personal knowledge vault.
 Answer only from the numbered context. Cite every fact inline as [n], using the context's \

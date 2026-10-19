@@ -34,6 +34,7 @@ from app.services.admin_ops import (
     TextIn,
     UrlsIn,
 )
+from app.services.memory import MemoryIn, MemoryOut, MemoryService
 from app.services.profile import ProfileIn, RecordIn, RecordOut, RecordPatch
 
 Payload = dict[str, Any]
@@ -85,6 +86,7 @@ class RunContext:
     inbox: Path
     wait_seconds: float
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    memory: MemoryService | None = None
 
 
 Runner = Callable[[RunContext, Payload], Awaitable[Outcome]]
@@ -103,7 +105,7 @@ class ActionSpec:
     model: type[BaseModel] | None = None
     write: bool = True
     destructive: bool = False
-    target: str | None = None  # "document" | "record"
+    target: str | None = None  # "document" | "record" | "memory"
     date_fields: tuple[str, ...] = ()
     list_fields: tuple[str, ...] = ()
     lower_fields: tuple[str, ...] = ()
@@ -127,6 +129,8 @@ class ActionSpec:
             lines.append("  tier: private → public (changed first, then approved and published)")
         if self.target == "record" and payload.get("record_label"):
             lines.append(f"  record: {payload['record_label']}")
+        if self.target == "memory" and payload.get("memory_text"):
+            lines.append(f"  memory: {payload['memory_text']} ({payload.get('memory_id')})")
         for key in self.fields:
             if key in (self.target or "",) or key in self.hidden or payload.get(key) is None:
                 continue
@@ -281,9 +285,16 @@ async def _ingest_github(ctx: RunContext, p: Payload) -> Outcome:
 
 
 def _record_line(record: RecordOut) -> str:
+    """Shown in the intake assistant only (local model, confidential tier), so the contact may
+    appear here; ask-chat record answers never include it."""
+    extra = "".join(
+        f" · {label}{value}"
+        for label, value in (("via ", record.platform), ("contact: ", record.contact))
+        if value
+    )
     return (
         f"{record.kind} {record.company} · {record.role} · {record.stage} · "
-        f"{show_day(record.date)} ({record.id})"
+        f"{show_day(record.date)}{extra} ({record.id})"
     )
 
 
@@ -431,6 +442,57 @@ async def _delete_document(ctx: RunContext, p: Payload) -> Outcome:
     }
 
 
+def _memory(ctx: RunContext) -> MemoryService:
+    if ctx.memory is None:
+        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner memory is not running")
+    return ctx.memory
+
+
+def _memory_line(item: MemoryOut) -> str:
+    return f"  {item.kind}: {item.text} ({item.id})"
+
+
+async def _remember(ctx: RunContext, p: Payload) -> Outcome:
+    body = MemoryIn(text=str(p["text"]), kind=p.get("kind") or "preference")
+    item, created = await _memory(ctx).add(body, ctx.actor)
+    verb = "Remembered" if created else "Already remembered; marked active"
+    return {
+        "action": "remember",
+        "message": f"{verb}: {item.text} ({item.kind}, {item.id})",
+        "memory": {"id": item.id, "kind": item.kind, "status": item.status},
+    }
+
+
+async def _forget(ctx: RunContext, p: Payload) -> Outcome:
+    item = await _memory(ctx).archive(str(p["memory_id"]), ctx.actor)
+    return {
+        "action": "forget",
+        "message": f"Forgotten (archived): {item.text} ({item.id})",
+        "memory": {"id": item.id, "kind": item.kind, "status": item.status},
+    }
+
+
+async def _show_memory(ctx: RunContext, p: Payload) -> Outcome:
+    items = await _memory(ctx).listing()
+    active = [m for m in items if m.status == "active"]
+    pending = [m for m in items if m.status == "pending"]
+    if not items:
+        return {
+            "action": "show_memory",
+            "message": "I don't remember anything yet.",
+            "memories": [],
+        }
+    lines = [f"Active ({len(active)}):", *(_memory_line(m) for m in active)] if active else []
+    if pending:
+        lines += [f"Waiting for your review ({len(pending)}):", *map(_memory_line, pending)]
+        lines.append('Accept one with: make memory ARGS="accept <id>"')
+    return {
+        "action": "show_memory",
+        "message": "\n".join(lines),
+        "memories": [{"id": m.id, "kind": m.kind, "status": m.status} for m in items],
+    }
+
+
 # --- the catalog -------------------------------------------------------------------------------
 
 _CATEGORY_HINT = "one of: " + ", ".join(CATEGORIES)
@@ -457,11 +519,13 @@ UPDATE_RECORD = ActionSpec(
         "stage": "new stage",
         "date": "new date, in the owner's words",
         "notes": "new notes",
+        "platform": "new platform (Naukri, LinkedIn, Instahyre, a referral, ...)",
+        "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
     },
     required=("record",),
-    needs_any=("company", "role", "stage", "date", "notes"),
+    needs_any=("company", "role", "stage", "date", "notes", "platform", "contact"),
     model=RecordChanges,
-    model_keys=("company", "role", "stage", "date", "notes"),
+    model_keys=("company", "role", "stage", "date", "notes", "platform", "contact"),
     target="record",
     date_fields=("date",),
     resolved=_RECORD_RESOLVED,
@@ -561,12 +625,17 @@ _SPECS = [
         name="add_record",
         label="Add a record",
         description=(
-            "track a job-search step: an application, an assessment (take-home assignment or "
-            "online test), an interview, an offer, a rejection or a withdrawal "
+            "track a job-search step: an invite (a recruiter or a job platform such as Naukri "
+            "or LinkedIn invited the owner to apply), an application, an HR call (a call or "
+            "screening with HR or a recruiter), an assessment (take-home assignment or online "
+            "test), an interview, an offer, a rejection or a withdrawal "
             "(company, role, stage, date)"
         ),
         fields={
-            "kind": "application, assessment, interview, offer, rejection or withdrawal",
+            "kind": (
+                "invite, application, hr_call, assessment, interview, offer, rejection or "
+                "withdrawal"
+            ),
             "company": "the company",
             "role": "the role applied or interviewed for",
             "stage": (
@@ -574,6 +643,8 @@ _SPECS = [
             ),
             "date": "when, in the owner's words (e.g. yesterday, last Friday, 12 Oct)",
             "notes": "anything else the owner said about it",
+            "platform": "where it came from: Naukri, LinkedIn, Instahyre, a referral, ...",
+            "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
         },
         required=("kind", "company", "role", "stage", "date"),
         model=RecordIn,
@@ -656,6 +727,39 @@ _SPECS = [
         destructive=True,
     ),
     ActionSpec(
+        name="remember",
+        label="Remember this",
+        description="remember how the owner likes answers, a standing rule, or a name they use "
+        '("remember that I prefer ...", "always ...", "when I say X I mean Y"); not career facts',
+        fields={
+            "text": "what to remember, one short sentence in the owner's words",
+            "kind": "instruction (a standing rule), preference (how answers should be) or alias "
+            "(a name the owner uses)",
+        },
+        required=("text", "kind"),
+        inferred=("kind",),
+        lower_fields=("kind",),
+        run=_remember,
+    ),
+    ActionSpec(
+        name="forget",
+        label="Forget a memory",
+        description="stop following something the assistant remembers",
+        fields={"memory": "the memory's words or its id"},
+        required=("memory",),
+        target="memory",
+        resolved=("memory_id", "memory_text"),
+        run=_forget,
+    ),
+    ActionSpec(
+        name="show_memory",
+        label="Show what I remember",
+        description="list the owner's remembered preferences, rules and aliases (read only)",
+        fields={},
+        write=False,
+        run=_show_memory,
+    ),
+    ActionSpec(
         name="answer",
         label="Answer a question",
         description="answer a question about the vault, records or profile (read only)",
@@ -696,6 +800,8 @@ class Resolution:
     problem: str | None = None
     # Something the owner should know that doesn't block the draft (shown above it).
     note: str | None = None
+    # Nothing to do: the target is already in the requested state (said instead of a draft).
+    settled: str | None = None
 
 
 def _norm(text: str) -> str:
@@ -717,7 +823,10 @@ async def resolve_target(
     ops: AdminOps,
     recent: list[dict[str, Any]],
     inbox: Path,
+    memory: MemoryService | None = None,
 ) -> Resolution:
+    if spec.target == "memory":
+        return await _resolve_memory(payload, memory)
     if spec.name == "ingest_file" and payload.get("filename"):
         # Checked before the draft is shown, from metadata only; the file is read on "yes".
         try:
@@ -729,17 +838,19 @@ async def resolve_target(
         resolution = await _resolve_document(payload, ops, recent)
         if spec.name == "publish" and resolution.problem is None:
             return await _check_publishable(resolution, ops)
+        if resolution.problem is None and spec.name in NO_OP_CHECKS:
+            return await _check_no_op(spec.name, resolution, ops)
         return resolution
     if spec.target == "record":
         return await _resolve_record(payload, ops, recent)
     if spec.name == "ingest_github" and payload.get("repos"):
         # Said before the draft, not after "yes": an unlisted repo would only fail later.
         allowed = ops.github_allowlist()
-        repos = [str(r).lower() for r in payload["repos"]]
-        blocked = [r for r in repos if r not in allowed]
+        repos = [str(r) for r in payload["repos"]]
+        blocked = [r for r in repos if r.split("@")[0].lower() not in allowed]
         if blocked:
-            kept = [r for r in repos if r in allowed]
-            listed = ", ".join(blocked)
+            kept = [r for r in repos if r not in blocked]
+            listed = ", ".join(dict.fromkeys(r.split("@")[0] for r in blocked))
             message = (
                 f"{listed} {'is' if len(blocked) == 1 else 'are'} not in GITHUB_SYNC_REPOS, so "
                 "I can't sync it; add it there in .env and restart the API to include it."
@@ -755,6 +866,37 @@ async def resolve_target(
 
 
 PUBLISHABLE_AFTER_CHANGE = frozenset({"private"})
+NO_OP_CHECKS = frozenset({"approve", "unpublish"})
+
+
+async def _check_no_op(action: str, resolution: Resolution, ops: AdminOps) -> Resolution:
+    """Say so instead of drafting a change that is already true."""
+    doc_id = resolution.payload.get("document_id")
+    if not doc_id:
+        return resolution
+    doc = await ops.get_document(str(doc_id))
+    if action == "approve" and doc.review_status == "approved":
+        return Resolution(resolution.payload, settled=f"“{doc.title}” is already approved.")
+    if action == "unpublish" and not doc.published:
+        return Resolution(resolution.payload, settled=f"“{doc.title}” is not published.")
+    return resolution
+
+
+def failed_items(payload: Payload) -> list[dict[str, Any]]:
+    """The target of a failed action, so "try again" or "it" still finds it."""
+    if payload.get("document_id"):
+        return [
+            {
+                "kind": "document",
+                "id": payload["document_id"],
+                "title": payload.get("document_title") or "",
+            }
+        ]
+    if payload.get("record_id"):
+        return [
+            {"kind": "record", "id": payload["record_id"], "company": payload.get("record_company")}
+        ]
+    return []
 
 
 async def _check_publishable(resolution: Resolution, ops: AdminOps) -> Resolution:
@@ -763,6 +905,11 @@ async def _check_publishable(resolution: Resolution, ops: AdminOps) -> Resolutio
     if not doc_id:
         return resolution
     doc = await ops.get_document(str(doc_id))
+    if doc.published:
+        return Resolution(
+            resolution.payload,
+            settled=f"“{doc.title}” is already published (tier {doc.tier}); nothing to do.",
+        )
     payload = {**resolution.payload, "document_tier": doc.tier}
     if doc.tier == "public" or doc.tier in PUBLISHABLE_AFTER_CHANGE:
         return Resolution(payload)
@@ -795,14 +942,17 @@ async def _resolve_document(
     candidates: dict[str, str] = {d.id: d.title for d in queue.items}
     candidates |= {r["id"]: r["title"] for r in recent_docs}
     found = _pick(list(candidates.items()), lambda item: item[1], ref)
+    if not found:
+        # Published or approved documents are not in the review queue: search every title.
+        titled = {d.id: d.title for d in await ops.find_documents(ref, REVIEW_SCAN)}
+        found = _pick(list(titled.items()), lambda item: item[1], ref)
     if len(found) == 1:
         doc_id, title = found[0]
         return Resolution({**payload, "document_id": doc_id, "document_title": title})
     if not found:
         return Resolution(
             payload,
-            f"I can't find a document titled “{ref}” in the review queue or this conversation. "
-            "Give its id (see: show the review queue).",
+            f"I can't find a document titled “{ref}”. Give its id (see: show the review queue).",
         )
     names = "; ".join(f"“{t}” ({i})" for i, t in found[:8])
     return Resolution(payload, f"Several documents match “{ref}”: {names}. Which one (id)?")
@@ -838,6 +988,25 @@ async def _resolve_record(
         return Resolution(payload, f"I can't find a record for “{ref}”.")
     names = "; ".join(_record_line(r) for r in match[:8])
     return Resolution(payload, f"Several records match “{ref}”: {names}. Which one (id)?")
+
+
+async def _resolve_memory(payload: Payload, memory: MemoryService | None) -> Resolution:
+    if payload.get("memory_id") or memory is None:
+        return Resolution(payload)
+    ref = str(payload.get("memory") or "").strip()
+    if not ref:
+        return Resolution(payload)
+    items = await memory.listing()
+    if found_id := _OBJECT_ID.search(ref):
+        match = [m for m in items if m.id == found_id.group(0)]
+    else:
+        match = _pick(items, lambda m: m.text, ref)
+    if len(match) == 1:
+        return Resolution({**payload, "memory_id": match[0].id, "memory_text": match[0].text})
+    if not match:
+        return Resolution(payload, f"I don't remember anything like “{ref}” (see: show memory).")
+    names = "; ".join(f"“{m.text}” ({m.id})" for m in match[:8])
+    return Resolution(payload, f"Several memories match “{ref}”: {names}. Which one (id)?")
 
 
 def recent_items(outcome: Outcome) -> list[dict[str, Any]]:

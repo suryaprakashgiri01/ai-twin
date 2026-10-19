@@ -1,4 +1,4 @@
-"""Migration rollback on the stack: down() undoes 0005 and 0004, an irreversible step blocks,
+"""Migration rollback on the stack: down() undoes 0006, 0005 and 0004, an irreversible step blocks,
 upgrade re-applies. Runs on the integration test database only."""
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ async def test_downgrade_then_upgrade_round_trip(resources: Resources) -> None:
     assert "0004" in await applied_versions()
 
     plan = await rollback_plan("0003")
-    assert [m.version for m in plan] == ["0005", "0004"]
-    assert await rollback(db, plan) == ["0005", "0004"]
+    assert [m.version for m in plan] == ["0006", "0005", "0004"]
+    assert await rollback(db, plan) == ["0006", "0005", "0004"]
     assert "0004" not in await applied_versions()
     modes = {d["_id"]: d.get("mode") async for d in db["conversations"].find({})}
     assert modes == {"c-ask": None, "c-intake": "intake"}
 
-    assert await run_migrations(db) == ["0004", "0005"]
+    assert await run_migrations(db) == ["0004", "0005", "0006"]
     modes = {d["_id"]: d.get("mode") async for d in db["conversations"].find({})}
     assert modes == {"c-ask": "ask", "c-intake": "intake"}
 
@@ -69,7 +69,7 @@ async def test_lead_defaults_round_trip(resources: Resources) -> None:
     )
     plan = await rollback_plan("0004")
     await rollback(db, plan)
-    assert await run_migrations(db) == ["0005"]
+    assert await run_migrations(db) == ["0005", "0006"]
     old = await db["leads"].find_one({"_id": "old"})
     assert old is not None
     assert (old["status"], old["source"], old["legacy"]) == ("reviewed", "form", True)
@@ -82,3 +82,22 @@ async def test_lead_defaults_round_trip(resources: Resources) -> None:
     assert "status" not in old and "legacy" not in old
     assert new["status"] == "new"
     await run_migrations(db)
+
+
+async def test_summary_defaults_round_trip(resources: Resources) -> None:
+    db = resources.mongo[TEST_DATABASE]
+    await db["conversations"].insert_many(
+        [
+            {"_id": "plain", "channel": "owner"},
+            {"_id": "summed", "channel": "owner", "summary": "Fake notes.", "summarized_turns": 6},
+        ]
+    )
+    await rollback(db, await rollback_plan("0005"))
+    plain = await db["conversations"].find_one({"_id": "plain"})
+    summed = await db["conversations"].find_one({"_id": "summed"})
+    assert plain is not None and "summarized_turns" not in plain
+    assert summed is not None and summed["summarized_turns"] == 6  # real data is kept
+    assert await run_migrations(db) == ["0006"]
+    plain = await db["conversations"].find_one({"_id": "plain"})
+    assert plain is not None and plain["summarized_turns"] == 0
+    assert await run_migrations(db) == []

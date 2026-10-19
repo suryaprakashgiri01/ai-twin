@@ -49,6 +49,9 @@ CATEGORIES: tuple[str, ...] = (
     "testimonial",
     "job-description",
     "learning",
+    # Recruiter outreach: an HR or recruiter call's notes, an invite to apply from a platform.
+    "hr-call",
+    "invite",
 )
 
 
@@ -71,6 +74,8 @@ CATEGORY_RULES: dict[str, CategoryRule] = {
     "achievement": CategoryRule(Tier.PRIVATE, "achievement; suggest public after review"),
     "testimonial": CategoryRule(Tier.PRIVATE, "testimonial; public only with the author's consent"),
     "learning": CategoryRule(Tier.PRIVATE, "learning notes; suggest public after review"),
+    "hr-call": CategoryRule(Tier.PRIVATE, "an HR or recruiter call names third parties"),
+    "invite": CategoryRule(Tier.PRIVATE, "a recruiter's invite names third parties"),
     "blog": CategoryRule(Tier.PUBLIC, "published writing"),
     "profile-link": CategoryRule(Tier.PUBLIC, "a public profile"),
 }

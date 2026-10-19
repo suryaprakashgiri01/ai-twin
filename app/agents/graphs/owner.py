@@ -21,6 +21,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Checkpointer
 from pydantic import BaseModel
 
+from app.agents.context import OwnerContext
 from app.agents.generation import AnswerGenerator, Generation, MidStreamError
 from app.agents.prompts import owner as prompts
 from app.agents.routing import (
@@ -104,6 +105,8 @@ class OwnerState(TypedDict, total=False):
     # Raises every model call to at least this tier (the intake assistant passes confidential,
     # so only local models answer there).
     min_tier: Tier | None
+    # The owner's active preferences and the conversation summary (never for visitors).
+    context: OwnerContext | None
     started: float
     # route
     route: Route
@@ -460,6 +463,9 @@ class OwnerNodes:
         history = visible_history(state["history"], tier, self.settings.history_turns)
         question = state["query"]
         body = f"{context}\n\nQuestion: {question}" if context else question
+        owner = state.get("context")
+        if owner is not None:
+            system = owner.system(system, tier, self.settings.history_turns)
         messages: list[BaseMessage] = [
             SystemMessage(content=system),
             *history_messages(history),
@@ -550,6 +556,7 @@ def initial_state(
     model: str | None = None,
     prefer: Prefer | None = None,
     min_tier: Tier | None = None,
+    context: OwnerContext | None = None,
 ) -> OwnerState:
     return OwnerState(
         conversation_id=conversation_id,
@@ -560,5 +567,6 @@ def initial_state(
         model=model,
         prefer=prefer,
         min_tier=min_tier,
+        context=context,
         started=time.perf_counter(),
     )

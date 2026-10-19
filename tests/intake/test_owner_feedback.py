@@ -23,13 +23,18 @@ ALLOWED = frozenset({"suryaprakashgiri01/observable-ai-service", "kavya-testpal/
         (
             "here is the details for repos: suryaprakashgiri01/observable-ai-service,"
             "suryaprakashgiri01/ai-twin/tree/develop",
-            ["suryaprakashgiri01/observable-ai-service", "suryaprakashgiri01/ai-twin"],
+            ["suryaprakashgiri01/observable-ai-service", "suryaprakashgiri01/ai-twin@develop"],
         ),
         (
             "Add https://github.com/suryaprakashgiri01/observable-ai-service.git please",
             ["suryaprakashgiri01/observable-ai-service"],
         ),
         ("my profile https://github.com/suryaprakashgiri01", []),
+        (
+            "sync suryaprakashgiri01/ai-twin from the develop branch",
+            ["suryaprakashgiri01/ai-twin@develop"],
+        ),
+        ("sync kavya-testpal/notes@release/1.2", ["kavya-testpal/notes@release/1.2"]),
         ("met on 12/10 at 3/4 past", []),
         (
             "Kavya-Testpal/Rate-Limiter and kavya-testpal/rate-limiter",

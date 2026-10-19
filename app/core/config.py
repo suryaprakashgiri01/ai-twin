@@ -96,6 +96,17 @@ class Settings(BaseSettings):
     owner_history_turns: int = Field(default=8, ge=0, le=40)
     # How long POST /conversations/{id}/title waits before letting a slow model finish later.
     title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=60)
+    # A rolling summary is refreshed in the background after this many new turns (0: only on
+    # exit); long chats send it ahead of the recent turns within SUMMARY_CONTEXT_TOKENS.
+    summary_every_turns: int = Field(default=6, ge=0, le=200)
+    # Learned owner memories wait for the owner's review; true activates confidence >= 0.8.
+    memory_auto_accept: bool = False
+    # Embedding similarity at which a learned memory counts as a duplicate (bumped, not added).
+    memory_similarity: float = Field(default=0.90, ge=0.5, le=1)
+    # Prompt budgets for the owner agents: active memories (count and tokens) and the summary.
+    memory_context_items: int = Field(default=20, ge=0, le=100)
+    memory_context_tokens: int = Field(default=400, ge=0, le=4000)
+    summary_context_tokens: int = Field(default=300, ge=0, le=2000)
 
     # --- owner intake assistant (vault) -----------------------------------------
     # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.

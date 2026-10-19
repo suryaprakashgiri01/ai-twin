@@ -431,5 +431,6 @@ def test_missing_kind_lists_the_allowed_values() -> None:
     from app.agents.intake.actions import ACTIONS
 
     text = _missing_text(ACTIONS["add_record"], ["kind", "date"], {})
-    assert "- kind: application, assessment, interview, offer, rejection or withdrawal" in text
+    kinds = "invite, application, hr_call, assessment, interview, offer, rejection or withdrawal"
+    assert f"- kind: {kinds}" in text
     assert "owner" not in text and "your words" in text
