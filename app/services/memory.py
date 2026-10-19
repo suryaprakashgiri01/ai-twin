@@ -92,11 +92,16 @@ _NARRATION = frozenset(
 )  # fmt: skip
 
 
+_PRONOUNS = frozenset({"it", "this", "that", "they", "these", "those", "he", "she", "them"})
+
+
 def preference_shaped(kind: str, text: str) -> bool:
     """An alias reads "short = long"; a rule or preference carries a directive word and does not
     narrate an event."""
     if kind == "alias":
-        return bool(_ALIAS_FORM.search(text))
+        match = _ALIAS_FORM.search(text)
+        # "it = the Lumenrail note" names something only this conversation knew.
+        return match is not None and text[: match.start()].strip().casefold() not in _PRONOUNS
     words = text.casefold().replace(",", " ").split()
     if not words or words[0] in _NARRATION or " ".join(words[:2]) in _NARRATION:
         return False

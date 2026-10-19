@@ -183,5 +183,6 @@ def test_facts_and_loose_aliases_are_not_preference_shaped() -> None:
     assert not preference_shaped("preference", "The owner asked about notice period")
     assert not preference_shaped("alias", "magnus-eval Magnus Eval project")
     assert preference_shaped("alias", "rl-svc means the rate limiter service")
+    assert not preference_shaped("alias", "it = the Lumenrail observability platform note")
     assert preference_shaped("instruction", "Always show dates as 12 Oct 2026")
     assert preference_shaped("preference", "Concise bullets with sources first")
