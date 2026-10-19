@@ -30,6 +30,7 @@ from typing import Any
 import httpx
 
 from scripts._common import fail, info, ok, paint, read_env, warn
+from scripts._thinking import ASK_PHRASES, INTAKE_PHRASES, TITLE_PHRASES, Thinking
 
 KEY_NAME = "AI_TWIN_ADMIN_KEY"
 CONVERSATION_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -293,6 +294,7 @@ COMMANDS = (
 )
 REMEMBER = "/remember"
 MEMORY = "/memory"
+TWIN = "twin: "
 SUMMARY_CHARS = 400
 MEMORY_HINT = "make memory (Windows: ./scripts/dev.ps1 memory)"
 
@@ -356,22 +358,32 @@ def _done_line(data: dict[str, Any]) -> str:
     return paint("  " + " · ".join(parts), "dim")
 
 
+def _thinking(phrases: Sequence[str]) -> Thinking:
+    return Thinking(phrases, paint(TWIN, "green"), TWIN)
+
+
 def ask(api: Api, message: str, conversation_id: str | None) -> str | None:
     """Stream one answer to the terminal; returns the conversation id."""
-    print(paint("twin: ", "green"), end="", flush=True)
-    for event, data in api.chat(message, conversation_id):
-        conversation_id = data.get("conversation_id", conversation_id)
-        if event == "token":
-            print(data.get("text", ""), end="", flush=True)
-        elif event == "sources" and data.get("sources"):
-            titles = "; ".join(f"[{s['index']}] {s['title']}" for s in data["sources"])
-            print("\n" + paint(f"  sources: {titles}", "dim"), end="")
-        elif event == "done":
-            print("\n" + _done_line(data))
-        elif event == "error":
-            print()
-            warn(f"{data.get('code')}: {data.get('message')}")
+    with _thinking(ASK_PHRASES) as thinking:
+        for event, data in api.chat(message, conversation_id):
+            conversation_id = data.get("conversation_id", conversation_id)
+            if event in ("token", "sources", "done", "error"):
+                thinking.stop()
+            _show_answer_event(event, data)
     return conversation_id
+
+
+def _show_answer_event(event: str, data: dict[str, Any]) -> None:
+    if event == "token":
+        print(data.get("text", ""), end="", flush=True)
+    elif event == "sources" and data.get("sources"):
+        titles = "; ".join(f"[{s['index']}] {s['title']}" for s in data["sources"])
+        print("\n" + paint(f"  sources: {titles}", "dim"), end="")
+    elif event == "done":
+        print("\n" + _done_line(data))
+    elif event == "error":
+        print()
+        warn(f"{data.get('code')}: {data.get('message')}")
 
 
 def print_draft(draft: dict[str, Any]) -> None:
@@ -381,23 +393,29 @@ def print_draft(draft: dict[str, Any]) -> None:
 
 def tell(api: Api, message: str, conversation_id: str | None) -> str | None:
     """One intake turn: the reply, a pending draft if any; returns the conversation id."""
-    print(paint("twin: ", "green"), end="", flush=True)
-    for event, data in api.chat(message, conversation_id, path="/assistant"):
-        conversation_id = data.get("conversation_id", conversation_id)
-        if event == "token":
-            print(data.get("text", ""), end="", flush=True)
-        elif event == "draft":
-            print()
-            print_draft(data)
-        elif event == "done":
-            if not data.get("pending"):
-                print()
-            parts = [str(data.get("status")), str(data.get("action") or "-"), "local model"]
-            print(paint("  " + " · ".join(parts), "dim"))
-        elif event == "error":
-            print()
-            warn(f"{data.get('code')}: {data.get('message')}")
+    with _thinking(INTAKE_PHRASES) as thinking:
+        for event, data in api.chat(message, conversation_id, path="/assistant"):
+            conversation_id = data.get("conversation_id", conversation_id)
+            if event in ("token", "draft", "done", "error"):
+                thinking.stop()
+            _show_intake_event(event, data)
     return conversation_id
+
+
+def _show_intake_event(event: str, data: dict[str, Any]) -> None:
+    if event == "token":
+        print(data.get("text", ""), end="", flush=True)
+    elif event == "draft":
+        print()
+        print_draft(data)
+    elif event == "done":
+        if not data.get("pending"):
+            print()
+        parts = [str(data.get("status")), str(data.get("action") or "-"), "local model"]
+        print(paint("  " + " · ".join(parts), "dim"))
+    elif event == "error":
+        print()
+        warn(f"{data.get('code')}: {data.get('message')}")
 
 
 def print_pending(api: Api, conversation_id: str) -> None:
@@ -411,7 +429,8 @@ def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
     """Ask the server to re-title the conversation; returns its (possibly new) name."""
     print(paint("Updating the conversation's title…", "dim"))
     try:
-        result = api.refresh_title(conversation_id, TITLE_WAIT_SECONDS)
+        with Thinking(TITLE_PHRASES):
+            result = api.refresh_title(conversation_id, TITLE_WAIT_SECONDS)
     except (CliError, httpx.HTTPError, KeyboardInterrupt) as exc:
         warn(f"Title not refreshed ({type(exc).__name__}); the conversation is kept as it was")
         return None
