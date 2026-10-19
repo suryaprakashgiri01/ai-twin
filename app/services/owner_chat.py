@@ -8,7 +8,7 @@ partial answer marked `incomplete`.
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol, cast
@@ -33,6 +33,7 @@ from app.core.config import Settings
 from app.core.llm import LLMServices
 from app.core.resources import Resources
 from app.db.documents import Channel, Conversation, ConversationMode, Message, utcnow
+from app.db.documents import Tier as TierLabel
 from app.exceptions import AppError, ErrorCode
 from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
@@ -113,13 +114,31 @@ class ConversationMeta(ConversationSummary):
     visitor_hash: str | None = None
     name_locked: bool = False
     titled_turns: int = 0
+    summary: str | None = None
+    summarized_turns: int = 0
+    summary_tier: TierLabel | None = None
 
 
-_INTERNAL_META = {"channel", "visitor_hash", "name_locked", "titled_turns"}
+_INTERNAL_META = {
+    "channel",
+    "visitor_hash",
+    "name_locked",
+    "titled_turns",
+    "summary",
+    "summarized_turns",
+    "summary_tier",
+}
 
 
 class ConversationDetail(ConversationSummary):
+    # The rolling summary (at most 1,200 characters) and how many turns it covers.
+    summary: str | None = None
+    summarized_turns: int = 0
     turns: list[Turn]
+
+
+# Called with (conversation id, stored seq) after every owner turn; must return at once.
+TurnHook = Callable[[str, int | None], None]
 
 
 class ConversationIndex(Protocol):
@@ -139,6 +158,10 @@ class ConversationIndex(Protocol):
 
     async def save_refresh(
         self, conversation_id: str, name: str | None, description: str, titled_turns: int
+    ) -> None: ...
+
+    async def save_summary(
+        self, conversation_id: str, summary: str, summarized_turns: int, tier: TierLabel
     ) -> None: ...
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]: ...
@@ -177,6 +200,18 @@ class MongoConversationIndex:
             changes["name"] = name
         await Conversation.get_pymongo_collection().update_one(
             {"_id": conversation_id}, {"$set": changes}
+        )
+
+    async def save_summary(
+        self, conversation_id: str, summary: str, summarized_turns: int, tier: TierLabel
+    ) -> None:
+        await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id},
+            {
+                "$set": {"summary": summary, "summary_tier": tier},
+                # A slower, older run never moves the mark back.
+                "$max": {"summarized_turns": summarized_turns},
+            },
         )
 
     async def set_title(
@@ -267,6 +302,9 @@ def _meta(found: Conversation) -> ConversationMeta:
         mode=found.mode,
         name_locked=found.name_locked,
         titled_turns=found.titled_turns,
+        summary=found.summary,
+        summarized_turns=found.summarized_turns,
+        summary_tier=found.summary_tier,
     )
 
 
@@ -292,11 +330,13 @@ class OwnerChatService:
         conversations: ConversationService,
         index: ConversationIndex,
         known_models: frozenset[str] = frozenset(),
+        on_turn: TurnHook | None = None,
     ) -> None:
         self._graph = graph
         self._conversations = conversations
         self._index = index
         self._known_models = known_models
+        self._on_turn = on_turn
 
     async def prepare(self, request: ChatRequest) -> Prepared:
         """Everything that can fail with a plain error response, before any event is sent."""
@@ -394,6 +434,8 @@ class OwnerChatService:
         }
 
     def _final(self, run: _Run) -> tuple[str, dict[str, Any]]:
+        if self._on_turn is not None:
+            self._on_turn(run.conversation_id, run.state.get("seq"))
         error: ErrorInfo | None = run.state.get("error")
         if error is not None:
             return "error", self._error(run, error.code, error.message)
@@ -547,11 +589,16 @@ def build_owner_chat(
 
 
 def build_owner_chat_from(
-    deps: OwnerDeps, resources: Resources, llm: LLMServices
+    deps: OwnerDeps,
+    resources: Resources,
+    llm: LLMServices,
+    *,
+    on_turn: TurnHook | None = None,
 ) -> OwnerChatService:
     return OwnerChatService(
         build_owner_graph(deps),
         resources.conversations,
         MongoConversationIndex(),
         known_models=frozenset(llm.orchestrator.inventory.models),
+        on_turn=on_turn,
     )

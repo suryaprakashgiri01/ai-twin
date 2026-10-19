@@ -44,7 +44,7 @@ from app.observability.tracing import TraceRun, tracing
 from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import ConversationMeta, MongoConversationIndex
+from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook
 from llm_orchestrator import Orchestrator, OrchestratorError, Role
 
 logger = structlog.get_logger(__name__)
@@ -129,11 +129,13 @@ class IntakeService:
         conversations: ConversationService,
         index: IntakeIndex,
         orchestrator: Orchestrator,
+        on_turn: TurnHook | None = None,
     ) -> None:
         self._graph = graph
         self._conversations = conversations
         self._index = index
         self._orchestrator = orchestrator
+        self._on_turn = on_turn
 
     async def ensure_local(self) -> None:
         """Refuse before any model call when no local model may read confidential text."""
@@ -257,6 +259,8 @@ class IntakeService:
         else:
             text = "\n\n".join(part for part in (reply, pending.prompt if pending else "") if part)
             seq = await self._store(cid, prepared.request.message, text, status)
+        if self._on_turn is not None:
+            self._on_turn(cid, seq)
         if status == "answer" and (outcome or {}).get("error"):
             error = outcome["error"] if outcome else {}
             events.append(("error", self._error(cid, ErrorCode(error["code"]), error["message"])))
@@ -323,6 +327,8 @@ def build_intake(
     llm: LLMServices,
     ingestion: Ingestion,
     owner: OwnerDeps,
+    *,
+    on_turn: TurnHook | None = None,
 ) -> tuple[IntakeService, MongoCheckpointSaver]:
     """`owner` is the owner graph's dependencies (`OwnerDeps`); its graph runs inside `answer`
     without checkpoints of its own."""
@@ -356,6 +362,7 @@ def build_intake(
         resources.conversations,
         MongoConversationIndex(),
         llm.orchestrator,
+        on_turn=on_turn,
     )
     return service, saver
 

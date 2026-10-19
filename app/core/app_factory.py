@@ -26,6 +26,7 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.observability import metrics
 from app.observability.tracing import NOOP, Tracing, build_tracing, install
 from app.security.worker import build_alert_worker
+from app.services.digest import ConversationDigester
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
@@ -33,7 +34,6 @@ from app.services.owner_chat import MongoConversationIndex, build_owner_chat_fro
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
 from app.services.security_events import recording_exhausted_chains
-from app.services.titling import ConversationTitler
 
 logger = structlog.get_logger(__name__)
 
@@ -119,9 +119,18 @@ async def _start_services(
         # One embedder for indexing and search, so its models load once.
         embedder = ingestion.pipeline.embedder
         owner = owner_deps(settings, resources, app.state.llm, embedder)
-        app.state.owner_chat = build_owner_chat_from(owner, resources, app.state.llm)
-        app.state.titler = ConversationTitler(MongoConversationIndex(), app.state.llm.orchestrator)
-        intake, saver = build_intake(settings, resources, app.state.llm, ingestion, owner)
+        digester = ConversationDigester(
+            MongoConversationIndex(),
+            app.state.llm.orchestrator,
+            every_turns=settings.summary_every_turns,
+        )
+        app.state.digester = digester
+        app.state.owner_chat = build_owner_chat_from(
+            owner, resources, app.state.llm, on_turn=digester.after_turn
+        )
+        intake, saver = build_intake(
+            settings, resources, app.state.llm, ingestion, owner, on_turn=digester.after_turn
+        )
         app.state.intake = intake
         await prune_checkpoints(saver, settings.intake_checkpoint_days)
     else:

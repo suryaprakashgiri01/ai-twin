@@ -181,6 +181,11 @@ class PublicMemoryIndex:
     ) -> None:
         await self.set_title(conversation_id, name, description)
 
+    async def save_summary(
+        self, conversation_id: str, summary: str, summarized_turns: int, tier: str
+    ) -> None:
+        return None
+
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]
 

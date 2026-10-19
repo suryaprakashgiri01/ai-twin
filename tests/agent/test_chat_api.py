@@ -34,12 +34,14 @@ class MemoryIndex:
         self.store = store
         self.titles: dict[str, tuple[str | None, str | None]] = {}
         self.locked: set[str] = set()
+        self.summaries: dict[str, tuple[str, int, str]] = {}
 
     def _meta(self, conversation_id: str) -> ConversationMeta:
         meta = self.store.conversations[conversation_id]
         turns = self.store.turns.get(conversation_id, {})
         stamps = [t.created_at for t in turns.values()]
         name, description = self.titles.get(conversation_id, (None, None))
+        summary, summarized, tier = self.summaries.get(conversation_id, (None, 0, None))
         return ConversationMeta(
             id=conversation_id,
             name=name,
@@ -48,6 +50,9 @@ class MemoryIndex:
             created_at=min(stamps),
             updated_at=max(stamps),
             message_count=max(turns, default=0),
+            summary=summary,
+            summarized_turns=summarized,
+            summary_tier=tier,
         )
 
     async def get(self, conversation_id: str) -> ConversationMeta | None:
@@ -88,6 +93,11 @@ class MemoryIndex:
         self, conversation_id: str, name: str | None, description: str, titled_turns: int
     ) -> None:
         await self.set_title(conversation_id, name, description)
+
+    async def save_summary(
+        self, conversation_id: str, summary: str, summarized_turns: int, tier: str
+    ) -> None:
+        self.summaries[conversation_id] = (summary, summarized_turns, tier)
 
 
 @dataclass

@@ -57,6 +57,7 @@ class MemoryIntakeIndex:
         self.store = store
         self.meta: dict[str, dict[str, Any]] = {}
         self.locked: set[str] = set()
+        self.summaries: dict[str, tuple[str, int, str]] = {}
 
     def _row(self, conversation_id: str) -> dict[str, Any]:
         return self.meta.setdefault(
@@ -68,6 +69,7 @@ class MemoryIntakeIndex:
             return None
         row = self.meta[conversation_id]
         turns = self.store.turns.get(conversation_id, {})
+        summary, summarized, tier = self.summaries.get(conversation_id, (None, 0, None))
         return ConversationMeta(
             id=conversation_id,
             name=row["name"],
@@ -77,6 +79,9 @@ class MemoryIntakeIndex:
             updated_at=NOW,
             message_count=max(turns, default=0),
             mode=row["mode"],
+            summary=summary,
+            summarized_turns=summarized,
+            summary_tier=tier,
         )
 
     async def names_like(self, base: str) -> set[str]:
@@ -96,6 +101,11 @@ class MemoryIntakeIndex:
         self, conversation_id: str, name: str | None, description: str, titled_turns: int
     ) -> None:
         await self.set_title(conversation_id, name, description)
+
+    async def save_summary(
+        self, conversation_id: str, summary: str, summarized_turns: int, tier: str
+    ) -> None:
+        self.summaries[conversation_id] = (summary, summarized_turns, tier)
 
     async def set_mode(self, conversation_id: str, mode: ConversationMode) -> None:
         self._row(conversation_id)["mode"] = mode

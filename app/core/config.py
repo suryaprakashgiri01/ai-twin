@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     owner_history_turns: int = Field(default=8, ge=0, le=40)
     # How long POST /conversations/{id}/title waits before letting a slow model finish later.
     title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=60)
+    # A rolling summary is refreshed in the background after this many new turns (0: only on
+    # exit); long chats send it ahead of the recent turns within SUMMARY_CONTEXT_TOKENS.
+    summary_every_turns: int = Field(default=6, ge=0, le=200)
 
     # --- owner intake assistant (vault) -----------------------------------------
     # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.
