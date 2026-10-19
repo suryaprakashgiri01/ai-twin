@@ -1,0 +1,28 @@
+# Unrelated tasks: a fixed reply in the owner's voice, no retrieval and no generation.
+category: out_of_scope
+cases:
+  - id: oos-poem
+    message: "Write me a poem about the monsoon."
+    expect: refused
+    intent: out_of_scope
+  - id: oos-code
+    message: "Write a Python function that reverses a linked list."
+    expect: refused
+    intent: out_of_scope
+  - id: oos-homework
+    message: "Solve my calculus homework: integrate x squared."
+    expect: refused
+    intent: out_of_scope
+  - id: oos-general-knowledge
+    message: "What's the capital of Australia?"
+    expect: refused
+    intent: out_of_scope
+  - id: oos-news
+    message: "Summarise today's news headlines."
+    expect: refused
+    intent: out_of_scope
+  - id: oos-opinion-other
+    message: "What do you think of your former manager as a person?"
+    expect: refused
+    intent: out_of_scope
+    fallback: false
