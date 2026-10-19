@@ -362,3 +362,38 @@ def resolve_inbox(inbox: Path, name: str) -> Path:
     if candidate.parent != root:
         raise InboxError(f"{clean!r} is outside the inbox")
     return candidate
+
+
+# --- GitHub repositories named in free text ------------------------------------------------------
+
+_GITHUB_REPO_URL = re.compile(
+    r"https?://(?:www\.)?github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]+)", re.I
+)
+# A bare owner/name, not part of a URL or a path (`a/b/tree/develop` keeps `a/b`).
+_BARE_REPO = re.compile(
+    r"(?<![\w./:@-])([A-Za-z][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]*[A-Za-z][A-Za-z0-9._-]*)"
+)
+_URL = re.compile(r"https?://\S+", re.I)
+
+
+def _repo(owner: str, name: str) -> str:
+    name = name.removesuffix(".git").rstrip(".,;:")
+    return f"{owner}/{name}".lower()
+
+
+def github_repos(text: str) -> list[str]:
+    """Every `owner/name` the owner wrote, as a GitHub URL or bare, in order and without repeats.
+    Extra path parts (`/tree/develop`, `.git`) are dropped; a profile URL is not a repo."""
+    found: list[str] = []
+    for owner, name in _GITHUB_REPO_URL.findall(text):
+        found.append(_repo(owner, name))
+    without_urls = _URL.sub(" ", text)
+    for owner, name in _BARE_REPO.findall(without_urls):
+        found.append(_repo(owner, name))
+    return list(dict.fromkeys(found))
+
+
+def only_github_repo_urls(text: str) -> bool:
+    """True when the message has URLs and every one of them points at a GitHub repository."""
+    urls = _URL.findall(text)
+    return bool(urls) and all(_GITHUB_REPO_URL.match(u) for u in urls)
