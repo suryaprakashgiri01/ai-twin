@@ -57,6 +57,23 @@ def normalise(text: str) -> str:
     return " ".join(_WORD.findall(text.casefold()))
 
 
+# A sentence that asks for something lasting; only such sentences can support a memory.
+_LASTING = re.compile(
+    r"\b(always|never|from now on|going forward|in future|every time|each time|i prefer|"
+    r"i'd prefer|i like (it|my|answers|replies|when)|i want (you|answers|replies)|"
+    r"please (answer|reply|use|keep|show|format|write|call|give|include|cite|avoid|don't)|"
+    r"when i say|i mean|stands for|call it|don't|do not)\b",
+    re.I,
+)
+_SENTENCE = re.compile(r"(?<=[.!?\n])\s+")
+
+
+def lasting_text(owner_text: str) -> str:
+    """The owner's sentences that ask for something lasting; a passing request is not a
+    preference ("publish the note" is not "always publish notes")."""
+    return "\n".join(s for s in _SENTENCE.split(owner_text) if _LASTING.search(s))
+
+
 def supported(text: str, owner_text: str) -> bool:
     """True when most words of `text` are the owner's own (a shared stem counts), so a
     candidate cannot come from the assistant's replies or the model's imagination."""
@@ -276,6 +293,12 @@ class MemoryService:
         tier: Tier,
     ) -> int:
         """Store what the owner's own messages support; returns how many new items are pending."""
+        owner_text = lasting_text(owner_text)
+        if not owner_text:
+            logger.info(
+                "memories learned", conversation_id=conversation_id, dropped=len(candidates)
+            )
+            return 0
         live = await self._store.by_status(list(LIVE))
         vectors = await self._vectors([m.text for m in live])
         label: MemoryTier = "confidential" if tier >= Tier.CONFIDENTIAL else "private"

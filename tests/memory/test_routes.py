@@ -45,7 +45,7 @@ async def test_memory_crud_is_audited(
 
     await svc.learn(
         [MemoryCandidate(kind="preference", text="Concise bullets")],
-        owner_text="concise bullets please",
+        owner_text="Always give concise bullets please",
         conversation_id="c1",
         tier=Tier.PRIVATE,
     )

@@ -186,3 +186,20 @@ def test_facts_and_loose_aliases_are_not_preference_shaped() -> None:
     assert not preference_shaped("alias", "it = the Lumenrail observability platform note")
     assert preference_shaped("instruction", "Always show dates as 12 Oct 2026")
     assert preference_shaped("preference", "Concise bullets with sources first")
+
+
+async def test_only_lasting_requests_teach_anything() -> None:
+    from app.services.memory import lasting_text
+
+    svc, store, _ = service()
+    passing = "Had an HR call with Hooli Test. Please publish the Lumenrail note."
+    learned = await svc.learn(
+        [cand("alias", "hr_call = HR call"), cand("preference", "publish the Lumenrail note")],
+        owner_text=passing,
+        conversation_id="c9",
+        tier=Tier.PRIVATE,
+    )
+    assert learned == 0 and store.rows == {}
+    assert lasting_text("Hi! Please always answer in bullets. What is raft?") == (
+        "Please always answer in bullets."
+    )
