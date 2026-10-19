@@ -121,6 +121,15 @@ def _trace_intake(trace: TraceRun, state: dict[str, Any], pending: bool, resumed
         trace.score("intake_outcome", outcome, data_type="CATEGORICAL")
 
 
+def history_line(turn: Turn) -> dict[str, str]:
+    """A turn for the extraction prompt; an intake reply carries its real outcome, so the model
+    can tell what already happened from what only was drafted or failed."""
+    route = turn.route or ""
+    if turn.role == "assistant" and route.startswith(f"{TURN_ROUTE}:"):
+        return {"role": "assistant", "content": f"[{route.split(':', 1)[1]}] {turn.content}"}
+    return {"role": turn.role, "content": turn.content}
+
+
 def _config(conversation_id: str) -> RunnableConfig:
     return {"configurable": {"thread_id": conversation_id}}
 
@@ -210,9 +219,7 @@ class IntakeService:
             "conversation_id": cid,
             "message": prepared.request.message,
             "key_name": prepared.key_name,
-            "history": [
-                {"role": t.role, "content": t.content} for t in prepared.history[-HISTORY_TURNS:]
-            ],
+            "history": [history_line(t) for t in prepared.history[-HISTORY_TURNS:]],
             "context": prepared.context.model_dump() if prepared.context else None,
         }
         graph_input: Any = (

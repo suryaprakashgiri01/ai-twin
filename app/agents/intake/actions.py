@@ -784,6 +784,8 @@ class Resolution:
     problem: str | None = None
     # Something the owner should know that doesn't block the draft (shown above it).
     note: str | None = None
+    # Nothing to do: the target is already in the requested state (said instead of a draft).
+    settled: str | None = None
 
 
 def _norm(text: str) -> str:
@@ -820,6 +822,8 @@ async def resolve_target(
         resolution = await _resolve_document(payload, ops, recent)
         if spec.name == "publish" and resolution.problem is None:
             return await _check_publishable(resolution, ops)
+        if resolution.problem is None and spec.name in NO_OP_CHECKS:
+            return await _check_no_op(spec.name, resolution, ops)
         return resolution
     if spec.target == "record":
         return await _resolve_record(payload, ops, recent)
@@ -846,6 +850,37 @@ async def resolve_target(
 
 
 PUBLISHABLE_AFTER_CHANGE = frozenset({"private"})
+NO_OP_CHECKS = frozenset({"approve", "unpublish"})
+
+
+async def _check_no_op(action: str, resolution: Resolution, ops: AdminOps) -> Resolution:
+    """Say so instead of drafting a change that is already true."""
+    doc_id = resolution.payload.get("document_id")
+    if not doc_id:
+        return resolution
+    doc = await ops.get_document(str(doc_id))
+    if action == "approve" and doc.review_status == "approved":
+        return Resolution(resolution.payload, settled=f"“{doc.title}” is already approved.")
+    if action == "unpublish" and not doc.published:
+        return Resolution(resolution.payload, settled=f"“{doc.title}” is not published.")
+    return resolution
+
+
+def failed_items(payload: Payload) -> list[dict[str, Any]]:
+    """The target of a failed action, so "try again" or "it" still finds it."""
+    if payload.get("document_id"):
+        return [
+            {
+                "kind": "document",
+                "id": payload["document_id"],
+                "title": payload.get("document_title") or "",
+            }
+        ]
+    if payload.get("record_id"):
+        return [
+            {"kind": "record", "id": payload["record_id"], "company": payload.get("record_company")}
+        ]
+    return []
 
 
 async def _check_publishable(resolution: Resolution, ops: AdminOps) -> Resolution:
@@ -854,6 +889,11 @@ async def _check_publishable(resolution: Resolution, ops: AdminOps) -> Resolutio
     if not doc_id:
         return resolution
     doc = await ops.get_document(str(doc_id))
+    if doc.published:
+        return Resolution(
+            resolution.payload,
+            settled=f"“{doc.title}” is already published (tier {doc.tier}); nothing to do.",
+        )
     payload = {**resolution.payload, "document_tier": doc.tier}
     if doc.tier == "public" or doc.tier in PUBLISHABLE_AFTER_CHANGE:
         return Resolution(payload)

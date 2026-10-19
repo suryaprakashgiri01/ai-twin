@@ -39,6 +39,7 @@ from app.agents.intake.actions import (
     ActionSpec,
     RunContext,
     catalog_text,
+    failed_items,
     json_safe,
     recent_items,
     resolve_target,
@@ -81,6 +82,14 @@ _SHOW_MEMORY = re.compile(
     r"\bwhat do you remember\b",
     re.I,
 )
+# A message that only thanks or acknowledges: never a request, whatever the model reads into it.
+_ACK = re.compile(
+    r"^\s*(thanks?( you)?|thank u|thx|ty|cheers|ok(ay)?|cool|great|nice|perfect|awesome|"
+    r"got it|good|alright|all good|sounds good|noted)"
+    r"(\s+(a lot|so much|very much|again|mate|buddy))?[\s!.🙂👍🙏]*$",
+    re.I,
+)
+_RETRY = re.compile(r"\b(try (it )?again|retry|one more time|redo)\b", re.I)
 _LAST_SOURCE = re.compile(
     r"\b(last|latest|previous) (upload|source|ingest\w*|sync|file|link)\b", re.I
 )
@@ -131,6 +140,8 @@ class IntakeState(TypedDict, total=False):
     pending: dict[str, Any] | None
     reask: bool
     recent: list[dict[str, Any]]
+    # The last action that failed, so "try again" retries it with the same fields.
+    failed: dict[str, Any] | None
     # this run's result
     reply: str
     status: Status
@@ -250,6 +261,11 @@ class IntakeNodes:
                 },
             )
         action = rule_action(state["message"], extracted.action or current)
+        if _ACK.match(state["message"]):
+            action = None
+        retry = self._retry(state, action)
+        if retry is not None:
+            action = retry["action"]
         if action is None:
             _step("gather", started, action=None, model=model_id)
             return Command(
@@ -262,6 +278,8 @@ class IntakeNodes:
         spec = ACTIONS[action]
         switched = current is not None and action != current
         base = {} if switched or current is None else dict(state.get("payload") or {})
+        if retry is not None:
+            base = dict(retry["payload"])
         given, dropped = ground(
             spec, extracted.payload, state["message"], base, self.deps.timezone, self.deps.now()
         )
@@ -302,6 +320,11 @@ class IntakeNodes:
             "missing": result.missing,
             "pending": None,
         }
+        if resolution.settled:
+            return Command(
+                goto=END,
+                update=_cleared() | {"reply": resolution.settled, "status": "chat", "failed": None},
+            )
         if resolution.problem or result.missing or invalid:
             parts = [resolution.problem or "", _missing_text(spec, result.missing, invalid)]
             text = " ".join(_sentence(p) for p in parts if p)
@@ -320,6 +343,16 @@ class IntakeNodes:
             "confirm_text": spec.confirm_text(result.payload),
         }
         return Command(goto="confirm", update=update | {"pending": pending, "status": "draft"})
+
+    @staticmethod
+    def _retry(state: IntakeState, action: str | None) -> dict[str, Any] | None:
+        """The failed action to retry: the owner asks again for it, or says "try again"."""
+        failed = state.get("failed")
+        if not failed or state.get("action"):
+            return None
+        if action == failed["action"] or (_RETRY.search(state["message"]) and action is None):
+            return failed
+        return None
 
     @staticmethod
     def _defaults(spec: ActionSpec, payload: dict[str, Any], message: str) -> dict[str, Any]:
@@ -361,7 +394,7 @@ class IntakeNodes:
                 for r in (state.get("recent") or [])[-5:]
             ]
             recent = prompts.RECENT_CONTEXT.format(items="; ".join(items))
-        system = prompts.EXTRACT_V1.format(
+        system = prompts.EXTRACT_V2.format(
             today=f"{today.isoformat()} ({today.strftime('%A')})",
             catalog=catalog_text(),
             draft=draft,
@@ -467,14 +500,21 @@ class IntakeNodes:
             outcome = await spec.run(ctx, payload)
         except AppError as exc:
             _step("execute", started, action=spec.name, ok=False, error_code=exc.code.value)
+            recent = [*(state.get("recent") or []), *failed_items(payload)][-RECENT_KEEP:]
             return Command(
                 goto=END,
                 update=_cleared()
-                | {"reply": f"Couldn't do that: {exc.message}", "status": "error"},
+                | {
+                    "reply": f"Couldn't do that: {exc.message}. Say “try again” to retry.",
+                    "status": "error",
+                    "recent": recent,
+                    "failed": {"action": spec.name, "payload": json_safe(payload)},
+                },
             )
         recent = [*(state.get("recent") or []), *recent_items(outcome)][-RECENT_KEEP:]
         _step("execute", started, action=spec.name, ok=True, write=spec.write)
         update: dict[str, Any] = _cleared() | {
+            "failed": None,
             "outcome": outcome,
             "recent": recent,
             "reply": outcome["message"],
