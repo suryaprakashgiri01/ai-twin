@@ -30,7 +30,7 @@ from app.db.documents import (
 )
 from app.db.documents import Tier as TierName
 from app.exceptions import AppError, ErrorCode
-from app.kb.ingestion.fetch.github import check_allowed, parse_allowlist
+from app.kb.ingestion.fetch.github import check_allowed, default_branches, parse_allowlist
 from app.kb.ingestion.fetch.url import (
     Resolver,
     check_host,
@@ -137,6 +137,7 @@ class UrlsIn(MetaIn):
 class GitHubIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # `owner/name`, or `owner/name@branch` for a branch other than the default.
     repos: list[str] = Field(min_length=1, max_length=50)
     tags: list[str] = Field(default_factory=list, max_length=20)
 
@@ -457,11 +458,14 @@ class AdminOps:
         return parse_allowlist(self._d.settings.github_sync_repos)
 
     async def ingest_github(self, body: GitHubIn, actor: str) -> SubmittedBatch:
-        allowlist = parse_allowlist(self._d.settings.github_sync_repos)
+        raw = self._d.settings.github_sync_repos
+        allowlist, defaults = parse_allowlist(raw), default_branches(raw)
         try:
             repos = [check_allowed(repo, allowlist) for repo in body.repos]
         except IngestError as exc:
             raise to_app_error(exc) from exc
+        # A repository named without a branch syncs the allowlist's branch for it, if any.
+        repos = [f"{r}@{defaults[r]}" if "@" not in r and r in defaults else r for r in repos]
         submitted = []
         for repo in repos:
             meta = IngestMeta(category="project", tags=body.tags)

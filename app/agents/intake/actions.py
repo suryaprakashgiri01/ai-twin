@@ -830,11 +830,11 @@ async def resolve_target(
     if spec.name == "ingest_github" and payload.get("repos"):
         # Said before the draft, not after "yes": an unlisted repo would only fail later.
         allowed = ops.github_allowlist()
-        repos = [str(r).lower() for r in payload["repos"]]
-        blocked = [r for r in repos if r not in allowed]
+        repos = [str(r) for r in payload["repos"]]
+        blocked = [r for r in repos if r.split("@")[0].lower() not in allowed]
         if blocked:
-            kept = [r for r in repos if r in allowed]
-            listed = ", ".join(blocked)
+            kept = [r for r in repos if r not in blocked]
+            listed = ", ".join(dict.fromkeys(r.split("@")[0] for r in blocked))
             message = (
                 f"{listed} {'is' if len(blocked) == 1 else 'are'} not in GITHUB_SYNC_REPOS, so "
                 "I can't sync it; add it there in .env and restart the API to include it."

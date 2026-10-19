@@ -288,6 +288,43 @@ async def test_github_errors_and_missing_readme() -> None:
         )
 
 
+async def test_github_sync_of_a_named_branch() -> None:
+    seen: list[httpx.Request] = []
+
+    def branchy(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/branches/develop"):
+            commit = {"commit": {"committer": {"date": "2026-10-19T07:43:38Z"}}}
+            return httpx.Response(200, json={"name": "develop", "commit": commit})
+        if "/branches/" in request.url.path:
+            return httpx.Response(404)
+        return github_handler(request)
+
+    fetcher = github.GitHubFetcher(ALLOW, transport=httpx.MockTransport(branchy))
+    parsed = await fetcher.fetch("Kavya-Testpal/Rate-Limiter@develop")
+    assert parsed.key == "kavya-testpal/rate-limiter@develop"
+    assert parsed.title == "kavya-testpal/rate-limiter (develop branch)"
+    assert "Last commit on this branch: 2026-10-19T07:43:38Z" in parsed.markdown
+    assert "rate-limiter/tree/develop" in parsed.markdown
+    readme = next(r for r in seen if r.url.path.endswith("/readme"))
+    assert readme.url.params["ref"] == "develop"
+    with pytest.raises(IngestError) as caught:
+        await fetcher.fetch("kavya-testpal/rate-limiter@nope")
+    assert "No branch 'nope'" in caught.value.message
+
+
+def test_branch_names_and_allowlist_defaults() -> None:
+    assert github.check_allowed("kavya-testpal/notes@Feature/X-1", ALLOW) == (
+        "kavya-testpal/notes@Feature/X-1"
+    )
+    for bad in ("kavya-testpal/notes@../main", "kavya-testpal/notes@-x", "kavya-testpal/notes@a b"):
+        with pytest.raises(IngestError):
+            github.check_allowed(bad, ALLOW)
+    raw = "kavya-testpal/rate-limiter@develop, kavya-testpal/notes"
+    assert github.parse_allowlist(raw) == ALLOW
+    assert github.default_branches(raw) == {"kavya-testpal/rate-limiter": "develop"}
+
+
 # --- LinkedIn ---------------------------------------------------------------------------
 
 

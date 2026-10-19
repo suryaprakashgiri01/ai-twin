@@ -370,30 +370,53 @@ def resolve_inbox(inbox: Path, name: str) -> Path:
 # --- GitHub repositories named in free text ------------------------------------------------------
 
 _GITHUB_REPO_URL = re.compile(
-    r"https?://(?:www\.)?github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]+)", re.I
+    r"https?://(?:www\.)?github\.com/([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]+)"
+    r"(?:/tree/([A-Za-z0-9._-][A-Za-z0-9._/-]*[A-Za-z0-9_-]))?",
+    re.I,
 )
 # A bare owner/name, not part of a URL or a path (`a/b/tree/develop` keeps `a/b`).
 _BARE_REPO = re.compile(
     r"(?<![\w./:@-])([A-Za-z][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]*[A-Za-z][A-Za-z0-9._-]*)"
+    r"(?:(?:/tree/|@)([A-Za-z0-9._-][A-Za-z0-9._/-]*[A-Za-z0-9_-]))?"
 )
+# "the develop branch", "branch develop", "from develop": a branch named in words.
+_BRANCH_WORDS = re.compile(
+    r"\b(?:the\s+)?([A-Za-z0-9._/-]+)\s+branch\b|\bbranch\s+([A-Za-z0-9._/-]+)", re.I
+)
+_NOT_BRANCHES = frozenset({"the", "a", "this", "that", "default", "main's", "same"})
 _URL = re.compile(r"https?://\S+", re.I)
 
 
-def _repo(owner: str, name: str) -> str:
+def _repo(owner: str, name: str, branch: str = "") -> str:
     name = name.removesuffix(".git").rstrip(".,;:")
-    return f"{owner}/{name}".lower()
+    repo = f"{owner}/{name}".lower()
+    return f"{repo}@{branch}" if branch else repo
+
+
+def branch_in_words(text: str) -> str | None:
+    """A branch the owner names in words ("sync it from the develop branch")."""
+    for match in _BRANCH_WORDS.finditer(text):
+        word = match.group(1) or match.group(2)
+        if word and word.lower() not in _NOT_BRANCHES:
+            return word
+    return None
 
 
 def github_repos(text: str) -> list[str]:
     """Every `owner/name` the owner wrote, as a GitHub URL or bare, in order and without repeats.
-    Extra path parts (`/tree/develop`, `.git`) are dropped; a profile URL is not a repo."""
+    A branch (`/tree/develop`, `@develop`, or "the develop branch" for a single repository) is
+    kept as `owner/name@develop`; `.git` is dropped; a profile URL is not a repo."""
     found: list[str] = []
-    for owner, name in _GITHUB_REPO_URL.findall(text):
-        found.append(_repo(owner, name))
+    for owner, name, branch in _GITHUB_REPO_URL.findall(text):
+        found.append(_repo(owner, name, branch))
     without_urls = _URL.sub(" ", text)
-    for owner, name in _BARE_REPO.findall(without_urls):
-        found.append(_repo(owner, name))
-    return list(dict.fromkeys(found))
+    for owner, name, branch in _BARE_REPO.findall(without_urls):
+        found.append(_repo(owner, name, branch))
+    repos = list(dict.fromkeys(found))
+    named = branch_in_words(text)
+    if named and len(repos) == 1 and "@" not in repos[0]:
+        repos = [f"{repos[0]}@{named}"]
+    return repos
 
 
 def only_github_repo_urls(text: str) -> bool:
