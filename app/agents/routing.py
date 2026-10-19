@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from app.agents.tools.records import RecordsQuery
 from app.services.profile import RecordKind
 
-Route = Literal["kb_search", "records", "profile", "chat"]
+Route = Literal["kb_search", "records", "profile", "chat", "write"]
 Guard = Literal["none", "records_rejected", "filters_dropped"]
 
 
@@ -55,6 +55,41 @@ _CHAT = re.compile(r"^\s*(hi|hello|hey|thanks|thank you|ok|okay|cool)\b[\s!.?]*$
 _FOLLOW_UP = re.compile(
     r"^\s*(and|what about|how about|also)\b|\b(that one|before that|the one|those)\b", re.I
 )
+
+
+# Owner chat only reads. A request to add, change or fetch something belongs to the intake
+# assistant (`make twin`), which confirms before writing.
+_WRITE_VERB = re.compile(
+    r"^\s*(?:please\s+|pls\s+|can you\s+|could you\s+|kindly\s+)?"
+    r"(add|ingest|save|store|sync|upload|import|publish|unpublish|delete|remove|record|log|"
+    r"track|update|change|set|fetch|check|browse|crawl|scrape)\b",
+    re.I,
+)
+_WRITE_PHRASE = re.compile(
+    r"\b(please add|add this|add these|add it|save this|sync (my|this|the)|ingest (this|my)|"
+    r"(check|fetch|look at|browse) (my )?(github|repo|profile|website|link|url))\b|"
+    r"\badd (this|these|it) (source|link|url|repo)",
+    re.I,
+)
+
+
+_QUESTION = re.compile(
+    r"^\s*(how|what|which|when|where|who|why|did|do|does|is|are|was|were)\b", re.I
+)
+_BROWSE = re.compile(
+    r"\b(check|fetch|browse|look up|look at|visit|open|go to|crawl|scrape)\b.{0,60}?"
+    r"\b(github|git hub|website|site|web|online|internet|link|url|profile)\b|"
+    r"\b(github|website|web|online|link|url)\b.{0,60}?\b(check|fetch|browse|look up|visit)\b",
+    re.I,
+)
+
+
+def looks_like_write(text: str) -> bool:
+    """An imperative to add, change or fetch something, or a request to browse the web; not a
+    question about what the vault already holds."""
+    if _BROWSE.search(text) or _WRITE_PHRASE.search(text):
+        return True
+    return not _QUESTION.match(text) and bool(_WRITE_VERB.match(text))
 
 
 def looks_like_records(text: str) -> bool:

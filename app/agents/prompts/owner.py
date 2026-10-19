@@ -5,6 +5,13 @@ from __future__ import annotations
 PROMPT_VERSION = "owner-v1"
 
 NOT_IN_VAULT = "I don't have that in the vault."
+WRITE_REDIRECT = (
+    "I only read your vault here, and I can't browse the web. To add or change something, use "
+    "the intake assistant: run `make twin` (Windows: ./scripts/dev.ps1 twin) and say it in plain "
+    "words, for example “sync my GitHub repo owner/name”, “add this link https://…” or "
+    "“publish the observable-ai-service document”. It shows a draft and saves only after you "
+    "say yes."
+)
 
 
 def says_not_in_vault(text: str) -> bool:
