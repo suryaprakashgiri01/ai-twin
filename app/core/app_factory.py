@@ -29,6 +29,7 @@ from app.security.worker import build_alert_worker
 from app.services.digest import ConversationDigester
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
+from app.services.memory import build_memory
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
@@ -119,9 +120,11 @@ async def _start_services(
         # One embedder for indexing and search, so its models load once.
         embedder = ingestion.pipeline.embedder
         owner = owner_deps(settings, resources, app.state.llm, embedder)
+        app.state.memory = build_memory(settings, resources.audit, embedder)
         digester = ConversationDigester(
             MongoConversationIndex(),
             app.state.llm.orchestrator,
+            learner=app.state.memory,
             every_turns=settings.summary_every_turns,
         )
         app.state.digester = digester

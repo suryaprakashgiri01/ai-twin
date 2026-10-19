@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # A rolling summary is refreshed in the background after this many new turns (0: only on
     # exit); long chats send it ahead of the recent turns within SUMMARY_CONTEXT_TOKENS.
     summary_every_turns: int = Field(default=6, ge=0, le=200)
+    # Learned owner memories wait for the owner's review; true activates confidence >= 0.8.
+    memory_auto_accept: bool = False
+    # Embedding similarity at which a learned memory counts as a duplicate (bumped, not added).
+    memory_similarity: float = Field(default=0.90, ge=0.5, le=1)
 
     # --- owner intake assistant (vault) -----------------------------------------
     # Finished intake checkpoints older than this are pruned; a pending confirmation is kept.
