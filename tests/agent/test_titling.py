@@ -192,3 +192,19 @@ async def test_owner_rename_locks_the_name() -> None:
     assert index.metas["c1"].name_locked is True
     await service.update_title("c1", TitleUpdate(description="Only the description"))
     assert index.metas["c1"].name_locked is True
+
+
+def test_transcript_keeps_every_owner_message_and_real_outcomes() -> None:
+    from app.services.titling import transcript
+
+    chat = []
+    for i in range(1, 26):
+        chat.append(Turn(seq=2 * i - 1, role="user", content=f"question {i} about magnus eval"))
+        route = "intake:error" if i == 25 else "kb_search"
+        chat.append(Turn(seq=2 * i, role="assistant", content=f"reply {i}", route=route))
+    text = transcript(chat)
+    assert "1. question 1 about magnus eval" in text  # the start is never lost
+    assert "question 25" in text and "(… 5 more messages …)" in text
+    assert "error: reply 25" in text and "answered: reply 24" in text
+    not_found = [Turn(seq=2, role="assistant", content="I don't have that in the vault.")]
+    assert "not found:" in transcript(not_found)

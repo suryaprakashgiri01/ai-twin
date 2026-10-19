@@ -20,6 +20,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.prompts.owner import says_not_in_vault
 from app.exceptions import AppError, ErrorCode
 from app.observability.tracing import tracing
 from app.services.conversations import Turn
@@ -30,15 +31,22 @@ from llm_orchestrator import AllModelsFailedError, NoEligibleModelError, Orchest
 logger = structlog.get_logger(__name__)
 
 MIN_TURNS = 2
-TRANSCRIPT_TURNS = 12
-TURN_CHARS = 400
+# Owner messages carry the topic; replies only their outcome and a glimpse.
+OWNER_MESSAGES = 20
+HEAD = 6
+OWNER_CHARS = 220
+REPLY_CHARS = 120
 
-TITLE_PROMPT_V1 = """You name a private conversation between the owner and their assistant.
-Read the transcript and return:
-- `title`: 2 to 5 plain words naming the main topic (no punctuation, no dates, no names of \
-people), e.g. "system design interview prep" or "Acme Test offer comparison".
-- `description`: one sentence of at most 100 characters saying what the conversation covered.
-Describe only what is in the transcript."""
+PROMPT_VERSION = "title-v2"
+TITLE_PROMPT_V2 = """You name a private conversation between the owner and their assistant.
+You get every message the owner sent, in order, and each assistant reply's outcome.
+Return:
+- `title`: 2 to 5 plain words for the topic MOST of the owner's messages are about. Weigh the \
+whole conversation; early messages count as much as late ones. No punctuation, dates or names \
+of people, e.g. "system design interview prep" or "magnus eval tech stack".
+- `description`: one sentence of at most 100 characters on what the owner asked or did.
+Rules: say an action happened only when its outcome is `done`; for `error` say it was tried or \
+failed; never invent results. Describe only what is below."""
 
 RefreshStatus = Literal["updated", "unchanged", "skipped", "scheduled"]
 
@@ -67,12 +75,47 @@ def conversation_tier(meta: ConversationMeta, turns: list[Turn]) -> Tier:
     return max([Tier.PRIVATE, *tiers])
 
 
+def _clip(text: str, limit: int) -> str:
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def outcome(turn: Turn) -> str:
+    """What an assistant reply amounted to, from metadata rather than its wording."""
+    route = turn.route or ""
+    if route.startswith("intake:"):
+        return route.split(":", 1)[1]  # done, error, draft, asked, answer, chat
+    if turn.incomplete:
+        return "failed"
+    if says_not_in_vault(turn.content):
+        return "not found"
+    return "answered"
+
+
+def _spread[T](items: list[T], keep: int, head: int) -> tuple[list[T], int]:
+    """The first `head` and the latest items when there are too many; returns what was cut."""
+    if len(items) <= keep:
+        return items, 0
+    tail = keep - head
+    return [*items[:head], *items[-tail:]], len(items) - keep
+
+
 def transcript(turns: list[Turn]) -> str:
-    lines = []
-    for turn in turns[-TRANSCRIPT_TURNS:]:
-        who = "owner" if turn.role == "user" else "assistant"
-        text = " ".join(turn.content.split())[:TURN_CHARS]
-        lines.append(f"{who}: {text}")
+    """Every owner message (long chats keep the start and the end) and each reply's outcome."""
+    asked, cut_asked = _spread([t for t in turns if t.role == "user"], OWNER_MESSAGES, HEAD)
+    replies, cut_replies = _spread(
+        [t for t in turns if t.role == "assistant"], OWNER_MESSAGES, HEAD
+    )
+    lines = ["Owner messages, in order:"]
+    lines += [f"{i}. {_clip(t.content, OWNER_CHARS)}" for i, t in enumerate(asked, 1)]
+    if cut_asked:
+        lines.insert(HEAD + 1, f"(… {cut_asked} more messages …)")
+    lines.append("Assistant replies, in order (outcome: first words):")
+    lines += [
+        f"{i}. {outcome(t)}: {_clip(t.content, REPLY_CHARS)}" for i, t in enumerate(replies, 1)
+    ]
+    if cut_replies:
+        lines.append(f"(… {cut_replies} earlier replies left out …)")
     return "\n".join(lines)
 
 
@@ -97,7 +140,7 @@ class ConversationTitler:
             "title-refresh",
             "intake" if meta.mode == "intake" else "owner",
             session_id=conversation_id,
-            metadata={"tier": tier.label, "turns": len(turns), "prompt_version": "title-v1"},
+            metadata={"tier": tier.label, "turns": len(turns), "prompt_version": PROMPT_VERSION},
         ) as trace:
             suggestion = await self._suggest(turns, tier)
             trace.tag("outcome:no_model" if suggestion is None else "outcome:suggested")
@@ -141,7 +184,7 @@ class ConversationTitler:
 
     async def _suggest(self, turns: list[Turn], tier: Tier) -> TitleSuggestion | None:
         messages = [
-            SystemMessage(content=TITLE_PROMPT_V1),
+            SystemMessage(content=TITLE_PROMPT_V2),
             HumanMessage(content=f"Transcript:\n{transcript(turns)}"),
         ]
         try:
