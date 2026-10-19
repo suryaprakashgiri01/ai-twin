@@ -6,6 +6,7 @@ from collections.abc import MutableMapping, Sequence
 from datetime import date
 from typing import Any
 
+import pytest
 from langchain_core.messages import HumanMessage
 
 from app.agents.prompts.owner import NOT_IN_VAULT
@@ -271,3 +272,32 @@ async def test_a_real_answer_keeps_its_sources() -> None:
     )
     state, _ = await agent.run(q)
     assert [s.document_id for s in state["sources"]] == ["priv"]
+
+
+async def test_write_requests_point_to_the_intake_without_a_model_call() -> None:
+    from app.agents.prompts.owner import WRITE_REDIRECT
+
+    q = "This is my github profile, please add this source: https://github.com/kavya-testpal"
+    agent = make_agent(router=["unused"], cloud=["unused"])
+    state, tokens = await agent.run(q)
+    assert state["route"] == "write" and state["answer"] == WRITE_REDIRECT
+    assert "make twin" in "".join(tokens)
+    assert agent.factory.calls("router") == 0 and agent.factory.calls("cloud") == 0
+    assert agent.searcher.calls == []
+
+
+@pytest.mark.parametrize(
+    ("text", "write"),
+    [
+        ("please add this source: https://github.com/kavya-testpal", True),
+        ("so my latest projects on github are public you can check and tell me", True),
+        ("sync my github repo kavya-testpal/rate-limiter", True),
+        ("What are the technologies I used in my rate limiter project?", False),
+        ("How many interviews did I record this month?", False),
+        ("Which projects are on my github profile?", False),
+    ],
+)
+def test_write_rule(text: str, write: bool) -> None:
+    from app.agents.routing import looks_like_write
+
+    assert looks_like_write(text) is write

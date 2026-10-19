@@ -30,6 +30,7 @@ from app.agents.routing import (
     guard_records,
     heuristic_route,
     looks_like_records,
+    looks_like_write,
     records_query,
 )
 from app.agents.tools.profile import ProfileFacts, ProfileTool
@@ -196,6 +197,10 @@ class OwnerNodes:
         history = visible_history(state["history"], state["max_tier"], self.settings.history_turns)
         tier = max([state_floor(state), *(turn_tier(t) for t in history)])
         previous = next((t.content for t in reversed(history) if t.role == "user"), None)
+        if looks_like_write(question):
+            # No model call: owner chat never writes, so the answer is always the same pointer.
+            _step("route", started, route="write", source="rule", tier=tier.label)
+            return {"route": "write", "query": question, "route_source": "rule"}
         decision, source, model_id = await self._decide(question, previous, history, tier, state)
         # Only the model's decision is checked; the keyword router already reads the question.
         guarded = (
@@ -392,6 +397,8 @@ class OwnerNodes:
             text = result.summary() if result else NEEDS_PRIVATE
             floor = state_floor(state)
             return Plan(tier=max(Tier.PRIVATE, floor) if result else floor, fixed=text)
+        if route == "write":
+            return Plan(tier=state_floor(state), fixed=prompts.WRITE_REDIRECT)
         if route == "profile":
             facts = state.get("profile")
             if facts is None:

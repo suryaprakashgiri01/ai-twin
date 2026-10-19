@@ -123,6 +123,8 @@ class ActionSpec:
         lines = [self.label]
         if self.target == "document" and payload.get("document_title"):
             lines.append(f"  document: {payload['document_title']} ({payload.get('document_id')})")
+        if self.name == "publish" and payload.get("document_tier") == "private":
+            lines.append("  tier: private → public (changed first, then approved and published)")
         if self.target == "record" and payload.get("record_label"):
             lines.append(f"  record: {payload['record_label']}")
         for key in self.fields:
@@ -385,8 +387,21 @@ async def _approve(ctx: RunContext, p: Payload) -> Outcome:
 
 
 async def _publish(ctx: RunContext, p: Payload) -> Outcome:
-    result = await ctx.ops.publish(p["document_id"], ctx.actor)
-    return _doc_outcome("publish", "Published", result.document, chunks=result.chunks)
+    """The owner asked to publish and confirmed a draft that said what would change: a private
+    document is made public and approved first. Confidential and restricted ones never get here
+    (refused while resolving the draft)."""
+    doc_id = p["document_id"]
+    doc = await ctx.ops.get_document(doc_id)
+    steps = []
+    if doc.tier == "private":
+        await ctx.ops.update_document(doc_id, DocumentPatch(tier="public"), ctx.actor)
+        steps.append("made public")
+    if doc.review_status != "approved":
+        await ctx.ops.approve(doc_id, ctx.actor)
+        steps.append("approved")
+    result = await ctx.ops.publish(doc_id, ctx.actor)
+    label = ", ".join([*steps, "published"]).capitalize()
+    return _doc_outcome("publish", label, result.document, chunks=result.chunks)
 
 
 async def _approve_publish(ctx: RunContext, p: Payload) -> Outcome:
@@ -427,7 +442,7 @@ _META = {
     "summary": "optional one-line summary",
 }
 _DOC = {"document": "the document's title or id, or 'it' for the one just discussed"}
-_DOC_RESOLVED = ("document_id", "document_title")
+_DOC_RESOLVED = ("document_id", "document_title", "document_tier")
 _RECORD_RESOLVED = ("record_id", "record_label", "record_company")
 PROFILE_FIELDS = ("availability", "notice_period", "preferred_roles", "locations")
 
@@ -679,6 +694,8 @@ class Resolution:
     payload: Payload
     # A question for the owner when the target is unknown or ambiguous.
     problem: str | None = None
+    # Something the owner should know that doesn't block the draft (shown above it).
+    note: str | None = None
 
 
 def _norm(text: str) -> str:
@@ -709,14 +726,51 @@ async def resolve_target(
             rest = {k: v for k, v in payload.items() if k != "filename"}
             return Resolution(rest, str(exc))
     if spec.target == "document":
-        return await _resolve_document(payload, ops, recent)
+        resolution = await _resolve_document(payload, ops, recent)
+        if spec.name == "publish" and resolution.problem is None:
+            return await _check_publishable(resolution, ops)
+        return resolution
     if spec.target == "record":
         return await _resolve_record(payload, ops, recent)
+    if spec.name == "ingest_github" and payload.get("repos"):
+        # Said before the draft, not after "yes": an unlisted repo would only fail later.
+        allowed = ops.github_allowlist()
+        repos = [str(r).lower() for r in payload["repos"]]
+        blocked = [r for r in repos if r not in allowed]
+        if blocked:
+            kept = [r for r in repos if r in allowed]
+            listed = ", ".join(blocked)
+            message = (
+                f"{listed} {'is' if len(blocked) == 1 else 'are'} not in GITHUB_SYNC_REPOS, so "
+                "I can't sync it; add it there in .env and restart the API to include it."
+            )
+            if kept:
+                return Resolution({**payload, "repos": kept}, note=message)
+            return Resolution({k: v for k, v in payload.items() if k != "repos"}, message)
     if spec.name == "source_status" and not payload.get("source_id"):
         last = next((r for r in reversed(recent) if r.get("source_id")), None)
         if last is not None:
             return Resolution({**payload, "source_id": last["source_id"]})
     return Resolution(payload)
+
+
+PUBLISHABLE_AFTER_CHANGE = frozenset({"private"})
+
+
+async def _check_publishable(resolution: Resolution, ops: AdminOps) -> Resolution:
+    """Show the tier a publish would change, or refuse one that would expose sensitive text."""
+    doc_id = resolution.payload.get("document_id")
+    if not doc_id:
+        return resolution
+    doc = await ops.get_document(str(doc_id))
+    payload = {**resolution.payload, "document_tier": doc.tier}
+    if doc.tier == "public" or doc.tier in PUBLISHABLE_AFTER_CHANGE:
+        return Resolution(payload)
+    return Resolution(
+        {k: v for k, v in payload.items() if not k.startswith("document")},
+        f"“{doc.title}” is {doc.tier}; I won't publish that from here. If it really is fine "
+        "to show anyone, first say: make it public (a relabel you confirm on its own).",
+    )
 
 
 async def _resolve_document(

@@ -46,10 +46,12 @@ from app.agents.intake.confirm import Decision, classify_reply, retype_matches
 from app.agents.intake.drafts import (
     IntakeDraft,
     check,
+    github_repos,
     ground,
     local_today,
     merge,
     normalise,
+    only_github_repo_urls,
 )
 from app.agents.intake.suggest import suggest
 from app.agents.prompts import intake as prompts
@@ -69,6 +71,21 @@ RECENT_KEEP = 10
 TITLE_CHARS = 80
 EXTRACT_ATTEMPTS = 2
 _TYPED_ID = re.compile(r"\b[0-9a-f]{24}\b")
+_STATUS = re.compile(r"\bstatus\b|\bis it done\b|\bfinished\b", re.I)
+_LAST_SOURCE = re.compile(
+    r"\b(last|latest|previous) (upload|source|ingest\w*|sync|file|link)\b", re.I
+)
+
+
+def rule_action(message: str, action: str | None) -> str | None:
+    """Keyword rules a small model gets wrong: a status question about a source id, and GitHub
+    repository links, which are synced as repos rather than fetched as web pages."""
+    if _STATUS.search(message) and (_TYPED_ID.search(message) or _LAST_SOURCE.search(message)):
+        return "source_status"
+    if action in (None, "ingest_url") and only_github_repo_urls(message):
+        return "ingest_github"
+    return action
+
 
 Status = Literal["asked", "draft", "done", "cancelled", "answer", "chat", "error"]
 
@@ -193,7 +210,7 @@ class IntakeNodes:
                     "status": "error",
                 },
             )
-        action = extracted.action or current
+        action = rule_action(state["message"], extracted.action or current)
         if action is None:
             _step("gather", started, action=None, model=model_id)
             return Command(
@@ -256,7 +273,11 @@ class IntakeNodes:
             "kind": "draft",
             "action": spec.name,
             "payload": result.payload,
-            "summary": spec.summary(result.payload),
+            "summary": (
+                f"{resolution.note}\n\n{spec.summary(result.payload)}"
+                if resolution.note
+                else spec.summary(result.payload)
+            ),
             "confirm_text": spec.confirm_text(result.payload),
         }
         return Command(goto="confirm", update=update | {"pending": pending, "status": "draft"})
@@ -270,6 +291,11 @@ class IntakeNodes:
             payload = {k: v for k, v in payload.items() if not k.startswith(f"{spec.target}_")} | {
                 spec.target: typed_id.group(0)
             }
+        if spec.name == "ingest_github" and (repos := github_repos(message)):
+            # Exact names from the owner's text beat whatever a small model made of them.
+            payload = {**payload, "repos": repos}
+        if spec.name == "source_status" and typed_id is not None:
+            payload = {**payload, "source_id": typed_id.group(0)}
         if spec.name == "add_note":
             if not payload.get("body"):
                 payload = {**payload, "body": message}

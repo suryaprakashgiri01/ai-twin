@@ -452,6 +452,10 @@ class AdminOps:
             submitted.append(await self._submit(actor, fields))
         return SubmittedBatch(sources=submitted)
 
+    def github_allowlist(self) -> frozenset[str]:
+        """Repositories GITHUB_SYNC_REPOS allows, normalised to `owner/name`."""
+        return parse_allowlist(self._d.settings.github_sync_repos)
+
     async def ingest_github(self, body: GitHubIn, actor: str) -> SubmittedBatch:
         allowlist = parse_allowlist(self._d.settings.github_sync_repos)
         try:
