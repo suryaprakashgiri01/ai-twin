@@ -44,6 +44,7 @@ from app.kb.ingestion.runtime import Ingestion
 from app.observability.tracing import TraceRun, tracing
 from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.memory import MemoryService
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
 from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook
 from llm_orchestrator import Orchestrator, OrchestratorError, Role
@@ -343,6 +344,7 @@ def build_intake(
     *,
     on_turn: TurnHook | None = None,
     context: ContextBuilder | None = None,
+    memory: MemoryService | None = None,
 ) -> tuple[IntakeService, MongoCheckpointSaver]:
     """`owner` is the owner graph's dependencies (`OwnerDeps`); its graph runs inside `answer`
     without checkpoints of its own."""
@@ -370,6 +372,7 @@ def build_intake(
         wait_seconds=settings.intake_ingest_wait_seconds,
         owner_graph=build_owner_graph(owner, checkpointer=False),
         conversations=resources.conversations,
+        memory=memory,
     )
     service = IntakeService(
         build_intake_graph(deps, saver),

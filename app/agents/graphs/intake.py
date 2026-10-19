@@ -60,6 +60,7 @@ from app.db.documents import utcnow
 from app.exceptions import AppError
 from app.services.admin_ops import AdminOps, intake_actor
 from app.services.conversations import ConversationService
+from app.services.memory import MemoryService
 from app.services.naming import describe
 from llm_orchestrator import AllModelsFailedError, Orchestrator, OrchestratorError, Role, Tier
 
@@ -73,16 +74,30 @@ TITLE_CHARS = 80
 EXTRACT_ATTEMPTS = 2
 _TYPED_ID = re.compile(r"\b[0-9a-f]{24}\b")
 _STATUS = re.compile(r"\bstatus\b|\bis it done\b|\bfinished\b", re.I)
+_REMEMBER = re.compile(r"^\s*(please\s+)?remember\b(?!\s+(when|what|which|how|if)\b)", re.I)
+_FORGET = re.compile(r"^\s*(please\s+)?(forget|stop remembering)\b", re.I)
+_SHOW_MEMORY = re.compile(
+    r"\b(show|list|what are)\s+(me\s+)?(my\s+|your\s+)?(memories|memory|preferences)\b|"
+    r"\bwhat do you remember\b",
+    re.I,
+)
 _LAST_SOURCE = re.compile(
     r"\b(last|latest|previous) (upload|source|ingest\w*|sync|file|link)\b", re.I
 )
 
 
 def rule_action(message: str, action: str | None) -> str | None:
-    """Keyword rules a small model gets wrong: a status question about a source id, and GitHub
-    repository links, which are synced as repos rather than fetched as web pages."""
+    """Keyword rules a small model gets wrong: a status question about a source id, asking to
+    remember, forget or show memories, and GitHub repository links, which are synced as repos
+    rather than fetched as web pages."""
     if _STATUS.search(message) and (_TYPED_ID.search(message) or _LAST_SOURCE.search(message)):
         return "source_status"
+    if _SHOW_MEMORY.search(message):
+        return "show_memory"
+    if _REMEMBER.search(message):
+        return "remember"
+    if _FORGET.search(message):
+        return "forget"
     if action in (None, "ingest_url") and only_github_repo_urls(message):
         return "ingest_github"
     return action
@@ -132,6 +147,7 @@ class IntakeDeps:
     wait_seconds: float = 30.0
     owner_graph: OwnerGraph | None = None
     conversations: ConversationService | None = None
+    memory: MemoryService | None = None
     now: Callable[[], datetime] = field(default=utcnow)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
 
@@ -147,6 +163,21 @@ def _step(step: str, started: float, **fields: Any) -> None:
 def _owner_context(state: IntakeState) -> OwnerContext | None:
     raw = state.get("context")
     return OwnerContext.model_validate(raw) if raw else None
+
+
+_REMEMBER_PREFIX = re.compile(r"^\s*(please\s+)?remember\s*(that|this|:)?\s*", re.I)
+_ALIAS = re.compile(r"\bwhen i say\b|\bi mean\b|\bstands for\b|=|\bmeans\b", re.I)
+_RULE = re.compile(r"\b(always|never|every time|from now on|don't|do not)\b", re.I)
+
+
+def _remember_defaults(payload: dict[str, Any], message: str) -> dict[str, Any]:
+    """The owner's own words when the model left the text out, and a kind from their wording
+    when it left that out too."""
+    text = str(payload.get("text") or "").strip() or _REMEMBER_PREFIX.sub("", message).strip()
+    kind = payload.get("kind")
+    if kind not in ("instruction", "preference", "alias"):
+        kind = "alias" if _ALIAS.search(text) else "instruction" if _RULE.search(text) else None
+    return {**payload, "text": text[:1].upper() + text[1:], "kind": kind or "preference"}
 
 
 def reset_values() -> dict[str, Any]:
@@ -250,7 +281,7 @@ class IntakeNodes:
         deps = self.deps
         payload, invalid = normalise(spec, payload, deps.timezone, deps.now())
         resolution = await resolve_target(
-            spec, payload, deps.ops, state.get("recent") or [], deps.inbox
+            spec, payload, deps.ops, state.get("recent") or [], deps.inbox, deps.memory
         )
         result = check(spec, resolution.payload)
         invalid |= result.invalid
@@ -304,6 +335,8 @@ class IntakeNodes:
             payload = {**payload, "repos": repos}
         if spec.name == "source_status" and typed_id is not None:
             payload = {**payload, "source_id": typed_id.group(0)}
+        if spec.name == "remember":
+            payload = _remember_defaults(payload, message)
         if spec.name == "add_note":
             if not payload.get("body"):
                 payload = {**payload, "body": message}
@@ -427,6 +460,7 @@ class IntakeNodes:
             inbox=self.deps.inbox,
             wait_seconds=self.deps.wait_seconds,
             sleep=self.deps.sleep,
+            memory=self.deps.memory,
         )
         assert spec.run is not None
         try:

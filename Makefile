@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin migrate-status upgrade downgrade
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin memory migrate-status upgrade downgrade
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -62,6 +62,9 @@ chat-list: ## List conversations: name, mode, id, updated, turns, description
 
 chat-continue: ## Continue a conversation (ask or intake, at a pending draft): ARGS="<name|id>"
 	$(PY) scripts.chat continue $(ARGS)
+
+memory: ## What the agents remember: ARGS="list [--pending]" | "add TEXT" | "accept ID" | "edit ID TEXT" | "forget ID"
+	$(PY) scripts.memory $(ARGS)
 
 migrate-status: ## MongoDB data migrations: applied / pending, reversible or not
 	$(PY) scripts.migrate status $(ARGS)

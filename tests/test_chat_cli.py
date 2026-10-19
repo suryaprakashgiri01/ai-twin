@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
 import pytest
 
-from scripts import chat
+from scripts import chat, memory
 
 CID = "a" * 32
 
@@ -167,5 +168,94 @@ def test_twin_banner_explains_the_intake_before_the_first_prompt(
     monkeypatch.setattr("builtins.input", lambda _prompt: "/exit")
     assert chat.main(["twin"]) == 0
     out = capsys.readouterr().out
-    assert out.index("intake assistant") < out.index("Commands: /exit")
+    assert out.index("intake assistant") < out.index("Commands: /remember")
     assert "save nothing until you say yes" in out and "assessment" in out
+
+
+MEMORY = {
+    "id": "6a" * 12,
+    "kind": "preference",
+    "text": "Concise bullets with sources first",
+    "status": "pending",
+    "tier": "private",
+}
+
+
+class MemoryApi:
+    """The memory routes, recording every write; delegates the rest to `handler`."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, str, Any]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.startswith("/admin/v1/memories"):
+            body: Any = json.loads(request.content) if request.content else b""
+            if request.method != "GET":
+                self.writes.append((request.method, path, body))
+            if request.method == "GET":
+                return httpx.Response(200, json=[MEMORY])
+            if request.method == "DELETE":
+                return httpx.Response(204)
+            return httpx.Response(200, json={**MEMORY, **(body or {})})
+        if path.endswith("/title") and request.method == "POST":
+            return httpx.Response(
+                200, json={"status": "updated", "name": "salary-notes", "new_memories": 2}
+            )
+        if path == f"/admin/v1/conversations/{CID}":
+            detail = {**CONVERSATIONS[0], "turns": [], "summary": "Prepared two rounds."}
+            return httpx.Response(200, json={**detail, "summarized_turns": 6})
+        return handler(request)
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, fn: Any) -> None:
+    config = chat.Config("http://test", "atw_test")
+    real_api = chat.Api
+    for module in (chat, memory):
+        monkeypatch.setattr(module, "load_config", lambda base_url: config)
+        monkeypatch.setattr(
+            module, "Api", lambda cfg: real_api(cfg, transport=httpx.MockTransport(fn))
+        )
+
+
+def test_remember_and_memory_commands_banner_summary_and_exit_notice(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = MemoryApi()
+    _patch(monkeypatch, api)
+    inputs = iter(["/remember Show dates as 12 Oct 2026", "/memory", "/remember", "hi", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+    assert chat.main(["continue", CID]) == 0
+    out = capsys.readouterr().out
+    assert "Summary of the first 6 turns: Prepared two rounds." in out
+    assert api.writes[0] == (
+        "POST",
+        "/admin/v1/memories",
+        {"text": "Show dates as 12 Oct 2026", "kind": "preference", "tier": "private"},
+    )
+    assert "Concise bullets with sources first [pending]" in out
+    assert "2 new memories to review: make memory" in out
+    assert len(api.writes) == 1  # a bare /remember only prints its usage
+
+
+def test_make_memory_commands(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = MemoryApi()
+    _patch(monkeypatch, api)
+    mid = MEMORY["id"]
+    assert memory.main(["list"]) == 0
+    assert "1 waiting for review" in capsys.readouterr().out
+    assert memory.main(["add", "Use British spelling", "--kind", "instruction"]) == 0
+    assert memory.main(["accept", mid]) == 0
+    assert memory.main(["edit", mid, "Short bullets"]) == 0
+    assert memory.main(["forget", mid]) == 0
+    assert memory.main(["delete", mid]) == 0
+    assert memory.main(["edit", mid]) == 1  # nothing to change
+    assert [(m, b) for m, _, b in api.writes] == [
+        ("POST", {"text": "Use British spelling", "kind": "instruction", "tier": "private"}),
+        ("PATCH", {"status": "active"}),
+        ("PATCH", {"text": "Short bullets"}),
+        ("PATCH", {"status": "archived"}),
+        ("DELETE", b""),
+    ]

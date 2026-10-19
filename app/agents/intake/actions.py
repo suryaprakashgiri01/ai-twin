@@ -34,6 +34,7 @@ from app.services.admin_ops import (
     TextIn,
     UrlsIn,
 )
+from app.services.memory import MemoryIn, MemoryOut, MemoryService
 from app.services.profile import ProfileIn, RecordIn, RecordOut, RecordPatch
 
 Payload = dict[str, Any]
@@ -85,6 +86,7 @@ class RunContext:
     inbox: Path
     wait_seconds: float
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    memory: MemoryService | None = None
 
 
 Runner = Callable[[RunContext, Payload], Awaitable[Outcome]]
@@ -103,7 +105,7 @@ class ActionSpec:
     model: type[BaseModel] | None = None
     write: bool = True
     destructive: bool = False
-    target: str | None = None  # "document" | "record"
+    target: str | None = None  # "document" | "record" | "memory"
     date_fields: tuple[str, ...] = ()
     list_fields: tuple[str, ...] = ()
     lower_fields: tuple[str, ...] = ()
@@ -127,6 +129,8 @@ class ActionSpec:
             lines.append("  tier: private → public (changed first, then approved and published)")
         if self.target == "record" and payload.get("record_label"):
             lines.append(f"  record: {payload['record_label']}")
+        if self.target == "memory" and payload.get("memory_text"):
+            lines.append(f"  memory: {payload['memory_text']} ({payload.get('memory_id')})")
         for key in self.fields:
             if key in (self.target or "",) or key in self.hidden or payload.get(key) is None:
                 continue
@@ -431,6 +435,57 @@ async def _delete_document(ctx: RunContext, p: Payload) -> Outcome:
     }
 
 
+def _memory(ctx: RunContext) -> MemoryService:
+    if ctx.memory is None:
+        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner memory is not running")
+    return ctx.memory
+
+
+def _memory_line(item: MemoryOut) -> str:
+    return f"  {item.kind}: {item.text} ({item.id})"
+
+
+async def _remember(ctx: RunContext, p: Payload) -> Outcome:
+    body = MemoryIn(text=str(p["text"]), kind=p.get("kind") or "preference")
+    item, created = await _memory(ctx).add(body, ctx.actor)
+    verb = "Remembered" if created else "Already remembered; marked active"
+    return {
+        "action": "remember",
+        "message": f"{verb}: {item.text} ({item.kind}, {item.id})",
+        "memory": {"id": item.id, "kind": item.kind, "status": item.status},
+    }
+
+
+async def _forget(ctx: RunContext, p: Payload) -> Outcome:
+    item = await _memory(ctx).archive(str(p["memory_id"]), ctx.actor)
+    return {
+        "action": "forget",
+        "message": f"Forgotten (archived): {item.text} ({item.id})",
+        "memory": {"id": item.id, "kind": item.kind, "status": item.status},
+    }
+
+
+async def _show_memory(ctx: RunContext, p: Payload) -> Outcome:
+    items = await _memory(ctx).listing()
+    active = [m for m in items if m.status == "active"]
+    pending = [m for m in items if m.status == "pending"]
+    if not items:
+        return {
+            "action": "show_memory",
+            "message": "I don't remember anything yet.",
+            "memories": [],
+        }
+    lines = [f"Active ({len(active)}):", *(_memory_line(m) for m in active)] if active else []
+    if pending:
+        lines += [f"Waiting for your review ({len(pending)}):", *map(_memory_line, pending)]
+        lines.append('Accept one with: make memory ARGS="accept <id>"')
+    return {
+        "action": "show_memory",
+        "message": "\n".join(lines),
+        "memories": [{"id": m.id, "kind": m.kind, "status": m.status} for m in items],
+    }
+
+
 # --- the catalog -------------------------------------------------------------------------------
 
 _CATEGORY_HINT = "one of: " + ", ".join(CATEGORIES)
@@ -656,6 +711,39 @@ _SPECS = [
         destructive=True,
     ),
     ActionSpec(
+        name="remember",
+        label="Remember this",
+        description="remember how the owner likes answers, a standing rule, or a name they use "
+        '("remember that I prefer ...", "always ...", "when I say X I mean Y"); not career facts',
+        fields={
+            "text": "what to remember, one short sentence in the owner's words",
+            "kind": "instruction (a standing rule), preference (how answers should be) or alias "
+            "(a name the owner uses)",
+        },
+        required=("text", "kind"),
+        inferred=("kind",),
+        lower_fields=("kind",),
+        run=_remember,
+    ),
+    ActionSpec(
+        name="forget",
+        label="Forget a memory",
+        description="stop following something the assistant remembers",
+        fields={"memory": "the memory's words or its id"},
+        required=("memory",),
+        target="memory",
+        resolved=("memory_id", "memory_text"),
+        run=_forget,
+    ),
+    ActionSpec(
+        name="show_memory",
+        label="Show what I remember",
+        description="list the owner's remembered preferences, rules and aliases (read only)",
+        fields={},
+        write=False,
+        run=_show_memory,
+    ),
+    ActionSpec(
         name="answer",
         label="Answer a question",
         description="answer a question about the vault, records or profile (read only)",
@@ -717,7 +805,10 @@ async def resolve_target(
     ops: AdminOps,
     recent: list[dict[str, Any]],
     inbox: Path,
+    memory: MemoryService | None = None,
 ) -> Resolution:
+    if spec.target == "memory":
+        return await _resolve_memory(payload, memory)
     if spec.name == "ingest_file" and payload.get("filename"):
         # Checked before the draft is shown, from metadata only; the file is read on "yes".
         try:
@@ -838,6 +929,25 @@ async def _resolve_record(
         return Resolution(payload, f"I can't find a record for “{ref}”.")
     names = "; ".join(_record_line(r) for r in match[:8])
     return Resolution(payload, f"Several records match “{ref}”: {names}. Which one (id)?")
+
+
+async def _resolve_memory(payload: Payload, memory: MemoryService | None) -> Resolution:
+    if payload.get("memory_id") or memory is None:
+        return Resolution(payload)
+    ref = str(payload.get("memory") or "").strip()
+    if not ref:
+        return Resolution(payload)
+    items = await memory.listing()
+    if found_id := _OBJECT_ID.search(ref):
+        match = [m for m in items if m.id == found_id.group(0)]
+    else:
+        match = _pick(items, lambda m: m.text, ref)
+    if len(match) == 1:
+        return Resolution({**payload, "memory_id": match[0].id, "memory_text": match[0].text})
+    if not match:
+        return Resolution(payload, f"I don't remember anything like “{ref}” (see: show memory).")
+    names = "; ".join(f"“{m.text}” ({m.id})" for m in match[:8])
+    return Resolution(payload, f"Several memories match “{ref}”: {names}. Which one (id)?")
 
 
 def recent_items(outcome: Outcome) -> list[dict[str, Any]]:

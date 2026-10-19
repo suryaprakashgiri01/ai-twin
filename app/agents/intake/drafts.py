@@ -42,6 +42,9 @@ ActionName = Literal[
     "unpublish",
     "relabel",
     "delete_document",
+    "remember",
+    "forget",
+    "show_memory",
     "answer",
 ]
 
@@ -61,7 +64,7 @@ _WEEKDAY_IN_TEXT = re.compile(
 GROUNDED_SHARE = 0.6
 # References to existing things: resolved against real data and shown in the draft, so they
 # need not be in the owner's words ("delete it" names nothing).
-REFERENCES = frozenset({"record", "document", "source_id"})
+REFERENCES = frozenset({"record", "document", "source_id", "memory"})
 STEM = 5
 
 

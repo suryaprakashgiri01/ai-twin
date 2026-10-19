@@ -29,6 +29,7 @@ from app.kb.retrieval.rerank import FusedOrderReranker
 from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationService, Turn
 from app.services.intake import AssistantRequest, IntakeService
+from app.services.memory import MemoryService
 from app.services.owner_chat import ConversationMeta
 from app.services.profile import RecordIn
 from llm_orchestrator import Orchestrator
@@ -37,6 +38,7 @@ from tests.fakes import MemoryAuditLog, MemoryConversationStore
 from tests.ingestion.conftest import Harness
 from tests.ingestion.fakes import MemoryProfileStore, MemoryRecordStore
 from tests.llm_orchestrator.fakes import Factory, inventory, orchestrator, spec
+from tests.memory.fakes import FakeMemoryStore
 
 # Sun 18 Oct 2026, 01:30 in Asia/Kolkata (still the 17th in UTC).
 NOW = datetime(2026, 10, 17, 20, 0, tzinfo=UTC)
@@ -154,6 +156,7 @@ class Twin:
 
     def __post_init__(self) -> None:
         self.index = MemoryIntakeIndex(self.store)
+        self.memory = MemoryService(FakeMemoryStore(), self.audit)
         self.inbox = self.tmp / "inbox"
         self.inbox.mkdir(exist_ok=True)
         self.factory = Factory({"local": self.local, "cloud": ["cloud must never be called"]})
@@ -222,6 +225,7 @@ class Twin:
             owner_graph=build_owner_graph(owner, checkpointer=False),
             conversations=self.conversations,
             now=lambda: NOW,
+            memory=self.memory,
         )
         self.graph = build_intake_graph(deps, self.saver)
         self.service = IntakeService(self.graph, self.conversations, self.index, self.orchestrator)

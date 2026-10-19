@@ -147,6 +147,7 @@ async def _start_services(
             owner,
             on_turn=digester.after_turn,
             context=context,
+            memory=app.state.memory,
         )
         app.state.intake = intake
         await prune_checkpoints(saver, settings.intake_checkpoint_days)
