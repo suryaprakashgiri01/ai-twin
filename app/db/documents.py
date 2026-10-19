@@ -38,6 +38,11 @@ RECORD_KINDS: tuple[str, ...] = (
     "rejection",
     "withdrawal",
 )
+# Owner memories: how the owner likes answers, standing rules, and names they use.
+MemoryKind = Literal["instruction", "preference", "alias"]
+MEMORY_KINDS: tuple[str, ...] = ("instruction", "preference", "alias")
+MemoryStatus = Literal["pending", "active", "archived"]
+MemoryTier = Literal["private", "confidential"]
 
 
 def utcnow() -> datetime:
@@ -318,6 +323,11 @@ class Conversation(Document):
     name_locked: bool = False
     # message_count when the title was last refreshed, so an unchanged chat is not re-titled.
     titled_turns: int = 0
+    # A rolling summary of the conversation (local model when the content requires), the
+    # message_count it covers, and the highest tier of what it was made from.
+    summary: str | None = None
+    summarized_turns: int = 0
+    summary_tier: Tier | None = None
 
     class Settings:
         name = "conversations"
@@ -327,6 +337,39 @@ class Conversation(Document):
                 [("channel", ASCENDING), ("updated_at", DESCENDING)], name="channel_updated_at"
             ),
             IndexModel([("channel", ASCENDING), ("name", ASCENDING)], name="channel_name"),
+        ]
+
+
+class OwnerMemoryFields(BaseModel):
+    """One short statement about how the owner likes to work; never a career fact.
+
+    Learned items start `pending` and reach a prompt only once the owner accepts them. `norm` is
+    the normalised text duplicates are matched on; it is unique among items not archived.
+    """
+
+    kind: MemoryKind
+    text: str = Field(min_length=1, max_length=200)
+    status: MemoryStatus = "pending"
+    tier: MemoryTier = "private"
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    source_conversation_id: str | None = None
+    norm: str
+    uses: int = 1
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class OwnerMemory(OwnerMemoryFields, Document):
+    class Settings:
+        name = "owner_memories"
+        indexes: ClassVar[list[IndexModel]] = [
+            IndexModel([("status", ASCENDING), ("kind", ASCENDING)], name="status_kind"),
+            IndexModel(
+                [("norm", ASCENDING)],
+                name="norm_live_unique",
+                unique=True,
+                partialFilterExpression={"status": {"$in": ["pending", "active"]}},
+            ),
         ]
 
 
@@ -502,6 +545,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     Lead,
     Conversation,
     Message,
+    OwnerMemory,
     SecurityEvent,
     AuditEntry,
     ModelOverride,

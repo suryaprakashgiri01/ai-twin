@@ -70,6 +70,12 @@ def describe(manifest: dict[str, Any]) -> None:
     for name, count in qdrant.items():
         print(f"    {name:<20} {count} points")
     info(f"Blobs: {counts.get('blobs', 0)}")
+    owner: dict[str, int] = counts.get("owner", {})
+    if owner:
+        info(
+            f"Owner memories: {owner.get('memories_active', 0)} active, "
+            f"{owner.get('memories_pending', 0)} pending · summaries: {owner.get('summaries', 0)}"
+        )
 
 
 def restore_blobs(staging: Path, manifest: dict[str, Any], target: BlobStore) -> None:
@@ -96,6 +102,8 @@ def verify_restore(
         want, have = counts["mongodb"].get(name, 0), live_mongo.get(name, 0)
         if want != have:
             problems.append(f"mongodb {name}: {have} documents, archive has {want}")
+    # Archives made before owner memories existed carry no owner counts.
+    problems += _vault.owner_problems(counts.get("owner", {}), _vault.owner_state(settings))
     live_points = _vault.qdrant_counts(qdrant)
     for name in sorted(set(counts["qdrant"]) | set(live_points)):
         want, have = counts["qdrant"].get(name, 0), live_points.get(name, 0)
@@ -136,7 +144,10 @@ def apply(
         fail(problem)
     if problems:
         return 1
-    ok("Verified: document counts, point counts and blob checksums match the archive")
+    ok(
+        "Verified: document counts, owner memories and summaries, point counts and blob "
+        "checksums match the archive"
+    )
     return 0
 
 

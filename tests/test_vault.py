@@ -195,3 +195,33 @@ def test_export_refuses_blobs_without_a_usable_key(tmp_path: Path) -> None:
     assert empty is not None and "BLOB_ENCRYPTION_KEY is empty" in empty
     wrong = export.blob_key_problem(blobs.root, Fernet.generate_key().decode())
     assert wrong is not None and "do not open" in wrong
+
+
+def test_verify_restore_names_lost_owner_memories_and_summaries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    owner = {"memories_active": 2, "memories_pending": 1, "memories_archived": 0, "summaries": 3}
+    manifest: dict[str, Any] = {
+        "counts": {"mongodb": {"owner_memories": 3}, "qdrant": {}, "owner": owner},
+        "blobs": [],
+    }
+
+    class NoPoints:
+        pass
+
+    monkeypatch.setattr(_vault, "mongo_state", lambda _s: ("8.0", {"owner_memories": 3}))
+    monkeypatch.setattr(_vault, "qdrant_counts", lambda _q: {})
+    blobs = BlobStore(tmp_path / "blobs", Fernet.generate_key())
+    monkeypatch.setattr(_vault, "owner_state", lambda _s: dict(owner))
+    assert import_.verify_restore(None, manifest, NoPoints(), blobs) == []  # type: ignore[arg-type]
+    restored = {**owner, "memories_pending": 0, "memories_archived": 1, "summaries": 0}
+    monkeypatch.setattr(_vault, "owner_state", lambda _s: restored)
+    problems = import_.verify_restore(None, manifest, NoPoints(), blobs)  # type: ignore[arg-type]
+    assert problems == [
+        "owner memories_archived: 1, archive has 0",
+        "owner memories_pending: 0, archive has 1",
+        "owner summaries: 0, archive has 3",
+    ]
+    # An archive from before owner memories carries no owner counts and is not refused.
+    old = {"counts": {"mongodb": {"owner_memories": 3}, "qdrant": {}}, "blobs": []}
+    assert import_.verify_restore(None, old, NoPoints(), blobs) == []  # type: ignore[arg-type]

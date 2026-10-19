@@ -146,6 +146,32 @@ def mongo_state(settings: Settings) -> tuple[str, dict[str, int]]:
         client.close()
 
 
+def owner_state(settings: Settings) -> dict[str, int]:
+    """Owner memories by status and summarised conversations: the counts an import checks by
+    name, so a restore that lost them says so even when the totals happen to match."""
+    client: MongoClient[dict[str, Any]] = MongoClient(
+        settings.mongodb_uri, serverSelectionTimeoutMS=settings.mongodb_timeout_ms
+    )
+    try:
+        db = client[settings.mongodb_database]
+        counts = {
+            f"memories_{status}": db["owner_memories"].count_documents({"status": status})
+            for status in ("active", "pending", "archived")
+        }
+        counts["summaries"] = db["conversations"].count_documents({"summary": {"$type": "string"}})
+        return counts
+    finally:
+        client.close()
+
+
+def owner_problems(want: dict[str, int], have: dict[str, int]) -> list[str]:
+    return [
+        f"owner {name}: {have.get(name, 0)}, archive has {count}"
+        for name, count in sorted(want.items())
+        if have.get(name, 0) != count
+    ]
+
+
 def qdrant_counts(qdrant: Qdrant) -> dict[str, int]:
     return {name: qdrant.count(name) for name in qdrant.collections()}
 
