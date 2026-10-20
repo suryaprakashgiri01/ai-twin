@@ -225,3 +225,11 @@ def test_verify_restore_names_lost_owner_memories_and_summaries(
     # An archive from before owner memories carries no owner counts and is not refused.
     old = {"counts": {"mongodb": {"owner_memories": 3}, "qdrant": {}}, "blobs": []}
     assert import_.verify_restore(None, old, NoPoints(), blobs) == []  # type: ignore[arg-type]
+
+
+def test_rows_without_a_public_uid_fail_the_import_check() -> None:
+    # Archives made before uids carry no such count; what matters is what is left after import.
+    assert _vault.owner_problems({"summaries": 1}, {"summaries": 1, "missing_uids": 0}) == []
+    assert _vault.owner_problems({"missing_uids": 0}, {"missing_uids": 2}) == [
+        "2 rows have no public uid after the migrations"
+    ]

@@ -78,7 +78,7 @@ async def test_public_metrics_refuse_a_wrong_token(header: str | None) -> None:
     async with client_for(deployment_profile="public", metrics_token=TOKEN) as c:
         response = await c.get("/metrics", headers=headers)
     assert response.status_code == 401
-    assert response.json()["error"]["code"] == "AUTH_INVALID"
+    assert response.json()["error"]["code"] == "INVALID_API_KEY"
 
 
 async def test_public_metrics_with_the_token() -> None:

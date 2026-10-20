@@ -10,14 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
 from beanie import PydanticObjectId
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.api.envelope import ApiModel
 from app.core.config import Settings, ingest_max_bytes
 from app.db.documents import (
     BlobRef,
@@ -79,7 +81,7 @@ def intake_actor(key_name: str) -> str:
 # --- ingestion shapes -----------------------------------------------------------------------
 
 
-class Submitted(BaseModel):
+class Submitted(ApiModel):
     source_id: str
     status: JobStatus
     # True when this content was already submitted: nothing new was created.
@@ -88,11 +90,11 @@ class Submitted(BaseModel):
     uri: str | None = None
 
 
-class SubmittedBatch(BaseModel):
+class SubmittedBatch(ApiModel):
     sources: list[Submitted]
 
 
-class SourceStatus(BaseModel):
+class SourceStatus(ApiModel):
     id: str
     kind: SourceKind
     status: JobStatus
@@ -106,7 +108,7 @@ class SourceStatus(BaseModel):
     updated_at: datetime
 
 
-class MetaIn(BaseModel):
+class MetaIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     category: Category
@@ -135,7 +137,7 @@ class UrlsIn(MetaIn):
     urls: list[str] = Field(min_length=1, max_length=MAX_URLS)
 
 
-class GitHubIn(BaseModel):
+class GitHubIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     # `owner/name`, or `owner/name@branch` for a branch other than the default.
@@ -155,9 +157,9 @@ class FileIn:
 # --- review shapes --------------------------------------------------------------------------
 
 
-class DocumentOut(BaseModel):
+class DocumentOut(ApiModel):
     id: str
-    source_id: str
+    source_id: str | None
     title: str
     category: str
     tags: list[str]
@@ -177,16 +179,16 @@ class DocumentOut(BaseModel):
     text: str | None
 
 
-class ReviewList(BaseModel):
+class ReviewList(ApiModel):
     items: list[DocumentOut]
 
 
-class PublishResult(BaseModel):
+class PublishResult(ApiModel):
     document: DocumentOut
     chunks: int
 
 
-class DocumentPatch(BaseModel):
+class DocumentPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=300)
@@ -198,18 +200,22 @@ class DocumentPatch(BaseModel):
 # --- helpers --------------------------------------------------------------------------------
 
 
-def parse_id(value: str) -> PydanticObjectId:
+def parse_id(value: str) -> str:
+    """A public id is a UUID v4; anything else cannot name a row, so it is a 404."""
     try:
-        return PydanticObjectId(value)
-    except Exception as exc:
+        parsed = uuid.UUID(value)
+    except (TypeError, ValueError) as exc:
         raise AppError(ErrorCode.NOT_FOUND, "Not found") from exc
+    if parsed.version != 4:
+        raise AppError(ErrorCode.NOT_FOUND, "Not found")
+    return str(parsed)
 
 
 def to_app_error(exc: IngestError, **details: Any) -> AppError:
     code = (
         ErrorCode.PAYLOAD_TOO_LARGE
         if exc.code == IngestErrorCode.TOO_LARGE
-        else ErrorCode.VALIDATION_ERROR
+        else ErrorCode.INVALID_INPUT
     )
     extra = {"reason": exc.code.value, **({"detected": exc.detected} if exc.detected else {})}
     return AppError(code, exc.message, details={**details, **extra})
@@ -218,8 +224,8 @@ def to_app_error(exc: IngestError, **details: Any) -> AppError:
 def document_out(doc: DocumentView, *, preview: bool = False) -> DocumentOut:
     text = doc.text[:PREVIEW_CHARS] if preview and doc.text else doc.text
     return DocumentOut(
-        id=str(doc.id),
-        source_id=str(doc.source_id),
+        id=doc.uid,
+        source_id=doc.source_uid,
         title=doc.title,
         category=doc.category,
         tags=doc.tags,
@@ -239,9 +245,10 @@ def document_out(doc: DocumentView, *, preview: bool = False) -> DocumentOut:
     )
 
 
-def source_status(source: SourceView) -> SourceStatus:
+def source_status(source: SourceView, documents: Sequence[DocumentView] = ()) -> SourceStatus:
+    uids = {d.id: d.uid for d in documents}
     return SourceStatus(
-        id=str(source.id),
+        id=source.uid,
         kind=source.kind,
         status=source.status,
         error_code=source.error_code,
@@ -249,7 +256,7 @@ def source_status(source: SourceView) -> SourceStatus:
         attempts=source.attempts,
         filename=source.filename,
         uri=source.uri,
-        document_ids=[str(d) for d in source.document_ids],
+        document_ids=[uids[d] for d in source.document_ids if d in uids],
         created_at=source.created_at,
         updated_at=source.updated_at,
     )
@@ -279,7 +286,7 @@ class AdminDeps:
     leads: LeadStore | None = None
 
 
-class LeadOut(BaseModel):
+class LeadOut(ApiModel):
     """A lead as the owner sees it in the vault."""
 
     id: str
@@ -314,7 +321,7 @@ class LeadOut(BaseModel):
         )
 
 
-class LeadPatch(BaseModel):
+class LeadPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     status: OwnerStatus
@@ -354,12 +361,12 @@ class AdminOps:
 
     def _service(self) -> IngestionService:
         if self._d.ingestion is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Ingestion is not running")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Ingestion is not running")
         return self._d.ingestion
 
     def _publisher(self) -> Publisher:
         if self._d.pipeline is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Ingestion is not running")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Ingestion is not running")
         redis = self._d.redis
         return Publisher(
             store=self._d.kb,
@@ -374,11 +381,11 @@ class AdminOps:
         source, queued = await self._service().submit(fields)
         duplicate = not queued and source.status != "failed"
         await self._audit(
-            actor, "ingest.submit", str(source.id), {"kind": fields.kind, "duplicate": duplicate}
+            actor, "ingest.submit", source.uid, {"kind": fields.kind, "duplicate": duplicate}
         )
         status_now: JobStatus = "queued" if queued else source.status
         return Submitted(
-            source_id=str(source.id),
+            source_id=source.uid,
             status=status_now,
             duplicate=duplicate,
             filename=source.filename,
@@ -395,7 +402,7 @@ class AdminOps:
     def check_file_count(self, count: int) -> None:
         limit = self._d.settings.ingest_max_files
         if count > limit:
-            raise AppError(ErrorCode.VALIDATION_ERROR, f"At most {limit} files per batch")
+            raise AppError(ErrorCode.INVALID_INPUT, f"At most {limit} files per batch")
 
     def max_file_bytes(self) -> int:
         return ingest_max_bytes(self._d.settings)
@@ -480,7 +487,7 @@ class AdminOps:
         detected = dispatch.detect(upload.data)
         if detected != "zip":
             raise AppError(
-                ErrorCode.VALIDATION_ERROR,
+                ErrorCode.INVALID_INPUT,
                 f"Expected a ZIP archive, detected {detected}",
                 details={"detected": detected},
             )
@@ -495,10 +502,11 @@ class AdminOps:
         return await self._submit(actor, fields)
 
     async def source_status(self, source_id: str) -> SourceStatus:
-        source = await self._service().store.get_source(parse_id(source_id))
+        store = self._service().store
+        source = await store.source_by_uid(parse_id(source_id))
         if source is None:
             raise AppError(ErrorCode.NOT_FOUND, "Source not found")
-        return source_status(source)
+        return source_status(source, await store.documents_for_source(source.id))
 
     # --- review -----------------------------------------------------------------------------
 
@@ -511,8 +519,15 @@ class AdminOps:
         docs = await self._d.kb.find_by_title(text, limit)
         return [document_out(d, preview=True) for d in docs]
 
+    async def _document_oid(self, document_id: str) -> PydanticObjectId:
+        doc = await self._d.kb.document_by_uid(parse_id(document_id))
+        if doc is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Document not found")
+        return doc.id
+
     async def get_document(self, document_id: str) -> DocumentOut:
-        return document_out(await self._publisher().get(parse_id(document_id)))
+        publisher = self._publisher()
+        return document_out(await publisher.get(await self._document_oid(document_id)))
 
     async def update_document(
         self, document_id: str, patch: DocumentPatch, actor: str
@@ -521,9 +536,9 @@ class AdminOps:
         and resets approval. Restricted removes the text, chunks and vectors."""
         changes = patch.model_dump(exclude_none=True)
         if not changes:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Nothing to change")
+            raise AppError(ErrorCode.INVALID_INPUT, "Nothing to change")
         publisher = self._publisher()
-        before = await publisher.get(parse_id(document_id))
+        before = await publisher.get(await self._document_oid(document_id))
         after = await publisher.update(before.id, dict(changes))
         await self._audit(
             actor,
@@ -534,24 +549,27 @@ class AdminOps:
         return document_out(after)
 
     async def approve(self, document_id: str, actor: str) -> DocumentOut:
-        doc = await self._publisher().approve(parse_id(document_id))
+        publisher = self._publisher()
+        doc = await publisher.approve(await self._document_oid(document_id))
         await self._audit(actor, "document.approve", document_id, {"tier": doc.tier})
         return document_out(doc)
 
     async def publish(self, document_id: str, actor: str) -> PublishResult:
         """Refused (409) unless the document is tier `public` and approved."""
-        doc, chunks = await self._publisher().publish(parse_id(document_id))
+        publisher = self._publisher()
+        doc, chunks = await publisher.publish(await self._document_oid(document_id))
         await self._audit(actor, "document.publish", document_id, {"chunks": chunks})
         return PublishResult(document=document_out(doc), chunks=chunks)
 
     async def unpublish(self, document_id: str, actor: str) -> DocumentOut:
-        doc = await self._publisher().unpublish(parse_id(document_id))
+        publisher = self._publisher()
+        doc = await publisher.unpublish(await self._document_oid(document_id))
         await self._audit(actor, "document.unpublish", document_id, {})
         return document_out(doc)
 
     async def release(self, document_id: str, actor: str) -> PublishResult:
         publisher = self._publisher()
-        before = await publisher.get(parse_id(document_id))
+        before = await publisher.get(await self._document_oid(document_id))
         doc, chunks = await publisher.release(before.id)
         await self._audit(
             actor,
@@ -562,7 +580,8 @@ class AdminOps:
         return PublishResult(document=document_out(doc), chunks=chunks)
 
     async def delete_document(self, document_id: str, actor: str) -> None:
-        await self._publisher().delete(parse_id(document_id))
+        publisher = self._publisher()
+        await publisher.delete(await self._document_oid(document_id))
         await self._audit(actor, "document.delete", document_id, {})
 
     # --- profile ----------------------------------------------------------------------------
@@ -570,23 +589,21 @@ class AdminOps:
     async def get_profile(self) -> ProfileOut:
         return await self._d.profile.get()
 
-    async def _resume_blob(self, document_id: str) -> BlobRef:
+    async def _resume(self, document_id: str) -> tuple[PydanticObjectId, BlobRef]:
         kb = self._d.kb
-        doc = await kb.get_document(parse_id(document_id))
+        doc = await kb.document_by_uid(document_id)
         if doc is None or doc.deleted_at is not None:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "resume_document_id is not a document")
+            raise AppError(ErrorCode.INVALID_INPUT, "resumeDocumentId is not a document")
         source = await kb.get_source(doc.source_id)
         if source is None or source.blob is None:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "That document has no stored file")
-        return source.blob
+            raise AppError(ErrorCode.INVALID_INPUT, "That document has no stored file")
+        return doc.id, source.blob
 
     async def put_profile(self, body: ProfileIn, actor: str) -> ProfileOut:
         """`resume_document_id` names an ingested document; its original file becomes the
         downloadable resume."""
-        blob = None
-        if body.resume_document_id:
-            blob = await self._resume_blob(body.resume_document_id)
-        profile = await self._d.profile.put(body, blob)
+        resume = await self._resume(body.resume_document_id) if body.resume_document_id else None
+        profile = await self._d.profile.put(body, resume)
         await self._audit(
             actor, "profile.put", "profile", {"fields": sorted(body.model_fields_set)}
         )
@@ -605,7 +622,7 @@ class AdminOps:
     async def create_records(self, bodies: Sequence[RecordIn], actor: str) -> list[RecordOut]:
         """Create many records in one call (daily application dumps). Audits each id."""
         if not bodies:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Provide at least one record")
+            raise AppError(ErrorCode.INVALID_INPUT, "Provide at least one record")
         records = list(await self._d.records.create_many(bodies))
         for record in records:
             await self._audit(actor, "record.create", record.id, {"batch": True})
@@ -614,7 +631,7 @@ class AdminOps:
     async def update_record(self, record_id: str, body: RecordPatch, actor: str) -> RecordOut:
         changes = body.model_dump(exclude_unset=True)
         if not changes:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Nothing to change")
+            raise AppError(ErrorCode.INVALID_INPUT, "Nothing to change")
         record = await self._d.records.update(parse_id(record_id), changes)
         if record is None:
             raise AppError(ErrorCode.NOT_FOUND, "Record not found")
@@ -630,7 +647,7 @@ class AdminOps:
 
     def _leads(self) -> LeadStore:
         if self._d.leads is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Leads are not available")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Leads are not available")
         return self._d.leads
 
     async def list_leads(

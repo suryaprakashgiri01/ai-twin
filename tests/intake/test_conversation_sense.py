@@ -76,7 +76,7 @@ async def test_try_again_retries_the_failed_action_with_its_fields(make_twin: Ma
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Qdrant is not reachable")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Qdrant is not reachable")
         return await real(document_id, actor)
 
     twin.ops.publish = flaky  # type: ignore[method-assign]

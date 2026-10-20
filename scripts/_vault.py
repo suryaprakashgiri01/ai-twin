@@ -22,6 +22,7 @@ import httpx
 from pymongo import MongoClient
 
 from app.core.config import Settings
+from app.migrations.m0007_public_ids import COLLECTIONS as PUBLIC_ID_COLLECTIONS
 from scripts._common import ENV_FILE, ROOT
 from scripts._crypto import DecryptingReader, EncryptingWriter
 
@@ -34,6 +35,7 @@ BLOBS_DIR = "blobs"
 EXPORTS_DIR = ROOT / "vault" / "exports"
 PASSPHRASE_ENV = "EXPORT_PASSPHRASE"
 MIN_PASSPHRASE = 12
+MISSING_UIDS = "missing_uids"
 
 # Shell run inside the mongo container; "$1" is the database name.
 _AUTH = (
@@ -159,17 +161,24 @@ def owner_state(settings: Settings) -> dict[str, int]:
             for status in ("active", "pending", "archived")
         }
         counts["summaries"] = db["conversations"].count_documents({"summary": {"$type": "string"}})
+        counts[MISSING_UIDS] = sum(
+            db[name].count_documents({"uid": {"$in": [None]}}) for name in PUBLIC_ID_COLLECTIONS
+        )
         return counts
     finally:
         client.close()
 
 
 def owner_problems(want: dict[str, int], have: dict[str, int]) -> list[str]:
-    return [
+    problems = [
         f"owner {name}: {have.get(name, 0)}, archive has {count}"
         for name, count in sorted(want.items())
-        if have.get(name, 0) != count
+        if name != MISSING_UIDS and have.get(name, 0) != count
     ]
+    # An older archive has no uids; migration 0007 adds them on import, so none may be left.
+    if missing := have.get(MISSING_UIDS, 0):
+        problems.append(f"{missing} rows have no public uid after the migrations")
+    return problems
 
 
 def qdrant_counts(qdrant: Qdrant) -> dict[str, int]:

@@ -19,11 +19,10 @@ from datetime import datetime
 from typing import Any, Protocol, cast
 
 import structlog
-from beanie import PydanticObjectId
-from bson.errors import InvalidId
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 from pymongo.errors import DuplicateKeyError
 
+from app.api.envelope import ApiModel
 from app.core.config import Settings
 from app.db.documents import (
     MEMORY_KINDS,
@@ -131,7 +130,7 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / norm if norm else 0.0
 
 
-class MemoryOut(BaseModel):
+class MemoryOut(ApiModel):
     id: str
     kind: MemoryKind
     text: str
@@ -144,7 +143,7 @@ class MemoryOut(BaseModel):
     updated_at: datetime
 
 
-class MemoryIn(BaseModel):
+class MemoryIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=TEXT_MAX)
@@ -153,7 +152,7 @@ class MemoryIn(BaseModel):
     tier: MemoryTier = "private"
 
 
-class MemoryPatch(BaseModel):
+class MemoryPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str | None = Field(default=None, min_length=1, max_length=TEXT_MAX)
@@ -182,14 +181,7 @@ class MemoryStore(Protocol):
 
 
 def _out(doc: OwnerMemory) -> MemoryOut:
-    return MemoryOut(id=str(doc.id), **doc.model_dump(exclude={"id", "revision_id", "norm"}))
-
-
-def _oid(memory_id: str) -> PydanticObjectId | None:
-    try:
-        return PydanticObjectId(memory_id)
-    except (InvalidId, TypeError, ValueError):
-        return None
+    return MemoryOut(id=doc.uid, **doc.model_dump(exclude={"id", "uid", "revision_id", "norm"}))
 
 
 LIVE: tuple[MemoryStatus, ...] = ("pending", "active")
@@ -205,8 +197,7 @@ class MongoMemoryStore:
         return [_out(d) for d in found]
 
     async def get(self, memory_id: str) -> MemoryOut | None:
-        oid = _oid(memory_id)
-        found = await OwnerMemory.get(oid) if oid is not None else None
+        found = await OwnerMemory.find_one({"uid": memory_id})
         return _out(found) if found is not None else None
 
     async def find_live(self, norm: str) -> MemoryOut | None:
@@ -219,31 +210,22 @@ class MongoMemoryStore:
         return _out(doc)
 
     async def update(self, memory_id: str, changes: dict[str, Any]) -> MemoryOut | None:
-        oid = _oid(memory_id)
-        if oid is None:
-            return None
         await OwnerMemory.get_pymongo_collection().update_one(
-            {"_id": oid}, {"$set": {**changes, "updated_at": utcnow()}}
+            {"uid": memory_id}, {"$set": {**changes, "updated_at": utcnow()}}
         )
         return await self.get(memory_id)
 
     async def bump(self, memory_id: str, activate: bool) -> MemoryOut | None:
-        oid = _oid(memory_id)
-        if oid is None:
-            return None
         changes: dict[str, Any] = {"updated_at": utcnow()}
         if activate:
             changes["status"] = "active"
         await OwnerMemory.get_pymongo_collection().update_one(
-            {"_id": oid}, {"$set": changes, "$inc": {"uses": 1}}
+            {"uid": memory_id}, {"$set": changes, "$inc": {"uses": 1}}
         )
         return await self.get(memory_id)
 
     async def delete(self, memory_id: str) -> bool:
-        oid = _oid(memory_id)
-        if oid is None:
-            return False
-        result = await OwnerMemory.get_pymongo_collection().delete_one({"_id": oid})
+        result = await OwnerMemory.get_pymongo_collection().delete_one({"uid": memory_id})
         return result.deleted_count == 1
 
 
@@ -384,7 +366,7 @@ class MemoryService:
         activated instead)."""
         text = mask_identifiers(" ".join(body.text.split()))
         if len(text) > TEXT_MAX:
-            raise AppError(ErrorCode.VALIDATION_ERROR, f"A memory is at most {TEXT_MAX} characters")
+            raise AppError(ErrorCode.INVALID_INPUT, f"A memory is at most {TEXT_MAX} characters")
         existing = await self._store.find_live(normalise(text))
         if existing is not None:
             return await self._bump(existing, activate=True, actor=actor), False

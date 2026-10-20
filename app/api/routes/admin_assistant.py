@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import StreamingResponse
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
 from app.services.intake import AssistantRequest, AssistantState, IntakeService
@@ -22,7 +23,7 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 def _service(request: Request) -> IntakeService:
     service: IntakeService | None = getattr(request.app.state, "intake", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "The intake assistant is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "The intake assistant is not running")
     return service
 
 
@@ -50,5 +51,5 @@ async def assistant(
 @router.get("/assistant/{conversation_id}", summary="A conversation's mode and pending draft")
 async def assistant_state(
     conversation_id: ConversationId, _principal: AdminKey, request: Request
-) -> AssistantState:
-    return await _service(request).state(conversation_id)
+) -> Envelope[AssistantState]:
+    return ok(await _service(request).state(conversation_id))

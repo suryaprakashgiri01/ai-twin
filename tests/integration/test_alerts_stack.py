@@ -27,7 +27,7 @@ async def test_events_alert_digest_and_list_through_mongo(resources: Resources) 
         visitor_hash="b" * 64,
         details={"conversation_id": "c" * 32, "note": secret},
     )
-    await events.record("auth_failed", "medium", rules=["AUTH_INVALID"], surface="admin")
+    await events.record("auth_failed", "medium", rules=["INVALID_API_KEY"], surface="admin")
     await events.record("meta_probe", "low", rules=["scope:model"])
     stored = await SecurityEvent.find_all().to_list()
     assert {e.kind for e in stored} == {"canary_hit", "auth_failed", "meta_probe"}

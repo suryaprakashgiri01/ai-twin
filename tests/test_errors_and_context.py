@@ -40,26 +40,45 @@ async def test_unknown_path_renders_not_found_envelope() -> None:
         response = await c.get("/nope", headers={"X-Request-ID": "req-123"})
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
-    assert response.json()["error"]["request_id"] == "req-123"
+    assert response.json()["error"]["requestId"] == "req-123"
 
 
 async def test_app_error_keeps_code_status_and_details() -> None:
     async with await _client() as c:
         response = await c.get("/boom")
     assert response.status_code == 403
-    assert response.json()["error"] == {
-        "code": "FORBIDDEN",
+    assert response.json() == {
+        "status": "error",
         "message": "nope",
-        "request_id": response.headers["X-Request-ID"],
-        "details": {"why": "test"},
+        "result": None,
+        "error": {
+            "code": "FORBIDDEN",
+            "requestId": response.headers["X-Request-ID"],
+            "details": {"why": "test"},
+        },
     }
+
+
+async def test_wrong_method_is_method_not_allowed() -> None:
+    async with await _client() as c:
+        response = await c.delete("/boom")
+    assert response.status_code == 405
+    assert response.json()["error"]["code"] == "METHOD_NOT_ALLOWED"
+    assert response.headers["allow"] == "GET"
+
+
+def test_every_code_is_in_the_catalog() -> None:
+    from app.exceptions.codes import CATALOG, STATUS_BY_CODE
+
+    assert set(CATALOG) == set(ErrorCode)
+    assert all(400 <= status < 600 for status in STATUS_BY_CODE.values())
 
 
 async def test_validation_error_does_not_echo_input() -> None:
     async with await _client() as c:
         response = await c.post("/echo", json={"name": 1, "password": "hunter2"})
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert response.json()["error"]["code"] == "INVALID_INPUT"
     assert "hunter2" not in response.text
 
 

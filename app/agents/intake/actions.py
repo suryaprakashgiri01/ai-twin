@@ -9,7 +9,6 @@ Payload keys are the owner-facing field names. Document and record actions name 
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -21,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.intake.batch import RecordsBatchIn, batch_summary
 from app.agents.intake.drafts import InboxError, resolve_inbox, show_day
-from app.db.documents import TERMINAL_STATUSES
+from app.db.documents import TERMINAL_STATUSES, UID_PATTERN
 from app.exceptions import AppError, ErrorCode
 from app.kb.ingestion.labelling import CATEGORIES
 from app.services.admin_ops import (
@@ -42,7 +41,7 @@ Payload = dict[str, Any]
 Outcome = dict[str, Any]
 
 # An id anywhere in the reference: the model often copies a whole line from an earlier reply.
-_OBJECT_ID = re.compile(r"\b[0-9a-f]{24}\b")
+_PUBLIC_ID = UID_PATTERN
 PRONOUNS = frozenset(
     {
         "it",
@@ -269,7 +268,7 @@ async def _ingest_file(ctx: RunContext, p: Payload) -> Outcome:
     try:
         path = resolve_inbox(ctx.inbox, str(p["filename"]))
     except InboxError as exc:
-        raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+        raise AppError(ErrorCode.INVALID_INPUT, str(exc)) from exc
     limit = ctx.ops.max_file_bytes()
     if path.stat().st_size > limit:
         raise AppError(
@@ -466,7 +465,7 @@ async def _delete_document(ctx: RunContext, p: Payload) -> Outcome:
 
 def _memory(ctx: RunContext) -> MemoryService:
     if ctx.memory is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner memory is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Owner memory is not running")
     return ctx.memory
 
 
@@ -1005,7 +1004,7 @@ async def _resolve_document(
             return Resolution(payload)  # still missing: the owner is asked which document
         last = recent_docs[-1]
         return Resolution({**payload, "document_id": last["id"], "document_title": last["title"]})
-    if found_id := _OBJECT_ID.search(ref):
+    if found_id := _PUBLIC_ID.search(ref):
         try:
             doc = await ops.get_document(found_id.group(0))
         except AppError:
@@ -1041,7 +1040,7 @@ async def _resolve_record(
     if not ref or _norm(ref) in PRONOUNS:
         last = next((r for r in reversed(recent) if r.get("kind") == "record"), None)
         match = [r for r in records if last and r.id == last["id"]]
-    elif found_id := _OBJECT_ID.search(ref):
+    elif found_id := _PUBLIC_ID.search(ref):
         match = [r for r in records if r.id == found_id.group(0)]
     else:
         match = _pick(records, lambda r: r.company, ref)
@@ -1070,7 +1069,7 @@ async def _resolve_memory(payload: Payload, memory: MemoryService | None) -> Res
     if not ref:
         return Resolution(payload)
     items = await memory.listing()
-    if found_id := _OBJECT_ID.search(ref):
+    if found_id := _PUBLIC_ID.search(ref):
         match = [m for m in items if m.id == found_id.group(0)]
     else:
         match = _pick(items, lambda m: m.text, ref)

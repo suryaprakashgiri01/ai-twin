@@ -19,6 +19,7 @@ from bson.errors import InvalidId
 from pydantic import BaseModel, ConfigDict, Field
 from qdrant_client import AsyncQdrantClient, models
 
+from app.api.envelope import ApiModel
 from app.db.documents import KbDocument
 from app.kb.embedding import Embedder, Embedding
 from app.vector.qdrant import DENSE, SPARSE
@@ -39,7 +40,7 @@ def collections_for(max_tier: Tier, tiers: Mapping[str, Tier] = COLLECTION_TIERS
     return [name for name, tier in tiers.items() if tier <= max_tier]
 
 
-class SearchFilters(BaseModel):
+class SearchFilters(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     category: str | None = None

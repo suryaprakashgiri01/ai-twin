@@ -37,6 +37,7 @@ from tests.agent.fakes import (
     seed,
 )
 from tests.conftest import FakeCheck
+from tests.envelope import result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
 from tests.public.fakes import (
     ANSWER,
@@ -272,12 +273,12 @@ async def test_chat_route_streams_and_answers_json() -> None:
         events = sse_events(streamed.text)
         assert events[0][0] == "meta" and events[-1][0] == "done"
         assert answer_of(events) == ANSWER
-        body = (
+        body = result(
             await client.post("/v1/chat?stream=false", json={"message": Q}, headers=headers)
-        ).json()
+        )
         assert body["answer"] == ANSWER and body["citations"] == ["pub1"]
-        assert body["intent"] == "about_owner" and body["cache_hit"] is True  # same question
+        assert body["intent"] == "about_owner" and body["cacheHit"] is True  # same question
         missing = await client.post(
-            "/v1/chat", json={"message": Q, "conversation_id": "e" * 32}, headers=headers
+            "/v1/chat", json={"message": Q, "conversationId": "e" * 32}, headers=headers
         )
         assert missing.status_code == 404

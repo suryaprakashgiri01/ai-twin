@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import httpx
 import pytest
+from beanie import PydanticObjectId
 from cryptography.fernet import Fernet
 from fakeredis import FakeAsyncRedis
 from pydantic import SecretStr
@@ -20,6 +21,7 @@ from app.services.profile import ProfileIn
 from app.services.resume import FileResume, VaultResume, resume_provider
 from app.storage.blobs import BlobStore
 from tests.conftest import FakeCheck
+from tests.envelope import result
 from tests.fakes import MemoryApiKeyStore
 from tests.ingestion.fakes import MemoryProfileStore
 
@@ -89,7 +91,7 @@ async def test_vault_serves_the_profile_resume_blob(tmp_path: Path) -> None:
     store = MemoryProfileStore()
     provider = VaultResume(store, blobs)
     assert not await provider.available() and await provider.open() is None
-    await store.put(ProfileIn(), ref)
+    await store.put(ProfileIn(), (PydanticObjectId(), ref))
     assert await provider.available()
     async for client, key, _, _ in _client("vault", provider):
         response = await client.get("/v1/resume", headers={"X-API-Key": key})
@@ -110,14 +112,14 @@ async def test_resume_and_assistant_need_public_read(pdf: Path) -> None:
 
 async def test_assistant_info_discloses_the_ai_twin() -> None:
     async for client, key, _, _ in _client("public", None, public_owner_name="Kavya Testpal"):
-        body = (await client.get("/v1/assistant", headers={"X-API-Key": key})).json()
+        body = result(await client.get("/v1/assistant", headers={"X-API-Key": key}))
         assert set(body) == {"greeting", "disclosure", "privacy", "availability"}
         assert "Kavya Testpal's AI twin" in body["greeting"]
         assert "AI twin, not Kavya Testpal in person" in body["disclosure"]
         assert "90 days" in body["privacy"] and "hash" in body["privacy"]
         assert body["availability"] == "open to backend roles"
     async for client, key, _, _ in _client("public", None):
-        body = (await client.get("/v1/assistant", headers={"X-API-Key": key})).json()
+        body = result(await client.get("/v1/assistant", headers={"X-API-Key": key}))
         assert body["greeting"].startswith("Hi, I'm an AI twin.")
 
 

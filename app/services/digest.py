@@ -33,6 +33,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agents.prompts.owner import says_not_in_vault
+from app.api.envelope import ApiModel
 from app.db.documents import Tier as TierLabel
 from app.exceptions import AppError, ErrorCode
 from app.observability.tracing import tracing
@@ -104,7 +105,7 @@ class Digest(BaseModel):
     memories: list[MemoryCandidate] = Field(default_factory=list)
 
 
-class TitleRefresh(BaseModel):
+class TitleRefresh(ApiModel):
     """What happened. `reason` is set when skipped: too_short, up_to_date or no_model."""
 
     status: RefreshStatus

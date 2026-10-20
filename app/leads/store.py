@@ -6,13 +6,12 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Protocol
 
-from beanie import PydanticObjectId
-from bson.errors import InvalidId
-
 from app.db.documents import Lead, LeadFields
 
 
 class StoredLead(LeadFields):
+    """`id` is the lead's public `uid`."""
+
     id: str
 
 
@@ -39,14 +38,7 @@ class LeadStore(Protocol):
 
 
 def _stored(doc: Lead) -> StoredLead:
-    return StoredLead(id=str(doc.id), **doc.model_dump(exclude={"id", "revision_id"}))
-
-
-def _oid(lead_id: str) -> PydanticObjectId | None:
-    try:
-        return PydanticObjectId(lead_id)
-    except (InvalidId, TypeError, ValueError):
-        return None
+    return StoredLead(id=doc.uid, **doc.model_dump(exclude={"id", "revision_id"}))
 
 
 def due_filter(now: datetime) -> dict[str, Any]:
@@ -65,15 +57,11 @@ class MongoLeadStore:
         return _stored(doc)
 
     async def get(self, lead_id: str) -> StoredLead | None:
-        oid = _oid(lead_id)
-        doc = await Lead.get(oid) if oid is not None else None
+        doc = await Lead.find_one({"uid": lead_id})
         return _stored(doc) if doc is not None else None
 
     async def update(self, lead_id: str, changes: Mapping[str, Any]) -> StoredLead | None:
-        oid = _oid(lead_id)
-        if oid is None:
-            return None
-        await Lead.get_pymongo_collection().update_one({"_id": oid}, {"$set": dict(changes)})
+        await Lead.get_pymongo_collection().update_one({"uid": lead_id}, {"$set": dict(changes)})
         return await self.get(lead_id)
 
     async def recent_duplicate(
@@ -86,9 +74,8 @@ class MongoLeadStore:
         return _stored(doc) if doc is not None else None
 
     async def merge_duplicate(self, lead_id: str, now: datetime) -> None:
-        oid = _oid(lead_id)
         await Lead.get_pymongo_collection().update_one(
-            {"_id": oid}, {"$inc": {"duplicates": 1}, "$set": {"updated_at": now}}
+            {"uid": lead_id}, {"$inc": {"duplicates": 1}, "$set": {"updated_at": now}}
         )
 
     async def due(self, now: datetime, limit: int) -> list[StoredLead]:

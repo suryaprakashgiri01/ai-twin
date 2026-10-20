@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 
 from app.cache.redis import resume_downloads_key, resume_visitors_key
 from app.core.config import Settings
+from app.db.documents import BlobRef
 from app.exceptions import AppError
 from app.services.profile import ProfileStore
 from app.storage.blobs import BlobStore
@@ -60,7 +61,7 @@ class VaultResume:
         if ref is None:
             return None
         try:
-            data = await asyncio.to_thread(self._blobs.get, ref)
+            data = await asyncio.to_thread(self._blobs.get, BlobRef(**ref.model_dump()))
         except AppError:
             return None  # the profile points at a blob that is gone
         return ResumeFile(ref.content_type, _filename(ref.content_type), data=data)

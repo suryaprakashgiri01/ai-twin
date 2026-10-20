@@ -31,7 +31,7 @@ class Visitor:
 def _salt(request: Request) -> str:
     salt: str = request.app.state.settings.visitor_hash_salt.get_secret_value()
     if not salt:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Visitor hashing is not configured")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Visitor hashing is not configured")
     return salt
 
 
@@ -39,9 +39,7 @@ def _address(raw: str) -> str:
     try:
         return str(ipaddress.ip_address(raw.strip()))
     except ValueError:
-        raise AppError(
-            ErrorCode.VALIDATION_ERROR, f"{VISITOR_HEADER} must be an IP address"
-        ) from None
+        raise AppError(ErrorCode.INVALID_INPUT, f"{VISITOR_HEADER} must be an IP address") from None
 
 
 def resolve_visitor(request: Request, principal: Principal) -> Visitor:

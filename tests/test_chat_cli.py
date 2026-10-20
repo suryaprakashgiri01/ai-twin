@@ -7,8 +7,21 @@ import httpx
 import pytest
 
 from scripts import chat, memory
+from tests.envelope import page_of, success
 
 CID = "a" * 32
+
+
+def not_found() -> httpx.Response:
+    return httpx.Response(
+        404,
+        json={
+            "status": "error",
+            "message": "nope",
+            "result": None,
+            "error": {"code": "NOT_FOUND", "requestId": "r"},
+        },
+    )
 
 
 def _conversation(cid: str, name: str, updated: str, turns: int) -> dict[str, Any]:
@@ -16,8 +29,8 @@ def _conversation(cid: str, name: str, updated: str, turns: int) -> dict[str, An
         "id": cid,
         "name": name,
         "description": f"About {name}",
-        "updated_at": updated,
-        "message_count": turns,
+        "updatedAt": updated,
+        "messageCount": turns,
     }
 
 
@@ -34,37 +47,37 @@ def handler(request: httpx.Request) -> httpx.Response:
     if path == "/healthz":
         return httpx.Response(200, json={"status": "ok", "version": "9.9.9"})
     if path.endswith("/title") and request.method == "POST":
-        return httpx.Response(
-            200,
-            json={
+        return success(
+            {
                 "status": "updated",
                 "name": "salary-negotiation-notes",
                 "description": "Compared two offers.",
                 "renamed": True,
-            },
+            }
         )
     if path == "/admin/v1/whoami":
-        return httpx.Response(200, json={"name": "owner", "scopes": ["admin"]})
+        return success({"name": "owner", "scopes": ["admin"]})
     if path == "/admin/v1/conversations":
-        return httpx.Response(200, json=CONVERSATIONS)
+        assert "limit" not in request.url.params
+        return page_of(CONVERSATIONS, request)
     if path.startswith("/admin/v1/conversations/by-name/"):
         name = path.rsplit("/", 1)[1]
         for c in CONVERSATIONS:
             if c["name"] == name:
-                return httpx.Response(200, json=c)
-        return httpx.Response(404, json={"error": {"code": "NOT_FOUND", "message": "nope"}})
+                return success(c)
+        return not_found()
     if path.startswith("/admin/v1/conversations/"):
         cid = path.rsplit("/", 1)[1]
         for c in CONVERSATIONS:
             if c["id"] == cid:
-                return httpx.Response(200, json={**c, "turns": []})
-        return httpx.Response(404, json={"error": {"code": "NOT_FOUND", "message": "nope"}})
+                return success({**c, "turns": []})
+        return not_found()
     if path == "/admin/v1/chat":
         body = (
-            'event: meta\ndata: {"conversation_id": "' + CID + '"}\n\n'
+            'event: meta\ndata: {"conversationId": "' + CID + '"}\n\n'
             'event: token\ndata: {"text": "Hello"}\n\n'
             "event: done\n"
-            'data: {"tier": "private", "model": "ollama-local", "latency_ms": 1200}\n\n'
+            'data: {"tier": "private", "model": "ollama-local", "latencyMs": 1200}\n\n'
         )
         return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
     return httpx.Response(500)
@@ -106,7 +119,7 @@ def test_chat_stream_yields_events() -> None:
 
 def test_auth_and_connection_errors_are_one_line() -> None:
     def unauthorized(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, json={"error": {"code": "AUTH_INVALID", "message": "bad"}})
+        return httpx.Response(401, json={"error": {"code": "INVALID_API_KEY", "message": "bad"}})
 
     with pytest.raises(chat.CliError, match="401"):
         make_api(unauthorized).list(5)
@@ -173,7 +186,7 @@ def test_twin_banner_explains_the_intake_before_the_first_prompt(
 
 
 MEMORY = {
-    "id": "6a" * 12,
+    "id": "3f0c1d2e-7a4b-4c5d-9e8f-0a1b2c3d4e5f",
     "kind": "preference",
     "text": "Concise bullets with sources first",
     "status": "pending",
@@ -186,6 +199,7 @@ class MemoryApi:
 
     def __init__(self) -> None:
         self.writes: list[tuple[str, str, Any]] = []
+        self.filters: list[str | None] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -194,17 +208,16 @@ class MemoryApi:
             if request.method != "GET":
                 self.writes.append((request.method, path, body))
             if request.method == "GET":
-                return httpx.Response(200, json=[MEMORY])
+                self.filters.append(request.url.params.get("filter"))
+                return page_of([MEMORY], request)
             if request.method == "DELETE":
-                return httpx.Response(204)
-            return httpx.Response(200, json={**MEMORY, **(body or {})})
+                return success({"id": MEMORY["id"]})
+            return success({**MEMORY, **(body or {})})
         if path.endswith("/title") and request.method == "POST":
-            return httpx.Response(
-                200, json={"status": "updated", "name": "salary-notes", "new_memories": 2}
-            )
+            return success({"status": "updated", "name": "salary-notes", "newMemories": 2})
         if path == f"/admin/v1/conversations/{CID}":
             detail = {**CONVERSATIONS[0], "turns": [], "summary": "Prepared two rounds."}
-            return httpx.Response(200, json={**detail, "summarized_turns": 6})
+            return success({**detail, "summarizedTurns": 6})
         return handler(request)
 
 
@@ -246,6 +259,8 @@ def test_make_memory_commands(
     mid = MEMORY["id"]
     assert memory.main(["list"]) == 0
     assert "1 waiting for review" in capsys.readouterr().out
+    assert memory.main(["list", "--archived"]) == 0
+    assert api.filters == [None, "status:archived"]
     assert memory.main(["add", "Use British spelling", "--kind", "instruction"]) == 0
     assert memory.main(["accept", mid]) == 0
     assert memory.main(["edit", mid, "Short bullets"]) == 0

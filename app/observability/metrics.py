@@ -165,7 +165,7 @@ def _authorise(request: Request, settings: Settings) -> None:
     header = request.headers.get("authorization", "")
     scheme, _, presented = header.partition(" ")
     if scheme.lower() != "bearer" or not hmac.compare_digest(presented.strip(), token):
-        raise AppError(ErrorCode.AUTH_INVALID, "Send the metrics token as a bearer token")
+        raise AppError(ErrorCode.INVALID_API_KEY, "Send the metrics token as a bearer token")
 
 
 @router.get(

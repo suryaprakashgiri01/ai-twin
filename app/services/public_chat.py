@@ -21,7 +21,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
 from app.agents.checkpoint import MongoCheckpointSaver
 from app.agents.graphs.public import (
@@ -34,6 +34,7 @@ from app.agents.graphs.public import (
 )
 from app.agents.prompts import public as prompts
 from app.agents.streaming import sse
+from app.api.envelope import ApiModel
 from app.auth.visitor import Visitor
 from app.core.config import Settings, split_list
 from app.core.llm import LLMServices
@@ -77,7 +78,7 @@ DRAFT_HOURS = 24
 WORDS_PER_TOKEN = 3
 
 
-class PublicChatRequest(BaseModel):
+class PublicChatRequest(ApiModel):
     # No tier, collection, model or filter field: nothing a visitor sends can widen retrieval.
     model_config = ConfigDict(extra="forbid")
 
@@ -87,7 +88,7 @@ class PublicChatRequest(BaseModel):
     turnstile_token: str | None = Field(default=None, max_length=2048)
 
 
-class PublicChatResponse(BaseModel):
+class PublicChatResponse(ApiModel):
     conversation_id: str
     seq: int | None = None
     intent: str
