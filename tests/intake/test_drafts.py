@@ -148,8 +148,11 @@ def test_suggestions_are_deterministic() -> None:
     assert tip.payload == {"document": "d1", "document_id": "d1", "document_title": "Talk"}
     private = {**doc, "tier": "private"}
     assert suggest({"action": "add_note", "sources": [{"documents": [private]}]}) is None
-    record = suggest({"action": "add_record"})
+    record = suggest({"action": "add_record", "record": {"kind": "interview"}})
     assert record is not None and record.action is None
+    assert "round" in record.text.casefold()
+    application = suggest({"action": "add_record", "record": {"kind": "application"}})
+    assert application is not None and "application" in application.text.casefold()
     assert suggest({"action": "publish"}) is None
 
 

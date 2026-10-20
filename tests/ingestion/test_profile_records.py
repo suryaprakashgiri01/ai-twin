@@ -92,3 +92,36 @@ async def test_records_crud(api: Api) -> None:
         "record.update",
         "record.delete",
     ]
+
+
+async def test_records_batch_create(api: Api) -> None:
+    body = {
+        "records": [
+            {
+                "kind": "application",
+                "company": "Initech",
+                "role": "Backend Engineer",
+                "stage": "applied",
+                "date": "2026-10-18T00:00:00Z",
+                "location": "Hyderabad",
+                "company_type": "product",
+            },
+            {
+                "kind": "application",
+                "company": "Globex",
+                "role": "SRE",
+                "stage": "applied",
+                "date": "2026-10-18T00:00:00Z",
+                "location": "Pune",
+                "company_type": "service",
+                "work_mode": "hybrid",
+            },
+        ]
+    }
+    created = await api.client.post(f"{BASE}/records/batch", json=body, headers=api.headers)
+    assert created.status_code == 201
+    rows = created.json()
+    assert len(rows) == 2
+    assert {r["company"] for r in rows} == {"Initech", "Globex"}
+    assert {r["company_type"] for r in rows} == {"product", "service"}
+    assert sum(1 for e in api.audit.entries if e["action"] == "record.create") >= 2

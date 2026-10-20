@@ -1,5 +1,5 @@
 """Job-search pipeline records (applications, assessments, interviews, outcomes): company, role,
-stage, date, notes."""
+stage, date, notes, location, company type."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from app.agents.intake.batch import RecordsBatchIn
 from app.auth.dependencies import Principal, require_scopes
 from app.services.admin_ops import AdminOps, key_actor
 from app.services.profile import RecordIn, RecordKind, RecordOut, RecordPatch
@@ -30,6 +31,18 @@ async def list_records(
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Add a record (audited)")
 async def create_record(body: RecordIn, principal: AdminKey, request: Request) -> RecordOut:
     return await _ops(request).create_record(body, key_actor(principal.name))
+
+
+@router.post(
+    "/batch",
+    status_code=status.HTTP_201_CREATED,
+    summary="Add several records in one call (audited)",
+)
+async def create_records_batch(
+    body: RecordsBatchIn, principal: AdminKey, request: Request
+) -> list[RecordOut]:
+    """Daily application dumps: up to 50 records. Each item is validated like a single create."""
+    return await _ops(request).create_records(body.records, key_actor(principal.name))
 
 
 @router.patch("/{record_id}", summary="Edit a record (audited)")

@@ -109,19 +109,28 @@ async def refresh_title(
     request: Request,
     wait_seconds: Annotated[
         float | None,
-        Query(ge=0, le=60, description="how long to wait before the refresh continues later"),
+        Query(ge=0, le=120, description="how long to wait before the refresh continues later"),
     ] = None,
 ) -> TitleRefresh:
     """One model call at the conversation's own tier (intake or confidential → local model
     only). The description and the rolling summary are always refreshed; the name only if the
     owner never renamed it. Memory candidates from the owner's messages are stored as pending
     (`new_memories`). `scheduled` means a slow model is still working and will save its result
-    when done."""
+    when done. With no `wait_seconds`, intake (and other local-only) conversations use the
+    longer local wait."""
     digester: ConversationDigester | None = getattr(request.app.state, "digester", None)
     if digester is None:
         raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Title refresh is not running")
     settings: Settings = request.app.state.settings
-    wait = settings.title_refresh_wait_seconds if wait_seconds is None else wait_seconds
+    if wait_seconds is not None:
+        wait = wait_seconds
+    else:
+        detail = await _service(request).conversation(conversation_id, limit=1)
+        wait = (
+            settings.title_refresh_wait_local_seconds
+            if detail.mode == "intake"
+            else settings.title_refresh_wait_seconds
+        )
     return await digester.refresh_within(conversation_id, wait)
 
 

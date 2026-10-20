@@ -95,7 +95,9 @@ class Settings(BaseSettings):
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
     # How long POST /conversations/{id}/title waits before letting a slow model finish later.
-    title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=60)
+    title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=120)
+    # Longer wait when the conversation uses a local model only (intake / confidential).
+    title_refresh_wait_local_seconds: float = Field(default=20.0, ge=0, le=120)
     # A rolling summary is refreshed in the background after this many new turns (0: only on
     # exit); long chats send it ahead of the recent turns within SUMMARY_CONTEXT_TOKENS.
     summary_every_turns: int = Field(default=6, ge=0, le=200)

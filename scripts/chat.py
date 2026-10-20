@@ -38,8 +38,8 @@ EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
 RECAP_TURNS = 4
 RECAP_CHARS = 280
 LIST_LIMIT_MAX = 200
-# How long /exit waits for a new title before leaving a slow local model to finish later.
-TITLE_WAIT_SECONDS = 8.0
+# Client timeout while the server chooses how long to wait (local models get longer).
+TITLE_REFRESH_TIMEOUT = 45.0
 # Names are at most 48 characters; generated ones at most 40 plus a short suffix.
 NAME_WIDTH = 44
 MODE_WIDTH = 6
@@ -176,12 +176,12 @@ class Api:
     def base_url(self) -> str:
         return self._base
 
-    def refresh_title(self, conversation_id: str, wait_seconds: float) -> dict[str, Any]:
+    def refresh_title(self, conversation_id: str) -> dict[str, Any]:
+        """Let the server pick the wait (longer for intake / local models)."""
         result: dict[str, Any] = self._request(
             "POST",
             f"/conversations/{conversation_id}/title",
-            params={"wait_seconds": wait_seconds},
-            timeout=wait_seconds + 15,
+            timeout=TITLE_REFRESH_TIMEOUT,
         ).json()
         return result
 
@@ -430,7 +430,7 @@ def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
     print(paint("Updating the conversation's title…", "dim"))
     try:
         with Thinking(TITLE_PHRASES):
-            result = api.refresh_title(conversation_id, TITLE_WAIT_SECONDS)
+            result = api.refresh_title(conversation_id)
     except (CliError, httpx.HTTPError, KeyboardInterrupt) as exc:
         warn(f"Title not refreshed ({type(exc).__name__}); the conversation is kept as it was")
         return None

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
@@ -594,12 +595,21 @@ class AdminOps:
     # --- records ----------------------------------------------------------------------------
 
     async def list_records(self, kind: RecordKind | None) -> list[RecordOut]:
-        return await self._d.records.list(kind)
+        return list(await self._d.records.list(kind))
 
     async def create_record(self, body: RecordIn, actor: str) -> RecordOut:
         record = await self._d.records.create(body)
         await self._audit(actor, "record.create", record.id, {})
         return record
+
+    async def create_records(self, bodies: Sequence[RecordIn], actor: str) -> list[RecordOut]:
+        """Create many records in one call (daily application dumps). Audits each id."""
+        if not bodies:
+            raise AppError(ErrorCode.VALIDATION_ERROR, "Provide at least one record")
+        records = list(await self._d.records.create_many(bodies))
+        for record in records:
+            await self._audit(actor, "record.create", record.id, {"batch": True})
+        return records
 
     async def update_record(self, record_id: str, body: RecordPatch, actor: str) -> RecordOut:
         changes = body.model_dump(exclude_unset=True)

@@ -32,6 +32,7 @@ ActionName = Literal[
     "ingest_file",
     "ingest_github",
     "add_record",
+    "add_records",
     "update_record",
     "delete_record",
     "update_profile",
