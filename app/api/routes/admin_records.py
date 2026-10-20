@@ -3,19 +3,34 @@ stage, date, notes, location, company type."""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from app.agents.intake.batch import RecordsBatchIn
 from app.api.envelope import Deleted, Envelope, ok
+from app.api.paging import ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
+from app.db.documents import COMPANY_TYPES, RECORD_KINDS, WORK_MODES
 from app.services.admin_ops import AdminOps, key_actor
 from app.services.profile import RecordIn, RecordKind, RecordOut, RecordPatch
 
 router = APIRouter(prefix="/records", tags=["admin: records"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
+
+RECORDS = ListSpec(
+    sortable=("date", "company", "role", "kind", "stage"),
+    default_sort="date",
+    filters={
+        "kind": RECORD_KINDS,
+        "workMode": WORK_MODES,
+        "companyType": COMPANY_TYPES,
+        "platform": None,
+        "stage": None,
+    },
+    search=("company", "role", "stage", "notes", "platform", "location", "contact"),
+)
 
 
 def _ops(request: Request) -> AdminOps:
@@ -24,9 +39,12 @@ def _ops(request: Request) -> AdminOps:
 
 @router.get("", summary="Records, newest first")
 async def list_records(
-    _principal: AdminKey, request: Request, kind: Annotated[RecordKind | None, Query()] = None
-) -> Envelope[list[RecordOut]]:
-    return ok(list(await _ops(request).list_records(kind)))
+    _principal: AdminKey,
+    request: Request,
+    query: Annotated[PageQuery, Depends(page_query(RECORDS))],
+) -> Envelope[Page[RecordOut]]:
+    kind = cast(RecordKind | None, query.filters.get("kind"))
+    return ok(paginate(await _ops(request).list_records(kind), query, RECORDS))
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Add a record (audited)")

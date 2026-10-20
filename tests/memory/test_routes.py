@@ -50,7 +50,7 @@ async def test_memory_crud_is_audited(
         conversation_id="c1",
         tier=Tier.PRIVATE,
     )
-    pending = items(await client.get("/admin/v1/memories?status=pending", headers=headers))
+    pending = items(await client.get("/admin/v1/memories?filter=status:pending", headers=headers))
     mid = pending[0]["id"]
     accepted = await client.patch(
         f"/admin/v1/memories/{mid}", json={"status": "active"}, headers=headers

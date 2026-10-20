@@ -4,23 +4,34 @@ severity, rule names, a visitor-hash prefix, surface and times."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, get_args
 
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.envelope import ApiModel, Envelope, ok
+from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
 from app.security.alerts import VISITOR_PREFIX, StoredEvent, safe_rule
 from app.security.worker import AlertWorker
 from app.services.admin_ops import key_actor
 from app.services.audit import AuditLog
-from app.services.security_events import EventKind
+from app.services.security_events import EventKind, Severity, Surface
 
 router = APIRouter(tags=["admin: security"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
-SeverityQuery = Literal["low", "medium", "high", "critical"]
+
+EVENTS = ListSpec(
+    sortable=("createdAt", "kind", "severity", "alertedAt"),
+    default_sort="createdAt",
+    filters={
+        "kind": get_args(EventKind),
+        "severity": get_args(Severity),
+        "surface": get_args(Surface),
+    },
+    search=("kind", "rules", "visitor"),
+)
 
 
 class SecurityEventOut(ApiModel):
@@ -82,17 +93,18 @@ def _worker(request: Request) -> AlertWorker:
 async def list_events(
     _principal: AdminKey,
     request: Request,
-    kind: Annotated[EventKind | None, Query()] = None,
-    severity: Annotated[SeverityQuery | None, Query()] = None,
+    query: Annotated[PageQuery, Depends(page_query(EVENTS))],
     since: Annotated[datetime | None, Query(description="ISO 8601, e.g. 2026-10-19T00:00:00Z")] = (
         None
     ),
-    limit: Annotated[int, Query(ge=1, le=500)] = 50,
-) -> Envelope[list[SecurityEventOut]]:
+) -> Envelope[Page[SecurityEventOut]]:
     events = await _worker(request).store.recent(
-        kind=kind, severity=severity, since=since, limit=limit
+        kind=query.filters.get("kind"),
+        severity=query.filters.get("severity"),
+        since=since,
+        limit=LIST_SCAN_MAX,
     )
-    return ok([SecurityEventOut.of(e) for e in events])
+    return ok(paginate([SecurityEventOut.of(e) for e in events], query, EVENTS))
 
 
 @router.get("/alerts/status", summary="Alert policies, cooldowns, last sent, SMTP configured")

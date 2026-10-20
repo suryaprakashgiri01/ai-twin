@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, get_args
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.api.envelope import Envelope, ok
+from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.leads.models import LeadStatus, TriageLabel
 from app.services.admin_ops import AdminOps, LeadOut, LeadPatch, key_actor
@@ -14,6 +15,18 @@ from app.services.admin_ops import AdminOps, LeadOut, LeadPatch, key_actor
 router = APIRouter(prefix="/leads", tags=["admin: leads"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
+
+LEADS = ListSpec(
+    sortable=("createdAt", "name", "company", "status", "triage", "triageConfidence"),
+    default_sort="createdAt",
+    filters={
+        "status": get_args(LeadStatus),
+        "triage": get_args(TriageLabel),
+        "source": None,
+        "employmentType": None,
+    },
+    search=("name", "email", "company", "role", "message", "summary", "location"),
+)
 
 
 def _ops(request: Request) -> AdminOps:
@@ -24,11 +37,11 @@ def _ops(request: Request) -> AdminOps:
 async def list_leads(
     _principal: AdminKey,
     request: Request,
-    status: Annotated[LeadStatus | None, Query()] = None,
-    triage: Annotated[TriageLabel | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> Envelope[list[LeadOut]]:
-    return ok(await _ops(request).list_leads(status, triage, limit))
+    query: Annotated[PageQuery, Depends(page_query(LEADS))],
+) -> Envelope[Page[LeadOut]]:
+    status, triage = query.filters.get("status"), query.filters.get("triage")
+    leads = await _ops(request).list_leads(status, triage, LIST_SCAN_MAX)
+    return ok(paginate(leads, query, LEADS))
 
 
 @router.patch(

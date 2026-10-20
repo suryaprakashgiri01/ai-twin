@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.envelope import items, result
+from tests.envelope import items, page, result
 from tests.ingestion import persona
 from tests.ingestion.conftest import Api
 
@@ -67,8 +67,12 @@ async def test_records_crud(api: Api) -> None:
 
     listed = items(await api.client.get(f"{BASE}/records", headers=api.headers))
     assert [r["kind"] for r in listed] == ["interview", "application"]
-    only = await api.client.get(f"{BASE}/records?kind=application", headers=api.headers)
+    only = await api.client.get(f"{BASE}/records?filter=kind:application", headers=api.headers)
     assert [r["id"] for r in items(only)] == [record_id]
+    first = page(await api.client.get(f"{BASE}/records?pageSize=1", headers=api.headers))
+    assert (first["total"], first["totalPages"], first["sortColumn"]) == (2, 2, "date")
+    bad = await api.client.get(f"{BASE}/records?sortColumn=notes", headers=api.headers)
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "INVALID_INPUT"
 
     patched = await api.client.patch(
         f"{BASE}/records/{record_id}", json={"stage": "offer"}, headers=api.headers

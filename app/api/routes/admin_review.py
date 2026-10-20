@@ -5,12 +5,16 @@ Every write is audited with the document id and what changed (never document tex
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, get_args
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.api.envelope import Deleted, Envelope, ok
+from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
+from app.db.documents import Tier
+from app.kb.ingestion.labelling import CATEGORIES
+from app.kb.store import REVIEW_STATUSES
 from app.services.admin_ops import (
     AdminOps,
     DocumentOut,
@@ -26,6 +30,18 @@ router = APIRouter(tags=["admin: review"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
 
+REVIEW = ListSpec(
+    sortable=("createdAt", "updatedAt", "occurredAt", "title", "category", "tier"),
+    default_sort="createdAt",
+    filters={
+        "reviewStatus": REVIEW_STATUSES,
+        "tier": get_args(Tier),
+        "category": CATEGORIES,
+        "label": None,
+    },
+    search=("title", "summary", "tags", "text"),
+)
+
 
 def _ops(request: Request) -> AdminOps:
     return AdminOps.from_state(request.app.state)
@@ -33,9 +49,12 @@ def _ops(request: Request) -> AdminOps:
 
 @router.get("/review", summary="Pending and quarantined documents, newest first")
 async def review_queue(
-    _principal: AdminKey, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50
-) -> Envelope[ReviewList]:
-    return ok(await _ops(request).review_queue(limit))
+    _principal: AdminKey,
+    request: Request,
+    query: Annotated[PageQuery, Depends(page_query(REVIEW))],
+) -> Envelope[Page[DocumentOut]]:
+    queue = await _ops(request).review_queue(LIST_SCAN_MAX)
+    return ok(paginate(queue.items, query, REVIEW))
 
 
 @router.get("/documents/{document_id}", summary="One document with its redacted text")

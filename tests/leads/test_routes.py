@@ -192,7 +192,7 @@ async def test_admin_lists_and_patches_leads_with_an_audit_entry() -> None:
         lead_id = rows[1]["id"]
         filtered = await client.get(
             "/admin/v1/leads",
-            params={"status": "new", "triage": "spam"},
+            params={"filter": "status:new,triage:spam"},
             headers={"X-API-Key": admin},
         )
         assert items(filtered) == []

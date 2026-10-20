@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, get_args
 
 from fastapi import APIRouter, Depends, Request
 
 from app.api.envelope import Envelope, ok
+from app.api.paging import ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.core.llm import LLMServices
+from app.db.documents import Tier
 from app.services.audit import AuditLog
 from app.services.model_overrides import Override, OverrideIn, OverrideStore
 
 router = APIRouter(prefix="/models", tags=["admin"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
+
+OVERRIDES = ListSpec(
+    sortable=("id", "updatedAt"),
+    default_sort="id",
+    default_order="asc",
+    filters={"enabled": ("true", "false"), "maxTier": get_args(Tier)},
+    search=("id", "chain"),
+)
 
 
 def _store(request: Request) -> OverrideStore:
@@ -26,8 +36,12 @@ def _audit(request: Request) -> AuditLog:
 
 
 @router.get("/overrides", summary="List stored model and role overrides")
-async def list_overrides(_principal: AdminKey, request: Request) -> Envelope[list[Override]]:
-    return ok(await _store(request).list())
+async def list_overrides(
+    _principal: AdminKey,
+    request: Request,
+    query: Annotated[PageQuery, Depends(page_query(OVERRIDES))],
+) -> Envelope[Page[Override]]:
+    return ok(paginate(await _store(request).list(), query, OVERRIDES))
 
 
 @router.put("/overrides/{model_id:path}", summary="Create or replace one override (audited)")

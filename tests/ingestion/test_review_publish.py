@@ -37,7 +37,7 @@ async def counts(api: Api, document_id: str) -> dict[str, int]:
 
 
 def review_items(response: Any) -> list[dict[str, Any]]:
-    found: list[dict[str, Any]] = result(response)["items"]
+    found: list[dict[str, Any]] = result(response)["listOfItems"]
     return found
 
 
@@ -53,7 +53,7 @@ async def test_review_lists_pending_and_quarantined_newest_first(api: Api) -> No
     first = queue[1]
     assert first["label"]["reason"] and first["label"]["tier"] == "private"
     assert queue[0]["quarantineRules"] == ["ticket-keys"]
-    assert len(review_items(await call(api, "GET", "/review?limit=1"))) == 1
+    assert len(review_items(await call(api, "GET", "/review?pageSize=1"))) == 1
 
 
 async def test_publish_requires_public_and_approved(api: Api) -> None:

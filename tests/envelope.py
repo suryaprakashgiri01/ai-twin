@@ -13,6 +13,14 @@ def result(response: httpx.Response) -> Any:
     return body["result"]
 
 
-def items(response: httpx.Response) -> list[Any]:
-    found: list[Any] = result(response)
+def page(response: httpx.Response) -> dict[str, Any]:
+    found: dict[str, Any] = result(response)
+    assert set(found) >= {"listOfItems", "page", "pageSize", "total", "totalPages"}, found
     return found
+
+
+def items(response: httpx.Response) -> list[Any]:
+    """The rows of a list page, or a plain list result (batch create)."""
+    found = result(response)
+    rows: list[Any] = found["listOfItems"] if isinstance(found, dict) else found
+    return rows

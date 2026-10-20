@@ -67,12 +67,12 @@ async def test_events_are_listed_newest_first_without_text(api: Api) -> None:
     api.store.add("auth_failed", T0 + minutes(2), rules=["INVALID_API_KEY"], surface="admin")
     async for c in client(api):
         everything = items(await c.get("/admin/v1/security/events"))
-        critical = items(await c.get("/admin/v1/security/events?severity=critical"))
-        probes = items(await c.get("/admin/v1/security/events?kind=meta_probe"))
+        critical = items(await c.get("/admin/v1/security/events?filter=severity:critical"))
+        probes = items(await c.get("/admin/v1/security/events?filter=kind:meta_probe"))
         since = await c.get(
             "/admin/v1/security/events", params={"since": (T0 + minutes(1)).isoformat()}
         )
-        bad = await c.get("/admin/v1/security/events?kind=not_a_kind")
+        bad = await c.get("/admin/v1/security/events?filter=kind:not_a_kind")
     assert [e["kind"] for e in everything] == ["auth_failed", "canary_hit", "meta_probe"]
     assert set(everything[0]) == {
         "id", "kind", "severity", "rules", "visitor", "surface",

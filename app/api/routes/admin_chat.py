@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, get_args
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.envelope import Envelope, ok
+from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.core.config import Settings
+from app.db.documents import ConversationMode
 from app.exceptions import AppError, ErrorCode
 from app.services.audit import AuditLog
 from app.services.digest import ConversationDigester, TitleRefresh
@@ -28,6 +30,14 @@ router = APIRouter(tags=["admin: chat"])
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
 ConversationId = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
 ConversationName = Annotated[str, Path(pattern=NAME_PATTERN, max_length=NAME_MAX)]
+
+CONVERSATIONS = ListSpec(
+    sortable=("updatedAt", "createdAt", "name", "messageCount"),
+    default_sort="updatedAt",
+    filters={"mode": get_args(ConversationMode)},
+    search=("name", "description"),
+)
+ConversationQuery = Annotated[PageQuery, Depends(page_query(CONVERSATIONS))]
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -68,11 +78,10 @@ async def chat(
 
 @router.get("/conversations", summary="Owner conversations, newest first")
 async def list_conversations(
-    _principal: AdminKey,
-    request: Request,
-    limit: Annotated[int, Query(ge=1, le=200)] = 20,
-) -> Envelope[list[ConversationSummary]]:
-    return ok(await _service(request).list_conversations(limit))
+    _principal: AdminKey, request: Request, query: ConversationQuery
+) -> Envelope[Page[ConversationSummary]]:
+    found = await _service(request).list_conversations(LIST_SCAN_MAX)
+    return ok(paginate(found, query, CONVERSATIONS))
 
 
 @router.get("/conversations/by-name/{name}", summary="One owner conversation, found by its name")
