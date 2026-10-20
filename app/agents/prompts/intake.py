@@ -2,7 +2,23 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "intake-v3"
+import json
+
+from app.agents.intake.drafts import IntakeDraft
+from app.services.profile import RecordIn
+
+PROMPT_VERSION = "intake-v4"
+
+
+def draft_schema_json() -> str:
+    """Pydantic JSON Schema for the extract output shape (`action`, `payload`, `reply`)."""
+    return json.dumps(IntakeDraft.model_json_schema(), indent=2)
+
+
+def record_schema_json() -> str:
+    """Pydantic JSON Schema for a job-search record payload (`add_record`)."""
+    return json.dumps(RecordIn.model_json_schema(), indent=2)
+
 
 EXTRACT_V2 = """You help the owner add knowledge to their private vault. Today is {today}.
 Read the owner's LATEST message and say which action they want and which field values they \
@@ -15,6 +31,16 @@ it waited for a yes, [cancelled] means the owner discarded it.
 
 Actions:
 {catalog}
+
+# CRITICAL CONSTRAINTS & OUTPUT RULES
+- **Schema Adherence**: **STRICTLY ADHERE** to the provided `IntakeDraft` schema for the \
+whole reply. Put field values only in `payload`, keyed by the action's field names.
+{draft_schema}
+
+- For `add_record` / `update_record`, every record field in `payload` **MUST** match the \
+`RecordIn` schema below (same names and meanings). Unknown short attributes the owner named \
+go in `extras`, never as invented top-level keys.
+{record_schema}
 
 Rules:
 - `action`: one name from the list, or null for small talk.
@@ -33,12 +59,17 @@ something is already done, say whether the conversation shows it [done]; never c
 you did not see done.
 
 Job-search records (`add_record`), read every field the message gives:
-- `role` is the job title, usually after "for" or "for a": "for a Backend Engineer" gives \
-"Backend Engineer", even without the word "role".
+- `role` is the job title. It may follow "for", "for a", "applied to the … role at", or a \
+label "Role:". Titles may contain an en dash, &, or II.
 - `stage`: "I applied" means "applied"; "round 2", "HR screen", "onsite" as said.
 - `contact` is only a person's name, phone or e-mail. A job id, requisition or reference \
 number ("Job ID: 0012345") is never a contact: put it in `notes`.
 - `company` is the employer, never a platform (Naukri, LinkedIn) or a person.
+- `location` is where the role is based ("Hyderabad, Telangana", "Gurugram, Haryana").
+- `work_mode` is one of onsite, remote, hybrid (also "online" → remote, "on-site" → onsite).
+- `notes` is anything the owner marked as notes ("notes:", "in notes please mention …").
+- Extra labelled attributes the owner named (referral, salary range, …) go in `extras` as a \
+small object of short string keys and values. Never invent extras.
 
 Examples (latest message → payload):
 - "I applied to Initech for a Data Engineer (Job ID: 778812) today" → action add_record, \
@@ -49,6 +80,13 @@ Examples (latest message → payload):
 "contact": "Asha"}}
 - "Got a Naukri invite from Hooli for ML Engineer" → action add_record, \
 {{"kind": "invite", "company": "Hooli", "role": "ML Engineer", "platform": "Naukri"}}
+- "applied to the Senior AI Engineer - Inference & Agent Systems role at Arcana, \
+location: Hyderabad, work mode: remote" → action add_record, \
+{{"kind": "application", "company": "Arcana", "role": "Senior AI Engineer - Inference & \
+Agent Systems", "location": "Hyderabad", "work_mode": "remote"}}
+- "Role: Backend Engineer\\nnotes: referred by Ada\\nsalary range: 40-50 LPA" → action \
+add_record, {{"role": "Backend Engineer", "notes": "referred by Ada", \
+"extras": {{"salary range": "40-50 LPA"}}}}
 
 {draft}{recent}"""
 

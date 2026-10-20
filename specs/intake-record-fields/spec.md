@@ -22,7 +22,9 @@ Title refresh often times out on a slow local model because the CLI forces an 8 
    titles; location and work-mode cues from the owner's words.
 5. **Suggestions by kind:** applications ask about referral / salary / location; interviews keep
    round wording.
-6. **Prompt `intake-v4`:** rules and examples for location, work mode, notes and extras.
+6. **Prompt `intake-v4`:** rules and examples for location, work mode, notes and extras, plus
+   the pydantic JSON schemas for `IntakeDraft` and `RecordIn` (`model_json_schema()`) so the
+   model sees the full output shape and each field's meaning.
 7. **Local title wait:** `TITLE_REFRESH_WAIT_LOCAL_SECONDS` (default 20) when the conversation
    tier forces the local model. The CLI stops sending a fixed wait and lets the server choose.
 

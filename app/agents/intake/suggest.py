@@ -16,13 +16,33 @@ class Suggestion:
     payload: dict[str, Any] | None = None
 
 
+_RECORD_TIPS: dict[str, str] = {
+    "application": ("Anything else about this application (referral, salary range, location)?"),
+    "invite": "Anything else about this invite (platform, deadline, notes)?",
+    "hr_call": "Anything else from this call (contact, next step)?",
+    "assessment": "Anything else about this assessment (deadline, link, notes)?",
+    "interview": "Anything else from this round?",
+    "offer": "Anything else about this offer (comp, deadline, notes)?",
+    "rejection": "Anything else to note about this rejection?",
+    "withdrawal": "Anything else to note about this withdrawal?",
+}
+
+
 def suggest(outcome: Outcome) -> Suggestion | None:
     action = outcome.get("action")
     if action in ("add_note", "ingest_url", "ingest_file", "ingest_github", "source_status"):
         return _after_ingest(documents_of(outcome))
     if action in ("add_record", "update_record"):
-        return Suggestion("Anything else from this round?")
+        return _after_record(outcome)
     return None
+
+
+def _after_record(outcome: Outcome) -> Suggestion:
+    raw = outcome.get("record")
+    record: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    kind = str(record.get("kind") or "")
+    tip = _RECORD_TIPS.get(kind, "Anything else to add to this record?")
+    return Suggestion(tip)
 
 
 def _after_ingest(docs: list[dict[str, Any]]) -> Suggestion | None:

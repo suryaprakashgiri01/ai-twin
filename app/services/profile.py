@@ -74,19 +74,54 @@ class ProfileOut(BaseModel):
 class RecordIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: RecordKind
-    company: str = Field(min_length=1, max_length=200)
-    role: str = Field(min_length=1, max_length=200)
-    stage: str = Field(min_length=1, max_length=100)
-    date: datetime
-    notes: str | None = Field(default=None, max_length=10_000)
-    # Naukri, LinkedIn, Instahyre, a referral, a recruiter, ...
-    platform: str | None = Field(default=None, max_length=100)
-    # The HR or recruiter's name, phone or e-mail, as the owner gave it.
-    contact: str | None = Field(default=None, max_length=300)
-    location: str | None = Field(default=None, max_length=200)
-    work_mode: WorkMode | None = None
-    extras: dict[str, str] = Field(default_factory=dict)
+    kind: RecordKind = Field(
+        description=(
+            "invite, application, hr_call, assessment, interview, offer, rejection or withdrawal"
+        )
+    )
+    company: str = Field(min_length=1, max_length=200, description="the employer")
+    role: str = Field(
+        min_length=1,
+        max_length=200,
+        description="job title; may include an en dash (U+2013), & or II",
+    )
+    stage: str = Field(
+        min_length=1,
+        max_length=100,
+        description="e.g. applied, take-home sent, screen, round 2, onsite, verbal offer",
+    )
+    date: datetime = Field(description="when it happened; keep the owner's words in the draft")
+    notes: str | None = Field(
+        default=None,
+        max_length=10_000,
+        description="anything else, including Job ID / requisition text",
+    )
+    platform: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Naukri, LinkedIn, Instahyre, a referral, a recruiter, …",
+    )
+    contact: str | None = Field(
+        default=None,
+        max_length=300,
+        description="HR or recruiter name, phone or e-mail only; never a job id",
+    )
+    location: str | None = Field(
+        default=None,
+        max_length=200,
+        description="where the role is based (city, region, country)",
+    )
+    work_mode: WorkMode | None = Field(
+        default=None,
+        description="onsite, remote or hybrid",
+    )
+    extras: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "other short attributes the owner named (referral, salary range, …); "
+            f"at most {MAX_EXTRAS} keys of {MAX_EXTRA_LEN} characters"
+        ),
+    )
 
     @field_validator("extras", mode="before")
     @classmethod

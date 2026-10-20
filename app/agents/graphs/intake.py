@@ -233,13 +233,38 @@ DEFAULT_STAGE = {"application": "applied", "invite": "invited to apply", "hr_cal
 
 
 _COMPANY = re.compile(r"\b(?:with|from|at|to)\s+((?:[A-Z][\w&.'-]*)(?:\s+(?:[A-Z][\w&.'-]*|&))*)")
+# A title token: capitalised words, plus en/em dash, II, & (e.g. Senior AI Engineer - Inference).
+# Not case-folded, so "I applied" cannot be swallowed into the title.
+_DASH = "\u2013\u2014"  # en dash, em dash
+_TITLE_WORD = rf"[A-Z][\w.+/#{_DASH}]*|[{_DASH}]|II|&|of|and"
 _ROLE = re.compile(
-    r"\bfor (?:an? |the )?([A-Za-z][\w .+/#-]{1,60}?) (?:role|position|opening|job)\b", re.I
+    rf"(?i:for (?:an? |the )?)((?:{_TITLE_WORD})(?: (?:{_TITLE_WORD})){{0,12}}) "
+    r"(?i:role|position|opening|job)\b"
 )
-# "for a Senior AI Engineer (Job ID …)": a capitalised title that ends at the first lower-case
-# word, bracket or punctuation.
+# "applied to (the) X role at Y" / "the X role at Y".
+_APPLIED_ROLE = re.compile(
+    rf"(?i:applied\s+to\s+(?:an?\s+|the\s+)?|the\s+)"
+    rf"((?:{_TITLE_WORD})(?: (?:{_TITLE_WORD})){{0,12}}) "
+    r"(?i:role|position|opening|job)\s+at\b"
+)
+# "for a Senior AI Engineer (Job ID …)": capitalised title; dashes and & allowed inside.
 _TITLED_ROLE = re.compile(
-    r"\bfor (?:an? |the )?((?:[A-Z][\w.+/#-]*)(?: (?:[A-Z][\w.+/#-]*|of|and|&))*)(?=$|[\s(,.;])"
+    rf"(?i:for (?:an? |the )?)"
+    rf"((?:[A-Z][\w.+/#{_DASH}]*)(?: (?:[A-Z][\w.+/#{_DASH}]*|of|and|&|II|[{_DASH}]))*)"
+    r"(?=$|[\s(,.;])"
+)
+_WORK_MODE = re.compile(r"\b(onsite|on-site|remote|hybrid|online)\b", re.I)
+_LOCATION = re.compile(
+    r"\b(?:for\s+location|located\s+in|based\s+in|location)\s*:?\s+"
+    r"([A-Za-z][\w .'-]{1,80}?)"
+    r"(?=\s*[,;.]?\s*(?:\b(?:onsite|on-site|remote|hybrid|online)\b|$|\n|"
+    r"\b(?:role|company|work|notes|job)\b))",
+    re.I,
+)
+# "in Hyderabad, Telangana" after a role/company cue; avoid matching "in notes".
+_IN_PLACE = re.compile(
+    r"\bin\s+([A-Z][A-Za-z][\w.-]*(?:\s*,\s*[A-Z][A-Za-z][\w.-]*){0,3})"
+    r"(?!\s+notes\b)"
 )
 # A posting's reference ("Job ID: 0006955", "Req #R-1234"), kept as a note and never a phone.
 _REFERENCE = re.compile(
@@ -297,13 +322,44 @@ def _contact(message: str) -> str | None:
     return " ".join(dict.fromkeys(parts)) or None
 
 
+def _clean_role(role: str, company: str | None) -> str | None:
+    role = re.sub(r"\s+", " ", role).strip(f" -{_DASH}")
+    if not role or role == company or role in _NOT_COMPANIES or platform_in(role):
+        return None
+    return role
+
+
 def _role(message: str, company: str | None) -> str | None:
-    if m := _ROLE.search(message):
-        return m.group(1).strip()
-    for m in _TITLED_ROLE.finditer(message):
-        role = m.group(1).strip()
-        if role != company and role not in _NOT_COMPANIES and not platform_in(role):
-            return role
+    for pattern in (_APPLIED_ROLE, _ROLE):
+        match = pattern.search(message)
+        cleaned = _clean_role(match.group(1), company) if match else None
+        if cleaned:
+            return cleaned
+    for match in _TITLED_ROLE.finditer(message):
+        cleaned = _clean_role(match.group(1), company)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _location(message: str) -> str | None:
+    if m := _LOCATION.search(message):
+        return re.sub(r"\s+", " ", m.group(1)).strip(" .,")
+    if m := _IN_PLACE.search(message):
+        place = m.group(1).strip(" .,")
+        if place.casefold() not in {"notes", "note"} and not platform_in(place):
+            return place
+    return None
+
+
+def _work_mode(message: str) -> str | None:
+    if not (m := _WORK_MODE.search(message)):
+        return None
+    word = m.group(1).casefold().replace("-", "")
+    if word in {"onsite", "online"}:
+        return "onsite" if word == "onsite" else "remote"
+    if word in {"remote", "hybrid"}:
+        return word
     return None
 
 
@@ -334,6 +390,8 @@ def _record_defaults(
         "role": _role(message, str(out.get("company") or company or "")),
         "platform": platform_in(message),
         "contact": _contact(message),
+        "location": _location(message),
+        "work_mode": _work_mode(message),
     }
     if (day := find_day(message, tz, now)) is not None:
         found["date"] = day_value(day)
@@ -676,6 +734,8 @@ class IntakeNodes:
         system = prompts.EXTRACT_V2.format(
             today=f"{today.isoformat()} ({today.strftime('%A')})",
             catalog=catalog_text(),
+            draft_schema=prompts.draft_schema_json(),
+            record_schema=prompts.record_schema_json(),
             draft=draft,
             recent=recent,
         )

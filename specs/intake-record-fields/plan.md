@@ -14,7 +14,9 @@ next to the existing company/role regexes. Suggestions branch on `outcome["recor
 - `app/agents/intake/drafts.py` — allow `extras` through normalise; merge labelled keys
 - `app/agents/intake/suggest.py` — per-kind tips
 - `app/agents/graphs/intake.py` — wire labels/JSON, role/location/work_mode fallbacks
-- `app/agents/prompts/intake.py` — `intake-v4`
+- `app/agents/prompts/intake.py` — `intake-v4`, with `IntakeDraft` / `RecordIn` JSON schemas
+  injected into the extract prompt (same idea as embedding `model_json_schema()` in agent
+  instructions elsewhere)
 - `app/core/config.py`, `app/api/routes/admin_chat.py`, `scripts/chat.py` — local title wait
 - `tests/intake/`, `tests/agent/test_record_kinds.py` — new coverage
 - `dev-notes/testing/intake-record-fields.md` — live cases (git-ignored)
