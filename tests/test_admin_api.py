@@ -15,6 +15,7 @@ from app.core.app_factory import create_app
 from app.core.config import Settings
 from app.db.documents import Scope
 from tests.conftest import FakeCheck
+from tests.envelope import items, result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
 
 
@@ -115,7 +116,7 @@ async def test_whoami_and_last_used_at_once_a_minute(
     key = await _key(fakes, "public:read", name="reader")
     headers = {"X-API-Key": key}
     response = await client.get("/admin/v1/whoami", headers=headers)
-    assert response.json() == {"name": "reader", "scopes": ["public:read"]}
+    assert result(response) == {"name": "reader", "scopes": ["public:read"]}
     clock.now += timedelta(seconds=30)
     await client.get("/admin/v1/whoami", headers=headers)
     assert len(fakes.api_keys.touches) == 1
@@ -145,10 +146,10 @@ async def test_override_put_is_validated_stored_and_audited(
         f"{url}/groq-llama-8b", json={"enabled": True, "max_tier": "public"}, headers=headers
     )
     assert first.status_code == second.status_code == 200
-    assert second.json()["max_tier"] == "public"
+    assert result(second)["maxTier"] == "public"
 
     listed = await client.get(url, headers=headers)
-    assert [o["id"] for o in listed.json()] == ["groq-llama-8b"]
+    assert [o["id"] for o in items(listed)] == ["groq-llama-8b"]
 
     assert len(fakes.audit.entries) == 2
     entry: dict[str, Any] = fakes.audit.entries[1]
@@ -198,4 +199,4 @@ async def test_role_chain_override(setup: tuple[httpx.AsyncClient, Fakes, Clock]
         headers=headers,
     )
     assert response.status_code == 200
-    assert response.json()["chain"] == ["mock", "ollama-local"]
+    assert result(response)["chain"] == ["mock", "ollama-local"]

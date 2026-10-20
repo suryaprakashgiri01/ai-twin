@@ -18,6 +18,8 @@ from typing import Annotated, Any, Literal, get_args
 from email_validator import EmailNotValidError, validate_email
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from app.api.envelope import ApiModel
+
 LeadSource = Literal["assistant", "form"]
 # `new` waits for (or has had) its email; the owner moves it on from there.
 LeadStatus = Literal["new", "reviewed", "replied", "archived", "suppressed", "failed"]
@@ -141,7 +143,7 @@ class LeadDraft(BaseModel):
     link: str | None = None
 
 
-class LeadIn(BaseModel):
+class LeadIn(ApiModel):
     """A complete, valid lead: what is stored and emailed."""
 
     model_config = ConfigDict(extra="forbid")

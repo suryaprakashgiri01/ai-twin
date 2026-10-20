@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import StreamingResponse
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
 from app.services.intake import AssistantRequest, AssistantState, IntakeService
@@ -50,5 +51,5 @@ async def assistant(
 @router.get("/assistant/{conversation_id}", summary="A conversation's mode and pending draft")
 async def assistant_state(
     conversation_id: ConversationId, _principal: AdminKey, request: Request
-) -> AssistantState:
-    return await _service(request).state(conversation_id)
+) -> Envelope[AssistantState]:
+    return ok(await _service(request).state(conversation_id))

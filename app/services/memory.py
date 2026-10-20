@@ -21,9 +21,10 @@ from typing import Any, Protocol, cast
 import structlog
 from beanie import PydanticObjectId
 from bson.errors import InvalidId
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 from pymongo.errors import DuplicateKeyError
 
+from app.api.envelope import ApiModel
 from app.core.config import Settings
 from app.db.documents import (
     MEMORY_KINDS,
@@ -131,7 +132,7 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / norm if norm else 0.0
 
 
-class MemoryOut(BaseModel):
+class MemoryOut(ApiModel):
     id: str
     kind: MemoryKind
     text: str
@@ -144,7 +145,7 @@ class MemoryOut(BaseModel):
     updated_at: datetime
 
 
-class MemoryIn(BaseModel):
+class MemoryIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=TEXT_MAX)
@@ -153,7 +154,7 @@ class MemoryIn(BaseModel):
     tier: MemoryTier = "private"
 
 
-class MemoryPatch(BaseModel):
+class MemoryPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str | None = Field(default=None, min_length=1, max_length=TEXT_MAX)

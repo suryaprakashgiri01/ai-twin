@@ -15,6 +15,7 @@ from app.core.app_factory import create_app
 from app.core.config import Settings
 from scripts import chat
 from tests.conftest import FakeCheck
+from tests.envelope import result
 from tests.fakes import MemoryApiKeyStore, MemoryOverrideStore
 from tests.intake.harness import Twin, extract
 
@@ -68,16 +69,16 @@ async def test_sse_draft_then_yes(api: tuple[Twin, httpx.AsyncClient, dict[str, 
     got = events(first.text)
     names = [e for e, _ in got]
     assert names[0] == "meta" and names[-1] == "done" and "draft" in names
-    cid = got[0][1]["conversation_id"]
+    cid = got[0][1]["conversationId"]
     assert twin.index.meta[cid]["mode"] == "intake"
     assert twin.index.meta[cid]["name"]
 
     state = await client.get(f"/admin/v1/assistant/{cid}", headers=headers)
-    assert state.json()["pending"]["action"] == "add_record"
-    assert state.json()["mode"] == "intake"
+    assert result(state)["pending"]["action"] == "add_record"
+    assert result(state)["mode"] == "intake"
 
     second = await client.post(
-        "/admin/v1/assistant", json={"conversation_id": cid, "message": "yes"}, headers=headers
+        "/admin/v1/assistant", json={"conversationId": cid, "message": "yes"}, headers=headers
     )
     names = [e for e, _ in events(second.text)]
     assert "result" in names and names[-1] == "done"

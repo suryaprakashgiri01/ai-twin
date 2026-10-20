@@ -19,6 +19,7 @@ from app.core.config import Settings
 from app.services.public_chat import PublicChatRequest, PublicChatResponse, PublicPrepared
 from app.services.rate_limit import Limits, RateLimiter
 from tests.conftest import FakeCheck
+from tests.envelope import result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
 from tests.public.fakes import MemorySecurityEvents
 
@@ -110,7 +111,7 @@ async def test_public_routes_need_public_read() -> None:
         assert forbidden.status_code == 403
         assert forbidden.json()["error"]["code"] == "FORBIDDEN"
         assert (await _post(client, reader)).status_code == 200
-        assert (await _post(client, reader, stream="false")).json()["answer"] == "hi"
+        assert result(await _post(client, reader, stream="false"))["answer"] == "hi"
 
 
 async def test_vault_profile_mounts_public_routes_too() -> None:

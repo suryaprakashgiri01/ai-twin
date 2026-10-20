@@ -18,12 +18,12 @@ def draft_schema_json() -> str:
 
 def record_schema_json() -> str:
     """Pydantic JSON Schema for a job-search record payload (`add_record`)."""
-    return json.dumps(RecordIn.model_json_schema(), indent=2)
+    return json.dumps(RecordIn.model_json_schema(by_alias=False), indent=2)
 
 
 def records_batch_schema_json() -> str:
     """Pydantic JSON Schema for several records in one message (`add_records`)."""
-    return json.dumps(RecordsBatchIn.model_json_schema(), indent=2)
+    return json.dumps(RecordsBatchIn.model_json_schema(by_alias=False), indent=2)
 
 
 EXTRACT_V2 = """You help the owner add knowledge to their private vault. Today is {today}.

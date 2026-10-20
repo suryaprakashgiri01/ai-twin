@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.db.documents import Scope
 from app.security.worker import AlertSettings, AlertWorker
 from tests.conftest import FakeCheck
+from tests.envelope import items, result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog
 from tests.leads.fakes import FakeSmtp
 from tests.security.fakes import T0, MemoryEventStore, minutes
@@ -65,9 +66,9 @@ async def test_events_are_listed_newest_first_without_text(api: Api) -> None:
     api.store.add("canary_hit", T0 + minutes(1), severity="critical", rules=["canary"])
     api.store.add("auth_failed", T0 + minutes(2), rules=["INVALID_API_KEY"], surface="admin")
     async for c in client(api):
-        everything = (await c.get("/admin/v1/security/events")).json()
-        critical = (await c.get("/admin/v1/security/events?severity=critical")).json()
-        probes = (await c.get("/admin/v1/security/events?kind=meta_probe")).json()
+        everything = items(await c.get("/admin/v1/security/events"))
+        critical = items(await c.get("/admin/v1/security/events?severity=critical"))
+        probes = items(await c.get("/admin/v1/security/events?kind=meta_probe"))
         since = await c.get(
             "/admin/v1/security/events", params={"since": (T0 + minutes(1)).isoformat()}
         )
@@ -75,12 +76,12 @@ async def test_events_are_listed_newest_first_without_text(api: Api) -> None:
     assert [e["kind"] for e in everything] == ["auth_failed", "canary_hit", "meta_probe"]
     assert set(everything[0]) == {
         "id", "kind", "severity", "rules", "visitor", "surface",
-        "created_at", "alerted_at", "digested_at",
+        "createdAt", "alertedAt", "digestedAt",
     }  # fmt: skip
     assert everything[0]["surface"] == "admin"
     assert probes[0]["visitor"] == "aaaaaaaa"
     assert [e["kind"] for e in critical] == ["canary_hit"]
-    assert len(since.json()) == 2
+    assert len(items(since)) == 2
     assert bad.status_code == 422
 
 
@@ -88,20 +89,20 @@ async def test_alert_status_shows_policies_and_cooldowns(api: Api) -> None:
     api.store.add("canary_hit", T0, severity="critical")
     await api.worker.alert_due(T0)
     async for c in client(api):
-        status = (await c.get("/admin/v1/alerts/status")).json()
-    assert status["smtp_configured"] is True
-    assert status["cooldown_minutes"] == 30 and status["digest_hour"] == 9
+        status = result(await c.get("/admin/v1/alerts/status"))
+    assert status["smtpConfigured"] is True
+    assert status["cooldownMinutes"] == 30 and status["digestHour"] == 9
     assert status["timezone"] == "Asia/Kolkata"
     policies = {p["name"]: p for p in status["policies"]}
-    assert policies["canary_hit"]["cooldown_remaining_seconds"] > 0
-    assert policies["canary_hit"]["last_sent"] is not None
+    assert policies["canary_hit"]["cooldownRemainingSeconds"] > 0
+    assert policies["canary_hit"]["lastSent"] is not None
     assert policies["meta_probe"]["mode"] == "digest"
 
 
 async def test_test_alert_is_sent_and_audited(api: Api) -> None:
     async for c in client(api):
         response = await c.post("/admin/v1/alerts/test")
-    assert response.json() == {"sent": True}
+    assert result(response) == {"sent": True}
     assert api.smtp is not None
     [(_recipients, message)] = api.smtp.sent
     assert message["Subject"] == "ai-twin alert · low · test"
@@ -114,9 +115,9 @@ async def test_test_alert_without_smtp_is_503() -> None:
     api = Api(None)
     async for c in client(api):
         response = await c.post("/admin/v1/alerts/test")
-        status = (await c.get("/admin/v1/alerts/status")).json()
+        status = result(await c.get("/admin/v1/alerts/status"))
     assert response.status_code == 503
-    assert status["smtp_configured"] is False
+    assert status["smtpConfigured"] is False
     assert api.audit.entries == []
 
 

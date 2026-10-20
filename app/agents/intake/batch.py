@@ -13,10 +13,11 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
 from app.agents.intake.drafts import day_value, find_day
 from app.agents.routing import canonical_kind, record_kind_in
+from app.api.envelope import ApiModel
 from app.db.documents import WORK_MODES, CompanyType
 from app.services.profile import MAX_EXTRAS, RecordIn, _clip_extras
 
@@ -56,7 +57,7 @@ _BULLET = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+")
 _DEFAULT_STAGE = {"application": "applied", "invite": "invited to apply", "hr_call": "HR call"}
 
 
-class RecordsBatchIn(BaseModel):
+class RecordsBatchIn(ApiModel):
     """Several records in one request or one intake confirmation."""
 
     records: list[RecordIn] = Field(min_length=1, max_length=MAX_BATCH)

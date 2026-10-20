@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.core.llm import LLMServices
 from app.services.audit import AuditLog
@@ -25,14 +26,14 @@ def _audit(request: Request) -> AuditLog:
 
 
 @router.get("/overrides", summary="List stored model and role overrides")
-async def list_overrides(_principal: AdminKey, request: Request) -> list[Override]:
-    return await _store(request).list()
+async def list_overrides(_principal: AdminKey, request: Request) -> Envelope[list[Override]]:
+    return ok(await _store(request).list())
 
 
 @router.put("/overrides/{model_id:path}", summary="Create or replace one override (audited)")
 async def put_override(
     model_id: str, body: OverrideIn, principal: AdminKey, request: Request
-) -> Override:
+) -> Envelope[Override]:
     """`model_id` is a model id (`enabled`, `max_tier`) or `role:<role>` (`chain`). The body
     replaces the stored override, is checked against `config/models.yaml` (a tier can only be
     lowered) and applies to the next model call. The change is written to the audit log."""
@@ -50,4 +51,4 @@ async def put_override(
             "after": after.model_dump(mode="json", exclude={"id"}),
         },
     )
-    return after
+    return ok(after, "Override saved")

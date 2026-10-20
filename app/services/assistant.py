@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-
+from app.api.envelope import ApiModel
 from app.core.config import Settings
 from app.services.profile import ProfileStore
 
 
-class AssistantInfo(BaseModel):
+class AssistantInfo(ApiModel):
     greeting: str
     # Says plainly that this is an AI, not the owner.
     disclosure: str

@@ -17,6 +17,7 @@ from app.core.app_factory import create_app
 from app.core.config import Settings
 from app.services.security_events import MongoSecurityEvents, first_in_window
 from tests.conftest import FakeCheck
+from tests.envelope import result
 from tests.fakes import MemoryApiKeyStore
 from tests.public.fakes import MARKER, FakeJudge, Public, answer_of, make_public
 
@@ -164,7 +165,7 @@ async def test_no_visitor_or_answer_text_in_logs(capsys: pytest.CaptureFixture[s
                 "/v1/chat?stream=false", json={"message": message}, headers=headers
             )
             assert response.status_code == 200
-    assert response.json()["intent"] == "blocked"
+    assert result(response)["intent"] == "blocked"
     lines = [
         json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
     ]

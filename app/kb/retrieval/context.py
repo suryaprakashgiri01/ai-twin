@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
+from app.api.envelope import ApiModel
 from app.kb.retrieval.retriever import Hit
 from llm_orchestrator import Tier
 
@@ -22,7 +23,7 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
 
 
-class Source(BaseModel):
+class Source(ApiModel):
     """One cited document, as listed in the `sources` event."""
 
     index: int

@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field, SerializationInfo, field_serializer
 
 from app.agents.context import ContextBuilder, OwnerContext
 from app.agents.graphs.owner import (
@@ -30,6 +30,7 @@ from app.agents.prompts import owner as owner_prompts
 from app.agents.streaming import StreamingGenerator, sse
 from app.agents.tools.profile import ProfileTool
 from app.agents.tools.records import MongoRecordsTool, RecordsResult
+from app.api.envelope import ApiModel, camel_keys
 from app.core.config import Settings
 from app.core.llm import LLMServices
 from app.core.resources import Resources
@@ -58,7 +59,7 @@ logger = structlog.get_logger(__name__)
 ChatTier = Literal["public", "private", "confidential"]
 
 
-class ChatRequest(BaseModel):
+class ChatRequest(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
@@ -70,12 +71,12 @@ class ChatRequest(BaseModel):
     prefer: Prefer | None = None
 
 
-class TokenCounts(BaseModel):
+class TokenCounts(ApiModel):
     input: int = 0
     output: int = 0
 
 
-class ChatResponse(BaseModel):
+class ChatResponse(ApiModel):
     conversation_id: str
     seq: int | None = None
     route: str
@@ -92,8 +93,17 @@ class ChatResponse(BaseModel):
     records: RecordsResult | None = None
     error: ErrorInfo | None = None
 
+    @field_serializer("records")
+    def _records(self, value: RecordsResult | None, info: SerializationInfo) -> Any:
+        """`RecordsQuery` is the router model's structured output, so it keeps snake_case
+        fields; the API shows its keys camelCase."""
+        if value is None:
+            return None
+        data = value.model_dump(mode=info.mode)
+        return camel_keys(data) if info.by_alias else data
 
-class ConversationSummary(BaseModel):
+
+class ConversationSummary(ApiModel):
     id: str
     name: str | None = None
     description: str | None = None
@@ -103,7 +113,7 @@ class ConversationSummary(BaseModel):
     mode: ConversationMode = "ask"
 
 
-class TitleUpdate(BaseModel):
+class TitleUpdate(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, pattern=NAME_PATTERN, max_length=NAME_MAX)

@@ -18,10 +18,11 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 import structlog
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 from pymongo.errors import DuplicateKeyError
 from redis.asyncio import Redis
 
+from app.api.envelope import ApiModel
 from app.cache.redis import conversation_key, conversation_seq_key
 from app.db.documents import Channel, Conversation, Message, Role, Tier, new_id, utcnow
 from app.exceptions import AppError, ErrorCode
@@ -43,7 +44,7 @@ def _to_millis(value: datetime) -> datetime:
     return value.replace(microsecond=value.microsecond // 1000 * 1000)
 
 
-class Turn(BaseModel):
+class Turn(ApiModel):
     """One message in a conversation. `seq` is assigned by `append_turn`."""
 
     seq: int = 0

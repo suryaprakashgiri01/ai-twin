@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.services.admin_ops import AdminOps, key_actor
 from app.services.profile import ProfileIn, ProfileOut
@@ -21,12 +22,14 @@ def _ops(request: Request) -> AdminOps:
 
 
 @router.get("", summary="The owner's profile")
-async def get_profile(_principal: AdminKey, request: Request) -> ProfileOut:
-    return await _ops(request).get_profile()
+async def get_profile(_principal: AdminKey, request: Request) -> Envelope[ProfileOut]:
+    return ok(await _ops(request).get_profile())
 
 
 @router.put("", summary="Replace the owner's profile (audited)")
-async def put_profile(body: ProfileIn, principal: AdminKey, request: Request) -> ProfileOut:
+async def put_profile(
+    body: ProfileIn, principal: AdminKey, request: Request
+) -> Envelope[ProfileOut]:
     """`resume_document_id` names an ingested document; its original file becomes the
     downloadable resume."""
-    return await _ops(request).put_profile(body, key_actor(principal.name))
+    return ok(await _ops(request).put_profile(body, key_actor(principal.name)), "Profile saved")

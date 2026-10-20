@@ -13,8 +13,9 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.api.envelope import ApiModel
 from app.db.documents import ModelOverride, utcnow
 from app.exceptions import AppError, ErrorCode
 from llm_orchestrator import Inventory, InventoryError, Role
@@ -26,7 +27,7 @@ ROLE_PREFIX = "role:"
 OverrideTier = Literal["public", "private", "confidential"]
 
 
-class OverrideIn(BaseModel):
+class OverrideIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool | None = None

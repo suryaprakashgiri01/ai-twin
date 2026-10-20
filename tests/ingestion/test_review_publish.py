@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.answer_cache import public_version
+from tests.envelope import result
 from tests.ingestion import persona
 from tests.ingestion.conftest import Api
 
@@ -21,10 +22,9 @@ async def ingest(api: Api, body: str, category: str, title: str = "Doc") -> str:
     )
     assert response.status_code == 202
     await api.wait()
-    status = (
-        await api.client.get(f"{BASE}/sources/{response.json()['source_id']}", headers=api.headers)
-    ).json()
-    [document_id] = status["document_ids"]
+    source_id = result(response)["sourceId"]
+    status = result(await api.client.get(f"{BASE}/sources/{source_id}", headers=api.headers))
+    [document_id] = status["documentIds"]
     return str(document_id)
 
 
@@ -36,6 +36,11 @@ async def counts(api: Api, document_id: str) -> dict[str, int]:
     return {c: await api.h.index.count(c, document_id) for c in api.h.index.collections}
 
 
+def review_items(response: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = result(response)["items"]
+    return found
+
+
 def actions(api: Api) -> list[str]:
     return [e["action"] for e in api.audit.entries if e["action"].startswith("document.")]
 
@@ -43,12 +48,12 @@ def actions(api: Api) -> list[str]:
 async def test_review_lists_pending_and_quarantined_newest_first(api: Api) -> None:
     pending = await ingest(api, persona.note(), "experience", "First")
     quarantined = await ingest(api, "Fixed FAKEPROJ-12 today.", "work-note", "Second")
-    body = (await call(api, "GET", "/review")).json()
-    assert [i["id"] for i in body["items"]] == [quarantined, pending]
-    first = body["items"][1]
+    queue = review_items(await call(api, "GET", "/review"))
+    assert [i["id"] for i in queue] == [quarantined, pending]
+    first = queue[1]
     assert first["label"]["reason"] and first["label"]["tier"] == "private"
-    assert body["items"][0]["quarantine_rules"] == ["ticket-keys"]
-    assert len((await call(api, "GET", "/review?limit=1")).json()["items"]) == 1
+    assert queue[0]["quarantineRules"] == ["ticket-keys"]
+    assert len(review_items(await call(api, "GET", "/review?limit=1"))) == 1
 
 
 async def test_publish_requires_public_and_approved(api: Api) -> None:
@@ -74,13 +79,13 @@ async def test_publish_copies_non_canary_chunks_and_unpublish_delete_remove_them
     assert (await counts(api, document_id))["kb_private"] == 2  # one chunk + one canary
     patched = await call(api, "PATCH", f"/documents/{document_id}", json={"tier": "public"})
     assert patched.status_code == 200
-    assert patched.json()["label"]["by"] == "owner"
+    assert result(patched)["label"]["by"] == "owner"
     assert api.h.store.canaries == {}  # public documents carry no canary
     assert (await call(api, "POST", f"/documents/{document_id}/approve")).status_code == 200
 
     published = await call(api, "POST", f"/documents/{document_id}/publish")
     assert published.status_code == 200
-    assert published.json()["chunks"] == 1
+    assert result(published)["chunks"] == 1
     public_points = await api.h.index.points_for("kb_public", document_id)
     assert [p.payload["published"] for p in public_points] == [True]
     assert not any(p.payload["canary"] for p in public_points)
@@ -88,16 +93,16 @@ async def test_publish_copies_non_canary_chunks_and_unpublish_delete_remove_them
     assert all(c.published for c in api.h.store.chunks)
 
     unpublished = await call(api, "POST", f"/documents/{document_id}/unpublish")
-    assert unpublished.json()["published"] is False
+    assert result(unpublished)["published"] is False
     assert await api.h.index.count("kb_public") == 0
 
     await call(api, "POST", f"/documents/{document_id}/publish")
     assert await api.h.index.count("kb_public") == 1
     deleted = await call(api, "DELETE", f"/documents/{document_id}")
-    assert deleted.status_code == 204
+    assert result(deleted) == {"id": document_id}
     assert await counts(api, document_id) == {"kb_public": 0, "kb_private": 0, "kb_confidential": 0}
     assert (await call(api, "GET", f"/documents/{document_id}")).status_code == 404
-    assert (await call(api, "GET", "/review")).json()["items"] == []
+    assert review_items(await call(api, "GET", "/review")) == []
     assert actions(api) == [
         "document.update",
         "document.approve",
@@ -114,8 +119,8 @@ async def test_relabel_moves_vectors_and_resets_approval(api: Api) -> None:
     moved = await call(
         api, "PATCH", f"/documents/{document_id}", json={"tier": "confidential", "title": "New"}
     )
-    body = moved.json()
-    assert body["tier"] == "confidential" and body["review_status"] == "pending"
+    body = result(moved)
+    assert body["tier"] == "confidential" and body["reviewStatus"] == "pending"
     assert body["title"] == "New"
     assert await counts(api, document_id) == {"kb_public": 0, "kb_private": 0, "kb_confidential": 2}
     points = await api.h.index.points_for("kb_confidential", document_id)
@@ -133,7 +138,7 @@ async def test_relabel_moves_vectors_and_resets_approval(api: Api) -> None:
 async def test_relabel_to_restricted_and_back(api: Api) -> None:
     document_id = await ingest(api, BODY, "experience")
     restricted = await call(api, "PATCH", f"/documents/{document_id}", json={"tier": "restricted"})
-    assert restricted.json()["text"] is None
+    assert result(restricted)["text"] is None
     assert await counts(api, document_id) == {"kb_public": 0, "kb_private": 0, "kb_confidential": 0}
     assert api.h.store.chunks == []
     back = await call(api, "PATCH", f"/documents/{document_id}", json={"tier": "private"})
@@ -155,8 +160,8 @@ async def test_release_quarantined_document(api: Api) -> None:
     assert (await call(api, "POST", f"/documents/{document_id}/approve")).status_code == 409
     released = await call(api, "POST", f"/documents/{document_id}/release")
     assert released.status_code == 200
-    assert released.json()["document"]["review_status"] == "pending"
-    assert released.json()["chunks"] == 2
+    assert result(released)["document"]["reviewStatus"] == "pending"
+    assert result(released)["chunks"] == 2
     assert (await counts(api, document_id))["kb_private"] == 2
     again = await call(api, "POST", f"/documents/{document_id}/release")
     assert again.status_code == 409
@@ -173,9 +178,9 @@ async def test_patch_validation_and_unknown_documents(api: Api) -> None:
     assert bad.status_code == 422
     for path in ("/documents/nope", "/documents/6ad3501e8d52090966a06598"):
         assert (await call(api, "GET", path)).status_code == 404
-    full = (await call(api, "GET", f"/documents/{document_id}")).json()
+    full = result(await call(api, "GET", f"/documents/{document_id}"))
     assert full["text"].startswith("# Interview")
-    assert full["redaction_report"] == {}
+    assert full["redactionReport"] == {}
     api.app.state.ingestion = None
     assert (await call(api, "GET", f"/documents/{document_id}")).status_code == 503
 

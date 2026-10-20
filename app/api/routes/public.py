@@ -11,8 +11,8 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
 
+from app.api.envelope import ApiModel, Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.auth.visitor import Visitor, resolve_visitor
 from app.core.config import Settings
@@ -98,7 +98,7 @@ def _chat(request: Request) -> PublicChat:
 @router.post(
     "/chat",
     summary="Ask the AI twin (SSE by default)",
-    response_model=PublicChatResponse,
+    response_model=Envelope[PublicChatResponse],
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def chat(
@@ -118,7 +118,7 @@ async def chat(
             service.sse(prepared), media_type="text/event-stream", headers=SSE_HEADERS
         )
     response = await service.answer(prepared)
-    return JSONResponse(response.model_dump(mode="json"))
+    return JSONResponse(ok(response).model_dump(mode="json", by_alias=True))
 
 
 def _resume(request: Request) -> ResumeProvider:
@@ -148,14 +148,15 @@ async def resume(request: Request, who: Annotated[Visitor, Depends(visitor)]) ->
 
 
 @router.get("/assistant", summary="Greeting, AI-twin disclosure, privacy note, availability")
-async def assistant(request: Request, _principal: PublicKey) -> AssistantInfo:
-    return await assistant_info(request.app.state.settings, request.app.state.resources.profile)
+async def assistant(request: Request, _principal: PublicKey) -> Envelope[AssistantInfo]:
+    info = await assistant_info(request.app.state.settings, request.app.state.resources.profile)
+    return ok(info)
 
 
 # --- opportunities --------------------------------------------------------------------------
 
 
-class OpportunityReceived(BaseModel):
+class OpportunityReceived(ApiModel):
     status: Literal["received"] = "received"
     message: str
 
@@ -182,7 +183,7 @@ def _leads(request: Request) -> LeadService:
 )
 async def opportunity(
     body: LeadForm, request: Request, who: Annotated[Visitor, Depends(lead_visitor)]
-) -> OpportunityReceived:
+) -> Envelope[OpportunityReceived]:
     """The same pipeline as the assistant: Turnstile (when configured), duplicate check, caps,
     triage, store, then the owner's email from the outbox. A duplicate gets the same answer
     and sends nothing. No mail ever goes to the address in the body."""
@@ -200,4 +201,5 @@ async def opportunity(
         )
     settings: Settings = request.app.state.settings
     owner = settings.public_owner_name.strip() or "the owner"
-    return OpportunityReceived(message=f"Thanks, your message was passed to {owner}.")
+    message = f"Thanks, your message was passed to {owner}."
+    return ok(OpportunityReceived(message=message), message)

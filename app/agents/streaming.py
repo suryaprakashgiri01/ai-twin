@@ -19,6 +19,7 @@ from langchain_core.messages import BaseMessage, BaseMessageChunk
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.generation import Generation, MidStreamError
+from app.api.envelope import camel_keys
 from llm_orchestrator import (
     Attempt,
     ModelSpec,
@@ -35,8 +36,10 @@ logger = structlog.get_logger(__name__)
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
-    """One SSE frame. JSON never contains a raw newline, so a single `data:` line suffices."""
-    return f"event: {event}\ndata: {json.dumps(data, default=str, ensure_ascii=False)}\n\n"
+    """One SSE frame, keys camelCase like every API body. JSON never contains a raw newline, so a
+    single `data:` line suffices."""
+    body = json.dumps(camel_keys(data), default=str, ensure_ascii=False)
+    return f"event: {event}\ndata: {body}\n\n"
 
 
 class StreamingGenerator:

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.core.config import Settings
 from app.exceptions import AppError, ErrorCode
@@ -41,7 +42,7 @@ def _service(request: Request) -> OwnerChatService:
 @router.post(
     "/chat",
     summary="Ask the vault (SSE by default)",
-    response_model=ChatResponse,
+    response_model=Envelope[ChatResponse],
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def chat(
@@ -62,7 +63,7 @@ async def chat(
             service.sse(prepared), media_type="text/event-stream", headers=SSE_HEADERS
         )
     response = await service.answer(prepared)
-    return JSONResponse(response.model_dump(mode="json"))
+    return JSONResponse(ok(response).model_dump(mode="json", by_alias=True))
 
 
 @router.get("/conversations", summary="Owner conversations, newest first")
@@ -70,15 +71,15 @@ async def list_conversations(
     _principal: AdminKey,
     request: Request,
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
-) -> list[ConversationSummary]:
-    return await _service(request).list_conversations(limit)
+) -> Envelope[list[ConversationSummary]]:
+    return ok(await _service(request).list_conversations(limit))
 
 
 @router.get("/conversations/by-name/{name}", summary="One owner conversation, found by its name")
 async def conversation_by_name(
     name: ConversationName, _principal: AdminKey, request: Request
-) -> ConversationSummary:
-    return await _service(request).conversation_by_name(name)
+) -> Envelope[ConversationSummary]:
+    return ok(await _service(request).conversation_by_name(name))
 
 
 @router.patch(
@@ -86,7 +87,7 @@ async def conversation_by_name(
 )
 async def update_conversation(
     conversation_id: ConversationId, body: TitleUpdate, principal: AdminKey, request: Request
-) -> ConversationSummary:
+) -> Envelope[ConversationSummary]:
     summary = await _service(request).update_title(conversation_id, body)
     audit: AuditLog = request.app.state.resources.audit
     await audit.record(
@@ -95,7 +96,7 @@ async def update_conversation(
         target=conversation_id,
         details={"fields": sorted(body.model_dump(exclude_none=True))},
     )
-    return summary
+    return ok(summary, "Conversation updated")
 
 
 @router.post(
@@ -109,14 +110,19 @@ async def refresh_title(
     request: Request,
     wait_seconds: Annotated[
         float | None,
-        Query(ge=0, le=120, description="how long to wait before the refresh continues later"),
+        Query(
+            alias="waitSeconds",
+            ge=0,
+            le=120,
+            description="how long to wait before the refresh continues later",
+        ),
     ] = None,
-) -> TitleRefresh:
+) -> Envelope[TitleRefresh]:
     """One model call at the conversation's own tier (intake or confidential → local model
     only). The description and the rolling summary are always refreshed; the name only if the
     owner never renamed it. Memory candidates from the owner's messages are stored as pending
-    (`new_memories`). `scheduled` means a slow model is still working and will save its result
-    when done. With no `wait_seconds`, intake (and other local-only) conversations use the
+    (`newMemories`). `scheduled` means a slow model is still working and will save its result
+    when done. With no `waitSeconds`, intake (and other local-only) conversations use the
     longer local wait."""
     digester: ConversationDigester | None = getattr(request.app.state, "digester", None)
     if digester is None:
@@ -131,7 +137,7 @@ async def refresh_title(
             if detail.mode == "intake"
             else settings.title_refresh_wait_seconds
         )
-    return await digester.refresh_within(conversation_id, wait)
+    return ok(await digester.refresh_within(conversation_id, wait))
 
 
 @router.get(
@@ -143,5 +149,5 @@ async def get_conversation(
     _principal: AdminKey,
     request: Request,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
-) -> ConversationDetail:
-    return await _service(request).conversation(conversation_id, limit)
+) -> Envelope[ConversationDetail]:
+    return ok(await _service(request).conversation(conversation_id, limit))

@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
 from app.agents.checkpoint import MongoCheckpointSaver
 from app.agents.context import ContextBuilder, OwnerContext
@@ -35,6 +35,7 @@ from app.agents.graphs.intake import (
 from app.agents.graphs.owner import OwnerDeps, build_owner_graph
 from app.agents.prompts import intake as prompts
 from app.agents.streaming import sse
+from app.api.envelope import ApiModel
 from app.core.config import Settings
 from app.core.llm import LLMServices
 from app.core.resources import Resources
@@ -55,14 +56,14 @@ HISTORY_TURNS = 6
 TURN_ROUTE = "intake"
 
 
-class AssistantRequest(BaseModel):
+class AssistantRequest(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     message: str = Field(min_length=1, max_length=4000)
 
 
-class PendingDraft(BaseModel):
+class PendingDraft(ApiModel):
     """A summary waiting for the owner's yes: a draft, a suggestion, or a delete's retype."""
 
     kind: Literal["draft", "suggestion", "retype"]
@@ -74,7 +75,7 @@ class PendingDraft(BaseModel):
     reask: bool = False
 
 
-class AssistantState(BaseModel):
+class AssistantState(ApiModel):
     conversation_id: str
     mode: ConversationMode
     pending: PendingDraft | None = None

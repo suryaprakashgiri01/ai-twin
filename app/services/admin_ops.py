@@ -16,8 +16,9 @@ from datetime import datetime
 from typing import Any, Literal
 
 from beanie import PydanticObjectId
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.api.envelope import ApiModel
 from app.core.config import Settings, ingest_max_bytes
 from app.db.documents import (
     BlobRef,
@@ -79,7 +80,7 @@ def intake_actor(key_name: str) -> str:
 # --- ingestion shapes -----------------------------------------------------------------------
 
 
-class Submitted(BaseModel):
+class Submitted(ApiModel):
     source_id: str
     status: JobStatus
     # True when this content was already submitted: nothing new was created.
@@ -88,11 +89,11 @@ class Submitted(BaseModel):
     uri: str | None = None
 
 
-class SubmittedBatch(BaseModel):
+class SubmittedBatch(ApiModel):
     sources: list[Submitted]
 
 
-class SourceStatus(BaseModel):
+class SourceStatus(ApiModel):
     id: str
     kind: SourceKind
     status: JobStatus
@@ -106,7 +107,7 @@ class SourceStatus(BaseModel):
     updated_at: datetime
 
 
-class MetaIn(BaseModel):
+class MetaIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     category: Category
@@ -135,7 +136,7 @@ class UrlsIn(MetaIn):
     urls: list[str] = Field(min_length=1, max_length=MAX_URLS)
 
 
-class GitHubIn(BaseModel):
+class GitHubIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     # `owner/name`, or `owner/name@branch` for a branch other than the default.
@@ -155,7 +156,7 @@ class FileIn:
 # --- review shapes --------------------------------------------------------------------------
 
 
-class DocumentOut(BaseModel):
+class DocumentOut(ApiModel):
     id: str
     source_id: str
     title: str
@@ -177,16 +178,16 @@ class DocumentOut(BaseModel):
     text: str | None
 
 
-class ReviewList(BaseModel):
+class ReviewList(ApiModel):
     items: list[DocumentOut]
 
 
-class PublishResult(BaseModel):
+class PublishResult(ApiModel):
     document: DocumentOut
     chunks: int
 
 
-class DocumentPatch(BaseModel):
+class DocumentPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=300)
@@ -279,7 +280,7 @@ class AdminDeps:
     leads: LeadStore | None = None
 
 
-class LeadOut(BaseModel):
+class LeadOut(ApiModel):
     """A lead as the owner sees it in the vault."""
 
     id: str
@@ -314,7 +315,7 @@ class LeadOut(BaseModel):
         )
 
 
-class LeadPatch(BaseModel):
+class LeadPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     status: OwnerStatus

@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
 
+from app.api.envelope import ApiModel, Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
 from app.security.alerts import VISITOR_PREFIX, StoredEvent, safe_rule
@@ -23,7 +23,7 @@ AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
 SeverityQuery = Literal["low", "medium", "high", "critical"]
 
 
-class SecurityEventOut(BaseModel):
+class SecurityEventOut(ApiModel):
     id: str
     kind: str
     severity: str
@@ -50,7 +50,7 @@ class SecurityEventOut(BaseModel):
         )
 
 
-class PolicyOut(BaseModel):
+class PolicyOut(ApiModel):
     name: str
     mode: str
     rule: str
@@ -58,7 +58,7 @@ class PolicyOut(BaseModel):
     last_sent: datetime | None
 
 
-class AlertStatus(BaseModel):
+class AlertStatus(ApiModel):
     smtp_configured: bool
     cooldown_minutes: int
     digest_hour: int
@@ -67,7 +67,7 @@ class AlertStatus(BaseModel):
     policies: list[PolicyOut]
 
 
-class AlertTestResult(BaseModel):
+class AlertTestResult(ApiModel):
     sent: bool
 
 
@@ -88,38 +88,40 @@ async def list_events(
         None
     ),
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
-) -> list[SecurityEventOut]:
+) -> Envelope[list[SecurityEventOut]]:
     events = await _worker(request).store.recent(
         kind=kind, severity=severity, since=since, limit=limit
     )
-    return [SecurityEventOut.of(e) for e in events]
+    return ok([SecurityEventOut.of(e) for e in events])
 
 
 @router.get("/alerts/status", summary="Alert policies, cooldowns, last sent, SMTP configured")
-async def alert_status(_principal: AdminKey, request: Request) -> AlertStatus:
+async def alert_status(_principal: AdminKey, request: Request) -> Envelope[AlertStatus]:
     worker = _worker(request)
     s = worker.settings
-    return AlertStatus(
-        smtp_configured=worker.configured,
-        cooldown_minutes=int(s.cooldown.total_seconds() // 60),
-        digest_hour=s.digest_hour,
-        timezone=str(s.timezone),
-        last_digest=await worker.last_digest(),
-        policies=[
-            PolicyOut(
-                name=p.name,
-                mode=p.mode,
-                rule=p.rule,
-                cooldown_remaining_seconds=p.cooldown_seconds,
-                last_sent=p.last_sent,
-            )
-            for p in await worker.status()
-        ],
+    return ok(
+        AlertStatus(
+            smtp_configured=worker.configured,
+            cooldown_minutes=int(s.cooldown.total_seconds() // 60),
+            digest_hour=s.digest_hour,
+            timezone=str(s.timezone),
+            last_digest=await worker.last_digest(),
+            policies=[
+                PolicyOut(
+                    name=p.name,
+                    mode=p.mode,
+                    rule=p.rule,
+                    cooldown_remaining_seconds=p.cooldown_seconds,
+                    last_sent=p.last_sent,
+                )
+                for p in await worker.status()
+            ],
+        )
     )
 
 
 @router.post("/alerts/test", summary="Send one test alert email (audited)")
-async def test_alert(principal: AdminKey, request: Request) -> AlertTestResult:
+async def test_alert(principal: AdminKey, request: Request) -> Envelope[AlertTestResult]:
     """Sends `ai-twin alert · low · test` to the alert recipient. 503 when SMTP is not
     configured; `sent: false` when the send itself failed (the error is in the logs)."""
     worker = _worker(request)
@@ -137,4 +139,4 @@ async def test_alert(principal: AdminKey, request: Request) -> AlertTestResult:
         target="alerts",
         details={"sent": sent},
     )
-    return AlertTestResult(sent=sent)
+    return ok(AlertTestResult(sent=sent), "Test alert sent" if sent else "Test alert failed")

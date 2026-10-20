@@ -12,8 +12,9 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from beanie import PydanticObjectId
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
+from app.api.envelope import ApiModel
 from app.db.documents import (
     PROFILE_ID,
     BlobRef,
@@ -51,7 +52,7 @@ def _clip_extras(value: Any) -> dict[str, str]:
     return out
 
 
-class ProfileIn(BaseModel):
+class ProfileIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     availability: str = Field(default="not looking", max_length=200)
@@ -62,18 +63,26 @@ class ProfileIn(BaseModel):
     resume_document_id: str | None = None
 
 
-class ProfileOut(BaseModel):
+class BlobOut(ApiModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sha256: str
+    size: int
+    content_type: str
+
+
+class ProfileOut(ApiModel):
     availability: str
     notice_period: str | None
     preferred_roles: list[str]
     locations: list[str]
     reply_time: str | None = None
     resume_document_id: str | None
-    resume_blob: BlobRef | None
+    resume_blob: BlobOut | None
     updated_at: datetime
 
 
-class RecordIn(BaseModel):
+class RecordIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: RecordKind = Field(
@@ -135,7 +144,7 @@ class RecordIn(BaseModel):
         return _clip_extras(value)
 
 
-class RecordPatch(BaseModel):
+class RecordPatch(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     company: str | None = Field(default=None, min_length=1, max_length=200)
@@ -192,7 +201,7 @@ def _profile_out(doc: Profile) -> ProfileOut:
         locations=doc.locations,
         reply_time=doc.reply_time,
         resume_document_id=str(doc.resume_document_id) if doc.resume_document_id else None,
-        resume_blob=doc.resume_blob,
+        resume_blob=BlobOut.model_validate(doc.resume_blob) if doc.resume_blob else None,
         updated_at=doc.updated_at,
     )
 

@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.leads.models import LeadStatus, TriageLabel
 from app.services.admin_ops import AdminOps, LeadOut, LeadPatch, key_actor
@@ -26,8 +27,8 @@ async def list_leads(
     status: Annotated[LeadStatus | None, Query()] = None,
     triage: Annotated[TriageLabel | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> list[LeadOut]:
-    return await _ops(request).list_leads(status, triage, limit)
+) -> Envelope[list[LeadOut]]:
+    return ok(await _ops(request).list_leads(status, triage, limit))
 
 
 @router.patch(
@@ -35,5 +36,6 @@ async def list_leads(
 )
 async def patch_lead(
     lead_id: str, body: LeadPatch, principal: AdminKey, request: Request
-) -> LeadOut:
-    return await _ops(request).update_lead(lead_id, body, key_actor(principal.name))
+) -> Envelope[LeadOut]:
+    lead = await _ops(request).update_lead(lead_id, body, key_actor(principal.name))
+    return ok(lead, "Lead updated")
