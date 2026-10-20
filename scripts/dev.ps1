@@ -4,7 +4,8 @@
 #   ./scripts/dev.ps1 cleanup --apply
 #   ./scripts/dev.ps1 keys create owner --scope admin
 #   ./scripts/dev.ps1 models --embeddings
-#   ./scripts/dev.ps1 ollama start   (status | install | start | stop | pull [model] | smoke)
+#   ./scripts/dev.ps1 ollama start   (status | logs | install | start | stop | pull [model] | smoke)
+#   ./scripts/dev.ps1 graph update   (graph query … | graph explain … | graph path A B)
 #   ./scripts/dev.ps1 import vault/exports/<archive>.atv --apply
 #   ./scripts/dev.ps1 seed --apply            (remove: seed --remove --apply)
 #   ./scripts/dev.ps1 chat                    (chat list | chat continue <name|id> | chat rename <name|id> <new-name>)
@@ -18,11 +19,11 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "chat", "migrate", "memory")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "chat", "migrate", "memory", "graph")
 
 switch ($Command) {
     "help" {
-        Write-Host "Commands: $($scripts -join ', '), run, test, twin"
+        Write-Host "Commands: $($scripts -join ', '), run, test, twin, graph-update/query/explain/path via: graph <subcommand>"
     }
     "run" {
         uv run python -m app.main --reload
