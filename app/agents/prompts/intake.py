@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from app.agents.intake.batch import RecordsBatchIn
 from app.agents.intake.drafts import IntakeDraft
 from app.services.profile import RecordIn
 
@@ -18,6 +19,11 @@ def draft_schema_json() -> str:
 def record_schema_json() -> str:
     """Pydantic JSON Schema for a job-search record payload (`add_record`)."""
     return json.dumps(RecordIn.model_json_schema(), indent=2)
+
+
+def records_batch_schema_json() -> str:
+    """Pydantic JSON Schema for several records in one message (`add_records`)."""
+    return json.dumps(RecordsBatchIn.model_json_schema(), indent=2)
 
 
 EXTRACT_V2 = """You help the owner add knowledge to their private vault. Today is {today}.
@@ -39,8 +45,14 @@ whole reply. Put field values only in `payload`, keyed by the action's field nam
 
 - For `add_record` / `update_record`, every record field in `payload` **MUST** match the \
 `RecordIn` schema below (same names and meanings). Unknown short attributes the owner named \
-go in `extras`, never as invented top-level keys.
+go in `extras`, never as invented top-level keys. `company_type` is product, service, \
+research, startup or other (also from "product-based", "service based", …).
 {record_schema}
+
+- When the owner lists **several** applications or roles in one message, use `add_records` \
+with `payload.records` as a list of `RecordIn` objects (shared date/kind apply to each). \
+Never invent a company or role.
+{records_batch_schema}
 
 Rules:
 - `action`: one name from the list, or null for small talk.

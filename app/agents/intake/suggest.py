@@ -32,12 +32,16 @@ def suggest(outcome: Outcome) -> Suggestion | None:
     action = outcome.get("action")
     if action in ("add_note", "ingest_url", "ingest_file", "ingest_github", "source_status"):
         return _after_ingest(documents_of(outcome))
-    if action in ("add_record", "update_record"):
+    if action in ("add_record", "update_record", "add_records"):
         return _after_record(outcome)
     return None
 
 
 def _after_record(outcome: Outcome) -> Suggestion:
+    if outcome.get("action") == "add_records":
+        return Suggestion(
+            "Anything else about these applications (referral, salary range, company type)?"
+        )
     raw = outcome.get("record")
     record: dict[str, Any] = raw if isinstance(raw, dict) else {}
     kind = str(record.get("kind") or "")

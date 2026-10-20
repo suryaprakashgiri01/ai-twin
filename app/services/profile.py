@@ -7,6 +7,7 @@ embedded or published.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.db.documents import (
     PROFILE_ID,
     BlobRef,
+    CompanyType,
     Profile,
     Record,
     RecordKind,
@@ -23,7 +25,7 @@ from app.db.documents import (
     utcnow,
 )
 
-__all__ = ["RecordKind", "WorkMode"]
+__all__ = ["CompanyType", "RecordKind", "WorkMode"]
 
 # Extra owner-labelled attributes on a record: few short keys, never a dump of free text.
 MAX_EXTRAS = 10
@@ -115,6 +117,10 @@ class RecordIn(BaseModel):
         default=None,
         description="onsite, remote or hybrid",
     )
+    company_type: CompanyType | None = Field(
+        default=None,
+        description="product, service, research, startup or other",
+    )
     extras: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -141,6 +147,7 @@ class RecordPatch(BaseModel):
     contact: str | None = Field(default=None, max_length=300)
     location: str | None = Field(default=None, max_length=200)
     work_mode: WorkMode | None = None
+    company_type: CompanyType | None = None
     extras: dict[str, str] | None = None
 
     @field_validator("extras", mode="before")
@@ -164,9 +171,11 @@ class ProfileStore(Protocol):
 
 
 class RecordStore(Protocol):
-    async def list(self, kind: RecordKind | None) -> list[RecordOut]: ...
+    async def list(self, kind: RecordKind | None) -> Sequence[RecordOut]: ...
 
     async def create(self, body: RecordIn) -> RecordOut: ...
+
+    async def create_many(self, bodies: Sequence[RecordIn]) -> Sequence[RecordOut]: ...
 
     async def update(
         self, record_id: PydanticObjectId, changes: dict[str, Any]
@@ -210,7 +219,7 @@ class MongoProfileStore:
 
 
 class MongoRecordStore:
-    async def list(self, kind: RecordKind | None) -> list[RecordOut]:
+    async def list(self, kind: RecordKind | None) -> Sequence[RecordOut]:
         query = Record.find({"kind": kind} if kind else {}).sort("-date")
         return [_record_out(d) for d in await query.to_list()]
 
@@ -218,6 +227,12 @@ class MongoRecordStore:
         doc = Record(**body.model_dump())
         await doc.insert()
         return _record_out(doc)
+
+    async def create_many(self, bodies: Sequence[RecordIn]) -> Sequence[RecordOut]:
+        docs = [Record(**body.model_dump()) for body in bodies]
+        if docs:
+            await Record.insert_many(docs)
+        return [_record_out(doc) for doc in docs]
 
     async def update(
         self, record_id: PydanticObjectId, changes: dict[str, Any]

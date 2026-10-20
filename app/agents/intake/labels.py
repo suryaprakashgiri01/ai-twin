@@ -29,6 +29,9 @@ _FIELD_ALIASES: dict[str, str] = {
     "work mode": "work_mode",
     "work_mode": "work_mode",
     "workmode": "work_mode",
+    "company type": "company_type",
+    "company_type": "company_type",
+    "companytype": "company_type",
     "extras": "extras",
     "record": "record",
     "document": "document",
@@ -52,7 +55,7 @@ _NOTE_ALIASES = frozenset({"job id", "job_id", "jobid", "req id", "req_id", "ref
 
 # Multi-word labels we recognise; everything else is a single token (so "Initech role: DE"
 # does not swallow the company value into an extras key named "Initech role").
-_MULTI_LABELS = ("work mode", "job id", "req id", "salary range")
+_MULTI_LABELS = ("work mode", "company type", "job id", "req id", "salary range")
 _MULTI = "|".join(
     re.escape(name).replace(r"\ ", r"[ \t]+")
     for name in sorted(_MULTI_LABELS, key=len, reverse=True)

@@ -44,6 +44,12 @@ from app.agents.intake.actions import (
     recent_items,
     resolve_target,
 )
+from app.agents.intake.batch import (
+    looks_like_batch,
+    missing_in_batch,
+    parse_company_type,
+    parse_record_batch,
+)
 from app.agents.intake.confirm import (
     NO_WORDS,
     YES_WORDS,
@@ -152,7 +158,9 @@ def rule_action(message: str, action: str | None) -> str | None:
         return {"delete": "delete_document"}.get(verb.group(1).lower(), verb.group(1).lower())
     reports = record_kind_in(message) and _REPORT.search(message) and not is_question(message)
     if action is None and reports:
-        return "add_record"
+        return "add_records" if looks_like_batch(message) else "add_record"
+    if action == "add_record" and looks_like_batch(message):
+        return "add_records"
     if action in (None, "ingest_url") and only_github_repo_urls(message):
         return "ingest_github"
     return action
@@ -392,6 +400,7 @@ def _record_defaults(
         "contact": _contact(message),
         "location": _location(message),
         "work_mode": _work_mode(message),
+        "company_type": parse_company_type(message),
     }
     if (day := find_day(message, tz, now)) is not None:
         found["date"] = day_value(day)
@@ -579,6 +588,15 @@ class IntakeNodes:
             question = str(extracted.payload.get("question") or state["message"])
             _step("gather", started, action=action, model=model_id)
             return Command(goto="answer", update={"question": question, "status": "answer"})
+        if action == "add_records" or (
+            action == "add_record" and looks_like_batch(state["message"])
+        ):
+            batch_cmd = await self._settle_batch(
+                state, started, model_id, current is not None and action != current
+            )
+            if batch_cmd is not None:
+                return batch_cmd
+            action = "add_record"
         spec = ACTIONS[action]
         switched = current is not None and action != current
         base = {} if switched or current is None else dict(state.get("payload") or {})
@@ -618,6 +636,67 @@ class IntakeNodes:
             # Labels win again over regex fallbacks when both spoke.
             payload = merge_labelled(merge_labelled(payload, labelled), pasted)
         return await self._settle(spec, payload, state, started, model_id, switched, dropped)
+
+    async def _settle_batch(
+        self,
+        state: IntakeState,
+        started: float,
+        model_id: str | None,
+        switched: bool,
+    ) -> Command[str] | None:
+        """Several records in one message → one confirmation. Returns None to fall back to one."""
+        deps = self.deps
+        items = parse_record_batch(state["message"], deps.timezone, deps.now())
+        if len(items) < 2:
+            return None
+        single = ACTIONS["add_record"]
+        normalised: list[dict[str, Any]] = []
+        invalid: dict[str, str] = {}
+        for index, raw in enumerate(items, start=1):
+            item, bad = normalise(single, raw, deps.timezone, deps.now())
+            for key, why in bad.items():
+                invalid[f"{index}.{key}"] = why
+            normalised.append(item)
+        missing_lines = missing_in_batch(normalised)
+        spec = ACTIONS["add_records"]
+        _step(
+            "gather",
+            started,
+            action=spec.name,
+            model=model_id,
+            switched=switched,
+            batch=len(normalised),
+            missing=missing_lines,
+            invalid=sorted(invalid),
+        )
+        payload = {"records": normalised}
+        update: dict[str, Any] = {
+            "action": spec.name,
+            "payload": payload,
+            "missing": missing_lines,
+            "pending": None,
+        }
+        if missing_lines or invalid:
+            parts = []
+            if invalid:
+                parts.append(
+                    "These values didn't fit:\n"
+                    + "\n".join(f"- {name}: {why}" for name, why in invalid.items())
+                )
+            if missing_lines:
+                parts.append(
+                    "To save these records, I still need:\n"
+                    + "\n".join(f"- {line}" for line in missing_lines)
+                )
+            return Command(goto=END, update=update | {"reply": "\n".join(parts), "status": "asked"})
+        pending = {
+            "kind": "draft",
+            "action": spec.name,
+            "payload": payload,
+            "summary": spec.summary(payload),
+            "confirm_text": None,
+        }
+        return Command(goto="confirm", update=update | {"pending": pending, "status": "draft"})
 
     async def _settle(
         self,
@@ -736,6 +815,7 @@ class IntakeNodes:
             catalog=catalog_text(),
             draft_schema=prompts.draft_schema_json(),
             record_schema=prompts.record_schema_json(),
+            records_batch_schema=prompts.records_batch_schema_json(),
             draft=draft,
             recent=recent,
         )

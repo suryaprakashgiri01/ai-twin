@@ -163,18 +163,45 @@ def test_intake_v4_embeds_pydantic_schemas() -> None:
     assert prompts.PROMPT_VERSION == "intake-v4"
     draft = prompts.draft_schema_json()
     record = prompts.record_schema_json()
+    batch = prompts.records_batch_schema_json()
     assert "IntakeDraft" in draft or '"action"' in draft
     assert "work_mode" in record and "extras" in record and "location" in record
+    assert "company_type" in record
+    assert "records" in batch
     rendered = prompts.EXTRACT_V2.format(
         today="2026-10-20 (Monday)",
         catalog="add_record",
         draft_schema=draft,
         record_schema=record,
+        records_batch_schema=batch,
         draft="",
         recent="",
     )
     assert "Schema Adherence" in rendered
     assert "work_mode" in rendered
+    assert "add_records" in rendered
+
+
+def test_batch_parse_several_applications() -> None:
+    from app.agents.intake.batch import looks_like_batch, parse_company_type, parse_record_batch
+
+    message = (
+        "today I applied in 2 companies, and details are following:-\n"
+        "applied to Backend Engineer role at Initech for Hyderabad location\n"
+        "applied to SRE role at Globex for the Pune location and they prefer product based "
+        "company, and I'm best suited for distributed systems"
+    )
+    assert looks_like_batch(message)
+    items = parse_record_batch(message, TZ, NOW)
+    assert len(items) >= 2
+    assert items[0]["company"] == "Initech" and "Backend" in items[0]["role"]
+    assert items[0].get("location") == "Hyderabad"
+    assert items[0].get("company_type") is None
+    assert items[1]["company"] == "Globex"
+    assert items[1].get("company_type") == "product"
+    assert items[1].get("location") == "Pune"
+    assert parse_company_type("service-based firm") == "service"
+    assert parse_company_type("research based lab") == "research"
 
 
 def test_local_title_wait_setting() -> None:

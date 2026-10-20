@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from typing import Any
 
 from beanie import PydanticObjectId
@@ -200,6 +201,9 @@ class MemoryRecordStore:
         record = RecordOut(id=str(PydanticObjectId()), **body.model_dump())
         self.rows[record.id] = record
         return record
+
+    async def create_many(self, bodies: Sequence[Any]) -> Sequence[Any]:
+        return [await self.create(body) for body in bodies]
 
     async def update(self, record_id: PydanticObjectId, changes: dict[str, Any]) -> Any:
         record = self.rows.get(str(record_id))
