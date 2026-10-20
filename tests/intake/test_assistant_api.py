@@ -15,7 +15,7 @@ from app.core.app_factory import create_app
 from app.core.config import Settings
 from scripts import chat
 from tests.conftest import FakeCheck
-from tests.envelope import result
+from tests.envelope import page_of, result, success
 from tests.fakes import MemoryApiKeyStore, MemoryOverrideStore
 from tests.intake.harness import Twin, extract
 
@@ -142,39 +142,36 @@ def cli_handler(request: httpx.Request) -> httpx.Response:
     if path == "/healthz":
         return httpx.Response(200, json={"status": "ok", "version": "0.0.0"})
     if path == "/admin/v1/whoami":
-        return httpx.Response(200, json={"name": "owner", "scopes": ["admin"]})
+        return success({"name": "owner", "scopes": ["admin"]})
     if path == "/admin/v1/conversations":
         rows = [
             {
                 "id": CID,
                 "name": "acme-interview",
                 "mode": "intake",
-                "updated_at": "2026-10-18",
-                "message_count": 2,
+                "updatedAt": "2026-10-18",
+                "messageCount": 2,
                 "description": "Interview with Acme",
             },
-            {"id": "b" * 32, "name": "salary", "updated_at": "2026-10-17", "message_count": 2},
+            {"id": "b" * 32, "name": "salary", "updatedAt": "2026-10-17", "messageCount": 2},
         ]
-        return httpx.Response(200, json=rows)
+        return page_of(rows, request)
     if path == f"/admin/v1/conversations/{CID}":
         turns = [{"role": "user", "content": "Interview with Acme"}]
-        return httpx.Response(
-            200,
-            json={
+        return success(
+            {
                 "id": CID,
                 "name": "acme-interview",
                 "mode": "intake",
-                "message_count": 2,
+                "messageCount": 2,
                 "turns": turns,
-            },
+            }
         )
     if path == f"/admin/v1/assistant/{CID}":
-        return httpx.Response(
-            200, json={"conversation_id": CID, "mode": "intake", "pending": PENDING}
-        )
+        return success({"conversationId": CID, "mode": "intake", "pending": PENDING})
     if path == "/admin/v1/assistant":
         body = (
-            f'event: meta\ndata: {{"conversation_id": "{CID}"}}\n\n'
+            f'event: meta\ndata: {{"conversationId": "{CID}"}}\n\n'
             'event: token\ndata: {"text": "Saved interview Acme Widgets"}\n\n'
             'event: done\ndata: {"status": "done", "action": "add_record", "pending": false}\n\n'
         )

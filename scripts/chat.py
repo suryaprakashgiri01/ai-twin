@@ -122,17 +122,23 @@ class Api:
                 "(Windows: ./scripts/dev.ps1 run)"
             ) from exc
 
+    def _result(self, method: str, path: str, **kwargs: Any) -> Any:
+        """The `result` of the success envelope."""
+        return self._request(method, path, **kwargs).json()["result"]
+
+    def _items(self, path: str, **params: Any) -> list[dict[str, Any]]:
+        """The rows of the first page of a list route."""
+        rows: list[dict[str, Any]] = self._result("GET", path, params=params)["listOfItems"]
+        return rows
+
     def list(self, limit: int) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = self._request(
-            "GET", "/conversations", params={"limit": limit}
-        ).json()
-        return result
+        return self._items("/conversations", pageSize=limit)
 
     def get(self, conversation_id: str, limit: int = 200) -> dict[str, Any] | None:
         try:
-            result: dict[str, Any] = self._request(
+            result: dict[str, Any] = self._result(
                 "GET", f"/conversations/{conversation_id}", params={"limit": limit}
-            ).json()
+            )
         except CliError as exc:
             if str(exc).startswith("404"):
                 return None
@@ -141,7 +147,7 @@ class Api:
 
     def by_name(self, name: str) -> dict[str, Any] | None:
         try:
-            result: dict[str, Any] = self._request("GET", f"/conversations/by-name/{name}").json()
+            result: dict[str, Any] = self._result("GET", f"/conversations/by-name/{name}")
         except CliError as exc:
             if str(exc).startswith(("404", "422")):
                 return None
@@ -152,13 +158,13 @@ class Api:
         self, conversation_id: str, name: str | None, description: str | None
     ) -> dict[str, Any]:
         body = {k: v for k, v in (("name", name), ("description", description)) if v is not None}
-        result: dict[str, Any] = self._request(
+        result: dict[str, Any] = self._result(
             "PATCH", f"/conversations/{conversation_id}", json=body
-        ).json()
+        )
         return result
 
     def whoami(self) -> dict[str, Any]:
-        result: dict[str, Any] = self._request("GET", "/whoami").json()
+        result: dict[str, Any] = self._result("GET", "/whoami")
         return result
 
     def version(self) -> str:
@@ -178,38 +184,33 @@ class Api:
 
     def refresh_title(self, conversation_id: str) -> dict[str, Any]:
         """Let the server pick the wait (longer for intake / local models)."""
-        result: dict[str, Any] = self._request(
+        result: dict[str, Any] = self._result(
             "POST",
             f"/conversations/{conversation_id}/title",
             timeout=TITLE_REFRESH_TIMEOUT,
-        ).json()
+        )
         return result
 
     def memories(self, status: str | None = None) -> builtins.list[dict[str, Any]]:
-        params = {"status": status} if status else {}
-        result: builtins.list[dict[str, Any]] = self._request(
-            "GET", "/memories", params=params
-        ).json()
-        return result
+        params = {"filter": f"status:{status}"} if status else {}
+        return self._items("/memories", pageSize=LIST_LIMIT_MAX, **params)
 
     def remember(
         self, text: str, kind: str = "preference", tier: str = "private"
     ) -> dict[str, Any]:
         body = {"text": text, "kind": kind, "tier": tier}
-        result: dict[str, Any] = self._request("POST", "/memories", json=body).json()
+        result: dict[str, Any] = self._result("POST", "/memories", json=body)
         return result
 
     def update_memory(self, memory_id: str, **changes: Any) -> dict[str, Any]:
-        result: dict[str, Any] = self._request(
-            "PATCH", f"/memories/{memory_id}", json=changes
-        ).json()
+        result: dict[str, Any] = self._result("PATCH", f"/memories/{memory_id}", json=changes)
         return result
 
     def delete_memory(self, memory_id: str) -> None:
         self._request("DELETE", f"/memories/{memory_id}")
 
     def assistant_state(self, conversation_id: str) -> dict[str, Any]:
-        result: dict[str, Any] = self._request("GET", f"/assistant/{conversation_id}").json()
+        result: dict[str, Any] = self._result("GET", f"/assistant/{conversation_id}")
         return result
 
     def chat(
@@ -217,7 +218,7 @@ class Api:
     ) -> Iterator[tuple[str, dict[str, Any]]]:
         body: dict[str, Any] = {"message": message}
         if conversation_id:
-            body["conversation_id"] = conversation_id
+            body["conversationId"] = conversation_id
         try:
             with self._client.stream("POST", path, json=body) as response:
                 if response.status_code >= 400:
@@ -260,12 +261,12 @@ def render_list(conversations: Sequence[dict[str, Any]]) -> str:
         "DESCRIPTION"
     ]
     for c in conversations:
-        updated = str(c.get("updated_at", ""))[:16].replace("T", " ")
+        updated = str(c.get("updatedAt", ""))[:16].replace("T", " ")
         name = _short(str(c.get("name") or "-"), NAME_WIDTH)
         mode = str(c.get("mode") or "ask")
         rows.append(
             f"{name:<{NAME_WIDTH}} {mode:<{MODE_WIDTH}} {c['id']:<32} {updated:<16} "
-            f"{c.get('message_count', 0):>5}  {_short(str(c.get('description') or ''), 60)}"
+            f"{c.get('messageCount', 0):>5}  {_short(str(c.get('description') or ''), 60)}"
         )
     return "\n".join(rows)
 
@@ -319,15 +320,15 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
             f"Continuing {paint(str(conversation.get('name') or '-'), 'bold')} "
             f"({mode}) · id {conversation['id']}"
         )
-        turns = conversation.get("message_count", 0)
+        turns = conversation.get("messageCount", 0)
         print(
-            f"Started {_when(conversation.get('created_at'))} · last active "
-            f"{_when(conversation.get('updated_at'))} · {turns} turns"
+            f"Started {_when(conversation.get('createdAt'))} · last active "
+            f"{_when(conversation.get('updatedAt'))} · {turns} turns"
         )
         if conversation.get("description"):
             print(f"About: {_short(str(conversation['description']), 100)}")
         if conversation.get("summary"):
-            covered = conversation.get("summarized_turns", 0)
+            covered = conversation.get("summarizedTurns", 0)
             summary = _short(str(conversation["summary"]), SUMMARY_CHARS)
             print(f"Summary of the first {covered} turns: {summary}")
         print(
@@ -351,8 +352,8 @@ def print_recap(conversation: dict[str, Any]) -> None:
 
 def _done_line(data: dict[str, Any]) -> str:
     parts = [f"tier {data.get('tier') or '-'}", f"model {data.get('model') or '-'}"]
-    if data.get("latency_ms") is not None:
-        parts.append(f"{float(data['latency_ms']) / 1000:.1f}s")
+    if data.get("latencyMs") is not None:
+        parts.append(f"{float(data['latencyMs']) / 1000:.1f}s")
     if data.get("withheld"):
         parts.append(f"{data['withheld']} withheld")
     return paint("  " + " · ".join(parts), "dim")
@@ -366,7 +367,7 @@ def ask(api: Api, message: str, conversation_id: str | None) -> str | None:
     """Stream one answer to the terminal; returns the conversation id."""
     with _thinking(ASK_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id):
-            conversation_id = data.get("conversation_id", conversation_id)
+            conversation_id = data.get("conversationId", conversation_id)
             if event in ("token", "sources", "done", "error"):
                 thinking.stop()
             _show_answer_event(event, data)
@@ -395,7 +396,7 @@ def tell(api: Api, message: str, conversation_id: str | None) -> str | None:
     """One intake turn: the reply, a pending draft if any; returns the conversation id."""
     with _thinking(INTAKE_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id, path="/assistant"):
-            conversation_id = data.get("conversation_id", conversation_id)
+            conversation_id = data.get("conversationId", conversation_id)
             if event in ("token", "draft", "done", "error"):
                 thinking.stop()
             _show_intake_event(event, data)
@@ -435,7 +436,7 @@ def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
         warn(f"Title not refreshed ({type(exc).__name__}); the conversation is kept as it was")
         return None
     status = result.get("status")
-    new = int(result.get("new_memories") or 0)
+    new = int(result.get("newMemories") or 0)
     if new:
         noun = "memory" if new == 1 else "memories"
         info(f"{new} new {noun} to review: {MEMORY_HINT}")
