@@ -256,9 +256,9 @@ _TITLED_ROLE = re.compile(
 _WORK_MODE = re.compile(r"\b(onsite|on-site|remote|hybrid|online)\b", re.I)
 _LOCATION = re.compile(
     r"\b(?:for\s+location|located\s+in|based\s+in|location)\s*:?\s+"
-    r"([A-Za-z][\w .'-]{1,80}?)"
-    r"(?=\s*[,;.]?\s*(?:\b(?:onsite|on-site|remote|hybrid|online)\b|$|\n|"
-    r"\b(?:role|company|work|notes|job)\b))",
+    r"([A-Za-z][\w .,'-]{1,80}?)"
+    r"(?=\s*,?\s*(?:\b(?:onsite|on-site|remote|hybrid|online)\b)|$|\n|"
+    r"\b(?:role|company|work\s*mode|notes|job\s*id)\s*:)",
     re.I,
 )
 # "in Hyderabad, Telangana" after a role/company cue; avoid matching "in notes".
