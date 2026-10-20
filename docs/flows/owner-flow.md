@@ -55,10 +55,10 @@ flowchart TD
     conf -->|"no"| empty
     rebuild --> empty{"context empty?"}
     empty -->|"yes"| fixed["fixed: not in vault, plus withheld note"]
-    empty -->|"no"| call["stream at tier"]
+    empty -->|"no"| model["stream at tier"]
     kb -->|"records, write"| fixed2["fixed answer"]
-    kb -->|"profile"| call
-    kb -->|"chat"| call
+    kb -->|"profile"| model
+    kb -->|"chat"| model
 ```
 
 ### Request sequence

@@ -100,8 +100,8 @@ flowchart LR
     mw --> route["Route + auth dependency"]
     route --> svc["Service"]
     svc --> run["tracing().run(name, channel)"]
-    run --> graph["Compiled LangGraph"]
-    graph --> out["SSE events or JSON"]
+    run --> lg["Compiled LangGraph"]
+    lg --> out["SSE events or JSON"]
     mw -. "AppError, unhandled" .-> env["Error envelope<br/>code, message, request_id"]
 ```
 
