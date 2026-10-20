@@ -39,6 +39,9 @@ LOG_FILE = ROOT / "vault" / "logs" / "ollama.log"
 PID_FILE = ROOT / "vault" / "run" / "ollama.pid"
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 SMOKE_PROMPT = "Reply with the single word: ready"
+# Desktop / tray app log locations when we did not start the server ourselves.
+MAC_APP_LOG = Path.home() / ".ollama" / "logs" / "server.log"
+WIN_APP_LOG = Path(os.environ.get("LOCALAPPDATA", "")) / "Ollama" / "server.log"
 
 Launcher = Callable[[list[str], dict[str, str], Path], int]
 
@@ -144,9 +147,21 @@ def has_model(pulled: list[str], model: str) -> bool:
 # --- commands ----------------------------------------------------------------------------------
 
 
+def launcher_and_log(*, pid_file: Path = PID_FILE) -> tuple[str, Path]:
+    """Who started Ollama and which log file to read."""
+    if pid_file.exists():
+        return "script (make ollama ARGS=start)", LOG_FILE
+    if platform.system() == "Windows":
+        return "desktop / tray app (or other)", WIN_APP_LOG
+    return "desktop app / brew services (or other)", MAC_APP_LOG
+
+
 def cmd_status(t: Target, api: Api) -> int:
     binary = shutil.which("ollama")
     (ok if binary else warn)(f"ollama binary: {binary or 'not installed; run: ' + hint('install')}")
+    who, log_path = launcher_and_log()
+    info(f"Launcher: {who}")
+    info(f"Log: {log_path}" + (" (exists)" if log_path.exists() else " (missing)"))
     version = api.version()
     if version is None:
         warn(f"No Ollama answering at {t.url}; run: {hint('start')}")
@@ -159,6 +174,20 @@ def cmd_status(t: Target, api: Api) -> int:
         return 0
     warn(f"Configured model {t.model} is not pulled; run: {hint('pull')}")
     return 1
+
+
+def cmd_logs(*, lines: int = 80, pid_file: Path = PID_FILE) -> int:
+    """Print the end of the log that matches who started Ollama."""
+    who, log_path = launcher_and_log(pid_file=pid_file)
+    info(f"Launcher: {who}")
+    if not log_path.exists():
+        warn(f"No log at {log_path}")
+        return 1
+    text = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail = text[-max(1, lines) :]
+    print("\n".join(tail))
+    ok(f"{len(tail)} line(s) from {log_path}")
+    return 0
 
 
 def install_argv(system: str) -> list[str] | None:
@@ -289,9 +318,15 @@ def main(
         "command",
         nargs="?",
         default="status",
-        choices=["status", "install", "start", "stop", "pull", "smoke"],
+        choices=["status", "logs", "install", "start", "stop", "pull", "smoke"],
     )
     parser.add_argument("model", nargs="?", help="model for `pull` (default: the configured one)")
+    parser.add_argument(
+        "--tail",
+        type=int,
+        default=80,
+        help="lines to show for `logs` (default: 80)",
+    )
     args = parser.parse_args(argv)
     try:
         t = target(read_env())
@@ -307,6 +342,8 @@ def main(
                 return cmd_pull(t, api, args.model)
             case "smoke":
                 return cmd_smoke(t, api)
+            case "logs":
+                return cmd_logs(lines=args.tail)
             case _:
                 return cmd_status(t, api)
     except OllamaError as exc:

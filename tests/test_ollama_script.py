@@ -79,6 +79,25 @@ def test_has_model_matches_latest_tag() -> None:
     assert not ollama.has_model(["llama3.2:3b"], "llama3.2:1b")
 
 
+def test_launcher_and_log_uses_script_pid(tmp_path: Path) -> None:
+    pid = tmp_path / "ollama.pid"
+    pid.write_text("12345", encoding="utf-8")
+    who, log = ollama.launcher_and_log(pid_file=pid)
+    assert "script" in who
+    assert log == ollama.LOG_FILE
+
+
+def test_cmd_logs_tails_file(tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "server.log"
+    log.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    pid = tmp_path / "ollama.pid"
+    pid.write_text("1", encoding="utf-8")
+    monkeypatch.setattr(ollama, "LOG_FILE", log)
+    assert ollama.cmd_logs(lines=2, pid_file=pid) == 0
+    out = capsys.readouterr().out
+    assert "two" in out and "three" in out
+
+
 def test_start_does_nothing_when_a_server_answers(tmp_path: Path) -> None:
     t = target()
     api = ollama.Api(t, api_handler({"up": True, "pulled": []}))

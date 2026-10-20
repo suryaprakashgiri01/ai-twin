@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin memory migrate-status upgrade downgrade
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -33,8 +33,20 @@ logs: ## Container logs (ARGS="service --follow")
 cleanup: ## Dry run; ARGS="--apply" deletes containers, volumes, caches
 	$(PY) scripts.cleanup $(ARGS)
 
-ollama: ## Native Ollama: ARGS="status" | "install" | "start" | "stop" | "pull [model]" | "smoke"
+ollama: ## Native Ollama: ARGS="status" | "logs" | "install" | "start" | "stop" | "pull [model]" | "smoke"
 	$(PY) scripts.ollama $(ARGS)
+
+graph-update: ## Rebuild the code graph (graphify update .)
+	$(PY) scripts.graph update $(ARGS)
+
+graph-query: ## Query the code graph: ARGS="your question"
+	$(PY) scripts.graph query $(ARGS)
+
+graph-explain: ## Explain a concept from the graph: ARGS="concept"
+	$(PY) scripts.graph explain $(ARGS)
+
+graph-path: ## Path between two symbols: ARGS="A B"
+	$(PY) scripts.graph path $(ARGS)
 
 keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
 	$(PY) scripts.keys $(ARGS)

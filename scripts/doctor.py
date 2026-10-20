@@ -166,6 +166,35 @@ def check_ollama(env: dict[str, str], api: ollama.Api | None = None) -> list[Fin
     return [Finding("ok", f"Ollama {version} with {target.model}")]
 
 
+def check_graphify() -> Finding:
+    if shutil.which("graphify"):
+        return Finding("ok", "graphify found")
+    return Finding(
+        "warn",
+        "graphify not found (code-graph make targets need it); install the CLI then retry",
+    )
+
+
+def check_ollama_context(env: dict[str, str]) -> Finding | None:
+    """Warn when a large context is configured on a CPU-only machine."""
+    raw = env.get("OLLAMA_NUM_CTX") or env.get("OLLAMA_CONTEXT_LENGTH") or ""
+    try:
+        ctx = int(raw) if raw.strip() else 0
+    except ValueError:
+        return Finding("warn", f"OLLAMA_NUM_CTX is not an integer: {raw!r}")
+    if ctx <= 16_000:
+        return None
+    # Heuristic: no CUDA/Metal env and no nvidia-smi → treat as CPU-only.
+    has_gpu = bool(shutil.which("nvidia-smi")) or bool(env.get("CUDA_VISIBLE_DEVICES"))
+    if has_gpu:
+        return None
+    return Finding(
+        "warn",
+        f"Ollama context {ctx} is above 16k on a CPU-only host; title refresh and intake "
+        "will be slow — prefer 8192",
+    )
+
+
 def collect() -> list[Finding]:
     env = read_env(ENV_FILE)
     findings = [check_python(), check_uv(), check_compose(), check_engine()]
@@ -178,6 +207,9 @@ def collect() -> list[Finding]:
     findings += check_ports(env, running)
     findings += check_ingestion_deps(env)
     findings += check_ollama(env)
+    findings.append(check_graphify())
+    if ctx := check_ollama_context(env):
+        findings.append(ctx)
     return findings
 
 
