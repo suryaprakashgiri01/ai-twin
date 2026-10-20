@@ -11,11 +11,42 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from beanie import PydanticObjectId
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.db.documents import PROFILE_ID, BlobRef, Profile, Record, RecordKind, utcnow
+from app.db.documents import (
+    PROFILE_ID,
+    BlobRef,
+    Profile,
+    Record,
+    RecordKind,
+    WorkMode,
+    utcnow,
+)
 
-__all__ = ["RecordKind"]
+__all__ = ["RecordKind", "WorkMode"]
+
+# Extra owner-labelled attributes on a record: few short keys, never a dump of free text.
+MAX_EXTRAS = 10
+MAX_EXTRA_LEN = 200
+
+
+def _clip_extras(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("extras must be an object of string keys and values")
+    if len(value) > MAX_EXTRAS:
+        raise ValueError(f"extras may have at most {MAX_EXTRAS} keys")
+    out: dict[str, str] = {}
+    for key, raw in value.items():
+        name = str(key).strip()
+        text = str(raw).strip() if raw is not None else ""
+        if not name or not text:
+            continue
+        if len(name) > MAX_EXTRA_LEN or len(text) > MAX_EXTRA_LEN:
+            raise ValueError(f"extras keys and values are at most {MAX_EXTRA_LEN} characters")
+        out[name] = text
+    return out
 
 
 class ProfileIn(BaseModel):
@@ -53,6 +84,14 @@ class RecordIn(BaseModel):
     platform: str | None = Field(default=None, max_length=100)
     # The HR or recruiter's name, phone or e-mail, as the owner gave it.
     contact: str | None = Field(default=None, max_length=300)
+    location: str | None = Field(default=None, max_length=200)
+    work_mode: WorkMode | None = None
+    extras: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("extras", mode="before")
+    @classmethod
+    def _extras(cls, value: Any) -> dict[str, str]:
+        return _clip_extras(value)
 
 
 class RecordPatch(BaseModel):
@@ -65,6 +104,16 @@ class RecordPatch(BaseModel):
     notes: str | None = Field(default=None, max_length=10_000)
     platform: str | None = Field(default=None, max_length=100)
     contact: str | None = Field(default=None, max_length=300)
+    location: str | None = Field(default=None, max_length=200)
+    work_mode: WorkMode | None = None
+    extras: dict[str, str] | None = None
+
+    @field_validator("extras", mode="before")
+    @classmethod
+    def _extras(cls, value: Any) -> dict[str, str] | None:
+        if value is None:
+            return None
+        return _clip_extras(value)
 
 
 class RecordOut(RecordIn):

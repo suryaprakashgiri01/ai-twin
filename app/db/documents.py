@@ -50,6 +50,9 @@ RECORD_KINDS: tuple[str, ...] = (
     "rejection",
     "withdrawal",
 )
+# Where the role is based: on-site, remote, or a mix.
+WorkMode = Literal["onsite", "remote", "hybrid"]
+WORK_MODES: tuple[str, ...] = ("onsite", "remote", "hybrid")
 # Owner memories: how the owner likes answers, standing rules, and names they use.
 MemoryKind = Literal["instruction", "preference", "alias"]
 MEMORY_KINDS: tuple[str, ...] = ("instruction", "preference", "alias")
@@ -235,6 +238,11 @@ class Record(Document):
     # The HR or recruiter contact as the owner gave it (name, phone, e-mail). Third-party
     # details: shown to the owner and the local intake model only, never in ask-chat answers.
     contact: str | None = None
+    # Where the role is based, as the owner said it (city, region, country).
+    location: str | None = None
+    work_mode: WorkMode | None = None
+    # Extra attributes the owner labelled (referral, salary range, …); at most 10 short keys.
+    extras: dict[str, str] = Field(default_factory=dict)
 
     class Settings:
         name = "records"

@@ -149,6 +149,8 @@ def _show(key: str, value: Any, spec: ActionSpec) -> str:
         return show_day(value)
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in value.items()) or "(none)"
     text = str(value)
     if key == "body" and len(text) > BODY_PREVIEW:
         return text[: BODY_PREVIEW - 1] + "…"
@@ -289,7 +291,12 @@ def _record_line(record: RecordOut) -> str:
     appear here; ask-chat record answers never include it."""
     extra = "".join(
         f" · {label}{value}"
-        for label, value in (("via ", record.platform), ("contact: ", record.contact))
+        for label, value in (
+            ("via ", record.platform),
+            ("contact: ", record.contact),
+            ("at ", record.location),
+            ("", record.work_mode),
+        )
         if value
     )
     return (
@@ -521,13 +528,39 @@ UPDATE_RECORD = ActionSpec(
         "notes": "new notes",
         "platform": "new platform (Naukri, LinkedIn, Instahyre, a referral, ...)",
         "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
+        "location": "where the role is based (city, region, country)",
+        "work_mode": "onsite, remote or hybrid",
+        "extras": "other short attributes the owner named (referral, salary range, …)",
     },
     required=("record",),
-    needs_any=("company", "role", "stage", "date", "notes", "platform", "contact"),
+    needs_any=(
+        "company",
+        "role",
+        "stage",
+        "date",
+        "notes",
+        "platform",
+        "contact",
+        "location",
+        "work_mode",
+        "extras",
+    ),
     model=RecordChanges,
-    model_keys=("company", "role", "stage", "date", "notes", "platform", "contact"),
+    model_keys=(
+        "company",
+        "role",
+        "stage",
+        "date",
+        "notes",
+        "platform",
+        "contact",
+        "location",
+        "work_mode",
+        "extras",
+    ),
     target="record",
     date_fields=("date",),
+    lower_fields=("work_mode",),
     resolved=_RECORD_RESOLVED,
     run=_update_record,
 )
@@ -645,12 +678,15 @@ _SPECS = [
             "notes": "anything else the owner said about it",
             "platform": "where it came from: Naukri, LinkedIn, Instahyre, a referral, ...",
             "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
+            "location": "where the role is based (city, region, country)",
+            "work_mode": "onsite, remote or hybrid",
+            "extras": "other short attributes the owner named (referral, salary range, …)",
         },
         required=("kind", "company", "role", "stage", "date"),
         model=RecordIn,
         inferred=("kind",),
         date_fields=("date",),
-        lower_fields=("kind",),
+        lower_fields=("kind", "work_mode"),
         run=_add_record,
     ),
     UPDATE_RECORD,
