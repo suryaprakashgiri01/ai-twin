@@ -173,10 +173,14 @@ class RecordOut(RecordIn):
     id: str
 
 
+# The resume document's internal id and its original file.
+Resume = tuple[PydanticObjectId, BlobRef]
+
+
 class ProfileStore(Protocol):
     async def get(self) -> ProfileOut: ...
 
-    async def put(self, body: ProfileIn, resume_blob: BlobRef | None) -> ProfileOut: ...
+    async def put(self, body: ProfileIn, resume: Resume | None) -> ProfileOut: ...
 
 
 class RecordStore(Protocol):
@@ -186,11 +190,9 @@ class RecordStore(Protocol):
 
     async def create_many(self, bodies: Sequence[RecordIn]) -> Sequence[RecordOut]: ...
 
-    async def update(
-        self, record_id: PydanticObjectId, changes: dict[str, Any]
-    ) -> RecordOut | None: ...
+    async def update(self, record_id: str, changes: dict[str, Any]) -> RecordOut | None: ...
 
-    async def delete(self, record_id: PydanticObjectId) -> bool: ...
+    async def delete(self, record_id: str) -> bool: ...
 
 
 def _profile_out(doc: Profile) -> ProfileOut:
@@ -200,14 +202,14 @@ def _profile_out(doc: Profile) -> ProfileOut:
         preferred_roles=doc.preferred_roles,
         locations=doc.locations,
         reply_time=doc.reply_time,
-        resume_document_id=str(doc.resume_document_id) if doc.resume_document_id else None,
+        resume_document_id=doc.resume_document_uid,
         resume_blob=BlobOut.model_validate(doc.resume_blob) if doc.resume_blob else None,
         updated_at=doc.updated_at,
     )
 
 
 def _record_out(doc: Record) -> RecordOut:
-    return RecordOut(id=str(doc.id), **doc.model_dump(exclude={"id", "revision_id"}))
+    return RecordOut(id=doc.uid, **doc.model_dump(exclude={"id", "uid", "revision_id"}))
 
 
 class MongoProfileStore:
@@ -215,12 +217,12 @@ class MongoProfileStore:
         doc = await Profile.get(PROFILE_ID) or Profile()
         return _profile_out(doc)
 
-    async def put(self, body: ProfileIn, resume_blob: BlobRef | None) -> ProfileOut:
-        resume = PydanticObjectId(body.resume_document_id) if body.resume_document_id else None
+    async def put(self, body: ProfileIn, resume: Resume | None) -> ProfileOut:
         doc = Profile(
             **body.model_dump(exclude={"resume_document_id"}),
-            resume_document_id=resume,
-            resume_blob=resume_blob,
+            resume_document_id=resume[0] if resume else None,
+            resume_document_uid=body.resume_document_id if resume else None,
+            resume_blob=resume[1] if resume else None,
             updated_at=utcnow(),
         )
         await doc.save()
@@ -243,10 +245,8 @@ class MongoRecordStore:
             await Record.insert_many(docs)
         return [_record_out(doc) for doc in docs]
 
-    async def update(
-        self, record_id: PydanticObjectId, changes: dict[str, Any]
-    ) -> RecordOut | None:
-        doc = await Record.get(record_id)
+    async def update(self, record_id: str, changes: dict[str, Any]) -> RecordOut | None:
+        doc = await Record.find_one({"uid": record_id})
         if doc is None:
             return None
         for key, value in changes.items():
@@ -254,8 +254,8 @@ class MongoRecordStore:
         await doc.save()
         return _record_out(doc)
 
-    async def delete(self, record_id: PydanticObjectId) -> bool:
-        doc = await Record.get(record_id)
+    async def delete(self, record_id: str) -> bool:
+        doc = await Record.find_one({"uid": record_id})
         if doc is None:
             return False
         await doc.delete()

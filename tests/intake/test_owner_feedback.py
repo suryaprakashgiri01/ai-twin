@@ -47,7 +47,7 @@ def test_github_repos_are_read_from_free_text(text: str, repos: list[str]) -> No
 
 
 def test_rules_route_status_questions_and_github_links() -> None:
-    sid = "6ad5afab0d04c371db474c76"
+    sid = "3f0c1d2e-7a4b-4c5d-9e8f-0a1b2c3d4e5f"
     assert rule_action(f"What is the status of source {sid}?", "ingest_github") == "source_status"
     assert rule_action("is my last upload done? status please", None) == "source_status"
     link = "Add this: https://github.com/suryaprakashgiri01/observable-ai-service"

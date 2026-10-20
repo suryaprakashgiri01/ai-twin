@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from tests.envelope import items, page, result
 from tests.ingestion import persona
 from tests.ingestion.conftest import Api
@@ -62,6 +64,7 @@ async def test_records_crud(api: Api) -> None:
     created = await api.client.post(f"{BASE}/records", json=record, headers=api.headers)
     assert created.status_code == 201
     record_id = result(created)["id"]
+    assert uuid.UUID(record_id).version == 4
     interview = {**record, "kind": "interview", "stage": "round 1", "date": "2026-09-10T00:00:00Z"}
     await api.client.post(f"{BASE}/records", json=interview, headers=api.headers)
 

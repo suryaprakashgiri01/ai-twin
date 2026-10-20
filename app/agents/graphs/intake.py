@@ -85,7 +85,7 @@ from app.agents.routing import (
     platform_in,
     record_kind_in,
 )
-from app.db.documents import utcnow
+from app.db.documents import UID_PATTERN, utcnow
 from app.exceptions import AppError
 from app.services.admin_ops import AdminOps, intake_actor
 from app.services.conversations import ConversationService
@@ -101,7 +101,7 @@ HISTORY_CHARS = 600
 RECENT_KEEP = 10
 TITLE_CHARS = 80
 EXTRACT_ATTEMPTS = 2
-_TYPED_ID = re.compile(r"\b[0-9a-f]{24}\b")
+_TYPED_ID = UID_PATTERN
 _STATUS = re.compile(r"\bstatus\b|\bis it done\b|\bfinished\b", re.I)
 _REMEMBER = re.compile(r"^\s*(please\s+)?remember\b(?!\s+(when|what|which|how|if)\b)", re.I)
 _FORGET = re.compile(r"^\s*(please\s+)?(forget|stop remembering)\b", re.I)

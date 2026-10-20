@@ -49,7 +49,7 @@ class SecurityEventOut(ApiModel):
     @classmethod
     def of(cls, event: StoredEvent) -> SecurityEventOut:
         return cls(
-            id=event.id,
+            id=event.uid,
             kind=event.kind,
             severity=event.severity,
             rules=[safe_rule(r) for r in event.rules],

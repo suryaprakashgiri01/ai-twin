@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import httpx
 import pytest
+from beanie import PydanticObjectId
 from cryptography.fernet import Fernet
 from fakeredis import FakeAsyncRedis
 from pydantic import SecretStr
@@ -90,7 +91,7 @@ async def test_vault_serves_the_profile_resume_blob(tmp_path: Path) -> None:
     store = MemoryProfileStore()
     provider = VaultResume(store, blobs)
     assert not await provider.available() and await provider.open() is None
-    await store.put(ProfileIn(), ref)
+    await store.put(ProfileIn(), (PydanticObjectId(), ref))
     assert await provider.available()
     async for client, key, _, _ in _client("vault", provider):
         response = await client.get("/v1/resume", headers={"X-API-Key": key})

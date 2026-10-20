@@ -32,8 +32,15 @@ async def call(api: Api, method: str, path: str, **kwargs: Any) -> Any:
     return await api.client.request(method, f"{BASE}{path}", headers=api.headers, **kwargs)
 
 
+async def internal_id(api: Api, document_id: str) -> str:
+    """The ObjectId vectors are keyed on, for the document the API calls `document_id`."""
+    doc = await api.h.store.document_by_uid(document_id)
+    return str(doc.id) if doc else document_id
+
+
 async def counts(api: Api, document_id: str) -> dict[str, int]:
-    return {c: await api.h.index.count(c, document_id) for c in api.h.index.collections}
+    internal = await internal_id(api, document_id)
+    return {c: await api.h.index.count(c, internal) for c in api.h.index.collections}
 
 
 def review_items(response: Any) -> list[dict[str, Any]]:
@@ -86,7 +93,7 @@ async def test_publish_copies_non_canary_chunks_and_unpublish_delete_remove_them
     published = await call(api, "POST", f"/documents/{document_id}/publish")
     assert published.status_code == 200
     assert result(published)["chunks"] == 1
-    public_points = await api.h.index.points_for("kb_public", document_id)
+    public_points = await api.h.index.points_for("kb_public", await internal_id(api, document_id))
     assert [p.payload["published"] for p in public_points] == [True]
     assert not any(p.payload["canary"] for p in public_points)
     assert (await counts(api, document_id))["kb_private"] == 1  # private copy stays
@@ -123,7 +130,7 @@ async def test_relabel_moves_vectors_and_resets_approval(api: Api) -> None:
     assert body["tier"] == "confidential" and body["reviewStatus"] == "pending"
     assert body["title"] == "New"
     assert await counts(api, document_id) == {"kb_public": 0, "kb_private": 0, "kb_confidential": 2}
-    points = await api.h.index.points_for("kb_confidential", document_id)
+    points = await api.h.index.points_for("kb_confidential", await internal_id(api, document_id))
     assert {p.payload["tier"] for p in points} == {"confidential"}
     assert {c.tier for c in api.h.store.chunks} == {"confidential"}
 

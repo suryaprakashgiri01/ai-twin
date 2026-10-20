@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
-from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 from app.db.documents import MemoryStatus, OwnerMemoryFields, utcnow
@@ -18,7 +17,7 @@ class FakeMemoryStore:
         self.rows: dict[str, dict[str, Any]] = {}
 
     def _out(self, memory_id: str) -> MemoryOut:
-        row = {k: v for k, v in self.rows[memory_id].items() if k != "norm"}
+        row = {k: v for k, v in self.rows[memory_id].items() if k not in ("norm", "uid")}
         return MemoryOut(id=memory_id, **row)
 
     async def by_status(self, statuses: Sequence[MemoryStatus]) -> list[MemoryOut]:
@@ -37,7 +36,7 @@ class FakeMemoryStore:
     async def insert(self, fields: OwnerMemoryFields) -> MemoryOut:
         if fields.status != "archived" and await self.find_live(fields.norm):
             raise DuplicateKeyError("norm_live_unique")
-        memory_id = str(ObjectId())
+        memory_id = fields.uid
         self.rows[memory_id] = fields.model_dump()
         return self._out(memory_id)
 

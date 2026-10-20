@@ -7,6 +7,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
+from app.db.documents import new_uid
 from app.security.alerts import StoredEvent
 
 T0 = datetime.fromisoformat("2026-10-19T04:00:00+00:00")  # 09:30 in Asia/Kolkata
@@ -35,6 +36,7 @@ class MemoryEventStore:
             visitor_hash=visitor_hash,
             surface=surface,
             created_at=at,
+            uid=new_uid(),
         )
         self.events[event.id] = event
         return event

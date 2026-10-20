@@ -243,6 +243,7 @@ class Pipeline:
         meta = source.meta
         fields = KbDocumentFields(
             source_id=source.id,
+            source_uid=source.uid,
             title=meta.title or source.filename or "Restricted document",
             category=meta.category or "id-document",
             tags=list(meta.tags),
@@ -263,6 +264,7 @@ class Pipeline:
             label = TierLabel(tier=tier.label, reason=reason, by="rules", confidence=1)
         fields = KbDocumentFields(
             source_id=source.id,
+            source_uid=source.uid,
             title=item.title,
             category=item.category,
             tags=item.tags,

@@ -8,7 +8,14 @@ from typing import Any
 
 from beanie import PydanticObjectId
 
-from app.db.documents import TERMINAL_STATUSES, ChunkFields, KbDocumentFields, SourceFields, utcnow
+from app.db.documents import (
+    TERMINAL_STATUSES,
+    ChunkFields,
+    KbDocumentFields,
+    SourceFields,
+    new_uid,
+    utcnow,
+)
 from app.kb.embedding import DENSE_DIM, Embedding
 from app.kb.store import REVIEW_STATUSES, DocumentView, SourceView
 from app.kb.vectors import VectorPoint
@@ -32,6 +39,9 @@ class MemoryKbStore:
     async def get_source(self, source_id: PydanticObjectId) -> SourceView | None:
         return self.sources.get(source_id)
 
+    async def source_by_uid(self, uid: str) -> SourceView | None:
+        return next((s for s in self.sources.values() if s.uid == uid), None)
+
     async def update_source(self, source_id: PydanticObjectId, **changes: Any) -> None:
         current = self.sources[source_id]
         merged = {**current.model_dump(), **changes, "updated_at": utcnow()}
@@ -47,6 +57,9 @@ class MemoryKbStore:
 
     async def get_document(self, document_id: PydanticObjectId) -> DocumentView | None:
         return self.documents.get(document_id)
+
+    async def document_by_uid(self, uid: str) -> DocumentView | None:
+        return next((d for d in self.documents.values() if d.uid == uid), None)
 
     async def update_document(self, document_id: PydanticObjectId, **changes: Any) -> None:
         current = self.documents[document_id]
@@ -180,9 +193,14 @@ class MemoryProfileStore:
     async def get(self) -> Any:
         return self.profile
 
-    async def put(self, body: Any, resume_blob: Any) -> Any:
+    async def put(self, body: Any, resume: Any) -> Any:
         self.profile = self.profile.model_copy(
-            update={**body.model_dump(), "resume_blob": resume_blob, "updated_at": utcnow()}
+            update={
+                **body.model_dump(),
+                "resume_document_id": body.resume_document_id if resume else None,
+                "resume_blob": resume[1] if resume else None,
+                "updated_at": utcnow(),
+            }
         )
         return self.profile
 
@@ -198,19 +216,19 @@ class MemoryRecordStore:
     async def create(self, body: Any) -> Any:
         from app.services.profile import RecordOut
 
-        record = RecordOut(id=str(PydanticObjectId()), **body.model_dump())
+        record = RecordOut(id=new_uid(), **body.model_dump())
         self.rows[record.id] = record
         return record
 
     async def create_many(self, bodies: Sequence[Any]) -> Sequence[Any]:
         return [await self.create(body) for body in bodies]
 
-    async def update(self, record_id: PydanticObjectId, changes: dict[str, Any]) -> Any:
-        record = self.rows.get(str(record_id))
+    async def update(self, record_id: str, changes: dict[str, Any]) -> Any:
+        record = self.rows.get(record_id)
         if record is None:
             return None
         self.rows[record.id] = record.model_copy(update=changes)
         return self.rows[record.id]
 
-    async def delete(self, record_id: PydanticObjectId) -> bool:
-        return self.rows.pop(str(record_id), None) is not None
+    async def delete(self, record_id: str) -> bool:
+        return self.rows.pop(record_id, None) is not None

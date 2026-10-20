@@ -19,8 +19,6 @@ from datetime import datetime
 from typing import Any, Protocol, cast
 
 import structlog
-from beanie import PydanticObjectId
-from bson.errors import InvalidId
 from pydantic import ConfigDict, Field
 from pymongo.errors import DuplicateKeyError
 
@@ -183,14 +181,7 @@ class MemoryStore(Protocol):
 
 
 def _out(doc: OwnerMemory) -> MemoryOut:
-    return MemoryOut(id=str(doc.id), **doc.model_dump(exclude={"id", "revision_id", "norm"}))
-
-
-def _oid(memory_id: str) -> PydanticObjectId | None:
-    try:
-        return PydanticObjectId(memory_id)
-    except (InvalidId, TypeError, ValueError):
-        return None
+    return MemoryOut(id=doc.uid, **doc.model_dump(exclude={"id", "uid", "revision_id", "norm"}))
 
 
 LIVE: tuple[MemoryStatus, ...] = ("pending", "active")
@@ -206,8 +197,7 @@ class MongoMemoryStore:
         return [_out(d) for d in found]
 
     async def get(self, memory_id: str) -> MemoryOut | None:
-        oid = _oid(memory_id)
-        found = await OwnerMemory.get(oid) if oid is not None else None
+        found = await OwnerMemory.find_one({"uid": memory_id})
         return _out(found) if found is not None else None
 
     async def find_live(self, norm: str) -> MemoryOut | None:
@@ -220,31 +210,22 @@ class MongoMemoryStore:
         return _out(doc)
 
     async def update(self, memory_id: str, changes: dict[str, Any]) -> MemoryOut | None:
-        oid = _oid(memory_id)
-        if oid is None:
-            return None
         await OwnerMemory.get_pymongo_collection().update_one(
-            {"_id": oid}, {"$set": {**changes, "updated_at": utcnow()}}
+            {"uid": memory_id}, {"$set": {**changes, "updated_at": utcnow()}}
         )
         return await self.get(memory_id)
 
     async def bump(self, memory_id: str, activate: bool) -> MemoryOut | None:
-        oid = _oid(memory_id)
-        if oid is None:
-            return None
         changes: dict[str, Any] = {"updated_at": utcnow()}
         if activate:
             changes["status"] = "active"
         await OwnerMemory.get_pymongo_collection().update_one(
-            {"_id": oid}, {"$set": changes, "$inc": {"uses": 1}}
+            {"uid": memory_id}, {"$set": changes, "$inc": {"uses": 1}}
         )
         return await self.get(memory_id)
 
     async def delete(self, memory_id: str) -> bool:
-        oid = _oid(memory_id)
-        if oid is None:
-            return False
-        result = await OwnerMemory.get_pymongo_collection().delete_one({"_id": oid})
+        result = await OwnerMemory.get_pymongo_collection().delete_one({"uid": memory_id})
         return result.deleted_count == 1
 
 

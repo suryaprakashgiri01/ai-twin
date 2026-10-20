@@ -41,6 +41,8 @@ class KbStore(Protocol):
 
     async def get_source(self, source_id: PydanticObjectId) -> SourceView | None: ...
 
+    async def source_by_uid(self, uid: str) -> SourceView | None: ...
+
     async def update_source(self, source_id: PydanticObjectId, **changes: Any) -> None: ...
 
     async def unfinished_sources(self) -> list[SourceView]: ...
@@ -48,6 +50,8 @@ class KbStore(Protocol):
     async def create_document(self, fields: KbDocumentFields) -> DocumentView: ...
 
     async def get_document(self, document_id: PydanticObjectId) -> DocumentView | None: ...
+
+    async def document_by_uid(self, uid: str) -> DocumentView | None: ...
 
     async def update_document(self, document_id: PydanticObjectId, **changes: Any) -> None: ...
 
@@ -108,6 +112,10 @@ class MongoKbStore:
         doc = await Source.get(source_id)
         return _source_view(doc) if doc else None
 
+    async def source_by_uid(self, uid: str) -> SourceView | None:
+        doc = await Source.find_one({"uid": uid})
+        return _source_view(doc) if doc else None
+
     async def update_source(self, source_id: PydanticObjectId, **changes: Any) -> None:
         await Source.find_one({"_id": source_id}).update(
             {"$set": {**changes, "updated_at": utcnow()}}
@@ -124,6 +132,10 @@ class MongoKbStore:
 
     async def get_document(self, document_id: PydanticObjectId) -> DocumentView | None:
         doc = await KbDocument.get(document_id)
+        return _document_view(doc) if doc else None
+
+    async def document_by_uid(self, uid: str) -> DocumentView | None:
+        doc = await KbDocument.find_one({"uid": uid})
         return _document_view(doc) if doc else None
 
     async def update_document(self, document_id: PydanticObjectId, **changes: Any) -> None:

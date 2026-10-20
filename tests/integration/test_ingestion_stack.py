@@ -7,6 +7,7 @@ removed per document at the end of each test.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ from app.kb.ingestion.pipeline import Pipeline
 from app.kb.ingestion.redaction import Redactor, default_detector
 from app.kb.publishing import Publisher
 from app.kb.vectors import ALL_COLLECTIONS
-from app.migrations import m0002_ingestion_fields
+from app.migrations import m0002_ingestion_fields, m0007_public_ids
 from app.services.model_overrides import OrchestratorOverrides, OverrideIn
 from app.services.profile import ProfileIn, RecordIn
 from llm_orchestrator import (
@@ -210,6 +211,30 @@ async def test_migration_0002_backfills_legacy_rows(
     await m0002_ingestion_fields.up(db)  # idempotent
 
 
+async def test_migration_0007_backfills_public_ids(
+    resources: Resources, settings: Settings
+) -> None:
+    db = resources.mongo[settings.mongodb_database]
+    source = await db["sources"].insert_one({"kind": "text", "checksum": "old-uid"})
+    doc = await db["documents"].insert_one({"source_id": source.inserted_id, "title": "Old"})
+    await db["profile"].update_one(
+        {"_id": "profile"}, {"$set": {"resume_document_id": doc.inserted_id}}, upsert=True
+    )
+    await m0007_public_ids.up(db)
+    src = await db["sources"].find_one({"_id": source.inserted_id})
+    row = await db["documents"].find_one({"_id": doc.inserted_id})
+    profile = await db["profile"].find_one({"_id": "profile"})
+    assert src and row and profile
+    assert uuid.UUID(str(row["uid"])).version == 4 and row["source_uid"] == src["uid"]
+    assert profile["resume_document_uid"] == row["uid"]
+    await m0007_public_ids.up(db)  # idempotent: nothing is re-minted
+    again = await db["documents"].find_one({"_id": doc.inserted_id})
+    assert again and again["uid"] == row["uid"]
+    await m0007_public_ids.down(db)
+    gone = await db["documents"].find_one({"_id": doc.inserted_id})
+    assert gone and "uid" not in gone and "source_uid" not in gone
+
+
 async def test_profile_and_records_round_trip(resources: Resources) -> None:
     saved = await resources.profile.put(ProfileIn(availability="open", locations=["Remote"]), None)
     assert (await resources.profile.get()).locations == ["Remote"] == saved.locations
@@ -218,12 +243,12 @@ async def test_profile_and_records_round_trip(resources: Resources) -> None:
             kind="interview", company="Acme Widgets", role="SDE", stage="r1", date="2026-09-01"
         )
     )
-    updated = await resources.records.update(PydanticObjectId(record.id), {"stage": "r2"})
+    updated = await resources.records.update(record.id, {"stage": "r2"})
     assert updated is not None and updated.stage == "r2"
     assert [r.id for r in await resources.records.list("interview")] == [record.id]
-    assert await resources.records.delete(PydanticObjectId(record.id))
-    assert not await resources.records.delete(PydanticObjectId(record.id))
-    assert await resources.records.update(PydanticObjectId(record.id), {"stage": "x"}) is None
+    assert await resources.records.delete(record.id)
+    assert not await resources.records.delete(record.id)
+    assert await resources.records.update(record.id, {"stage": "x"}) is None
 
 
 async def test_mongo_override_reaches_the_orchestrator(
