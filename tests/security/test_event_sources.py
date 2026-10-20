@@ -37,7 +37,7 @@ async def test_admin_auth_failures_are_recorded_with_the_admin_surface() -> None
             assert bad.status_code == 401
     assert [e["kind"] for e in events.events] == ["auth_failed", "auth_failed"]
     assert {e["surface"] for e in events.events} == {"admin"}
-    assert sorted(e["rules"][0] for e in events.events) == ["AUTH_INVALID", "AUTH_REQUIRED"]
+    assert sorted(e["rules"][0] for e in events.events) == ["INVALID_API_KEY", "UNAUTHENTICATED"]
     assert events.events[0]["details"] == {"path": "/admin/v1/leads"}
     assert "atw_wrong" not in str(events.events)
 

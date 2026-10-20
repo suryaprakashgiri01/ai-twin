@@ -384,7 +384,7 @@ class MemoryService:
         activated instead)."""
         text = mask_identifiers(" ".join(body.text.split()))
         if len(text) > TEXT_MAX:
-            raise AppError(ErrorCode.VALIDATION_ERROR, f"A memory is at most {TEXT_MAX} characters")
+            raise AppError(ErrorCode.INVALID_INPUT, f"A memory is at most {TEXT_MAX} characters")
         existing = await self._store.find_live(normalise(text))
         if existing is not None:
             return await self._bump(existing, activate=True, actor=actor), False

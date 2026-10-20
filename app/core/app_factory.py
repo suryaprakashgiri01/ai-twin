@@ -18,6 +18,7 @@ from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
 from app.core.resources import Resources, ResourcesFactory, open_resources
 from app.core.telemetry import setup_telemetry, shutdown_telemetry
+from app.exceptions.codes import catalog_markdown
 from app.exceptions.handlers import register_exception_handlers
 from app.kb.embedding import Embedder, FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
@@ -83,7 +84,8 @@ def create_app(
             "**Tracing:** every response carries `X-Request-ID` and `X-Trace-ID` (the trace id "
             "on the request's log lines and its Langfuse trace); send `X-Session-ID` to group "
             "requests.\n\n"
-            '**Errors:** always `{"error": {code, message, request_id, details?}}`.'
+            '**Errors:** always `{"status": "error", "message", "result": null, '
+            '"error": {code, requestId, details?}}`. Codes:\n\n' + catalog_markdown()
         ),
         lifespan=lifespan,
         # Our middleware owns the server span: FastAPI's native one would adopt a caller's

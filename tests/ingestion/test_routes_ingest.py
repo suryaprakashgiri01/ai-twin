@@ -79,9 +79,9 @@ async def test_mislabelled_file_names_the_detected_type(api: Api) -> None:
     )
     assert response.status_code == 422
     error = response.json()["error"]
-    assert error["code"] == "VALIDATION_ERROR"
+    assert error["code"] == "INVALID_INPUT"
     assert error["details"]["detected"] == "png"
-    assert "png" in error["message"]
+    assert "png" in response.json()["message"]
     assert api.h.store.sources == {}
 
 

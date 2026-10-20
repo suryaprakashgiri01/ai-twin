@@ -1,6 +1,6 @@
 """`require_scopes(...)`: the FastAPI dependency that guards every authenticated route.
 
-Missing key → 401 AUTH_REQUIRED; unknown or revoked key → 401 AUTH_INVALID; a key without the
+Missing key → 401 UNAUTHENTICATED; unknown or revoked key → 401 INVALID_API_KEY; a key without the
 route's scopes → 403 FORBIDDEN. The `admin` scope satisfies any scope. The key itself is never
 logged: only its name is bound to the request's log context.
 
@@ -29,7 +29,9 @@ logger = structlog.get_logger(__name__)
 
 API_KEY_HEADER = "X-API-Key"
 ADMIN_PATH_PREFIX = "/admin/"
-AUTH_FAILURES = frozenset({ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_INVALID, ErrorCode.FORBIDDEN})
+AUTH_FAILURES = frozenset(
+    {ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_API_KEY, ErrorCode.FORBIDDEN}
+)
 # A burst of the same failure is recorded once per this many seconds.
 AUTH_EVENT_WINDOW = 60
 # `last_used_at` is a hint, not an audit trail: at most one write a minute per key.
@@ -99,11 +101,11 @@ def require_scopes(*required: Scope) -> Callable[..., Awaitable[Principal]]:
 def _checked_scopes(*required: Scope) -> Callable[..., Awaitable[Principal]]:
     async def dependency(request: Request, api_key: str | None) -> Principal:
         if not api_key:
-            raise AppError(ErrorCode.AUTH_REQUIRED, f"Send an API key in {API_KEY_HEADER}")
+            raise AppError(ErrorCode.UNAUTHENTICATED, f"Send an API key in {API_KEY_HEADER}")
         store = _store(request)
         record = await store.find_by_hash(hash_key(api_key))
         if record is None or not record.active:
-            raise AppError(ErrorCode.AUTH_INVALID, "API key is unknown or revoked")
+            raise AppError(ErrorCode.INVALID_API_KEY, "API key is unknown or revoked")
         principal = Principal(key_id=record.id, name=record.name, scopes=tuple(record.scopes))
         set_user_id(f"key:{principal.name}")
         structlog.contextvars.bind_contextvars(user_id=f"key:{principal.name}")

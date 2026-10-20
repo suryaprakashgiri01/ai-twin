@@ -106,7 +106,7 @@ def test_chat_stream_yields_events() -> None:
 
 def test_auth_and_connection_errors_are_one_line() -> None:
     def unauthorized(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, json={"error": {"code": "AUTH_INVALID", "message": "bad"}})
+        return httpx.Response(401, json={"error": {"code": "INVALID_API_KEY", "message": "bad"}})
 
     with pytest.raises(chat.CliError, match="401"):
         make_api(unauthorized).list(5)

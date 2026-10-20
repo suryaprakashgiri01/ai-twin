@@ -34,7 +34,7 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 def _service(request: Request) -> OwnerChatService:
     service: OwnerChatService | None = getattr(request.app.state, "owner_chat", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner chat is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Owner chat is not running")
     return service
 
 
@@ -120,7 +120,7 @@ async def refresh_title(
     longer local wait."""
     digester: ConversationDigester | None = getattr(request.app.state, "digester", None)
     if digester is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Title refresh is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Title refresh is not running")
     settings: Settings = request.app.state.settings
     if wait_seconds is not None:
         wait = wait_seconds

@@ -140,7 +140,7 @@ async def test_policy_table(kind: str, count: int, alerts: int) -> None:
 async def test_admin_auth_failures_name_their_surface() -> None:
     a = make_alerts()
     for i in range(5):
-        a.store.add("auth_failed", T0 + minutes(i), rules=["AUTH_INVALID"], surface="admin")
+        a.store.add("auth_failed", T0 + minutes(i), rules=["INVALID_API_KEY"], surface="admin")
     await a.worker.alert_due(T0 + minutes(5))
     assert "Surface: admin x5" in a.last()
 

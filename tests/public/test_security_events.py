@@ -152,7 +152,7 @@ async def test_rate_limit_burst_and_auth_failures_are_recorded_once() -> None:
     assert limited["rules"] == ["rate_limit:minute"] and limited["visitor_hash"]
     assert "203.0.113.7" not in str(public.events.events)
     auth = sorted(e["rules"][0] for e in public.events.events if e["kind"] == "auth_failed")
-    assert auth == ["AUTH_INVALID", "AUTH_REQUIRED"]
+    assert auth == ["INVALID_API_KEY", "UNAUTHENTICATED"]
 
 
 async def test_no_visitor_or_answer_text_in_logs(capsys: pytest.CaptureFixture[str]) -> None:

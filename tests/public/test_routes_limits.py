@@ -103,7 +103,7 @@ async def test_public_routes_need_public_read() -> None:
     async for client in client_for(app):
         missing = await client.post("/v1/chat", json={"message": "hello"})
         assert missing.status_code == 401
-        assert missing.json()["error"]["code"] == "AUTH_REQUIRED"
+        assert missing.json()["error"]["code"] == "UNAUTHENTICATED"
         wrong = await _post(client, "atw_not-a-key")
         assert wrong.status_code == 401
         forbidden = await _post(client, leads)

@@ -118,7 +118,7 @@ async def test_cloud_only_is_503_with_the_ollama_hint(make_twin: MakeTwin) -> No
             "/admin/v1/assistant", json={"message": "Interview with Acme"}, headers=headers
         )
     assert response.status_code == 503
-    assert "make ollama ARGS=start" in response.json()["error"]["message"]
+    assert "make ollama ARGS=start" in response.json()["message"]
     assert twin.factory.models["cloud"].calls == 0
 
 

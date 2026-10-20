@@ -269,7 +269,7 @@ async def _ingest_file(ctx: RunContext, p: Payload) -> Outcome:
     try:
         path = resolve_inbox(ctx.inbox, str(p["filename"]))
     except InboxError as exc:
-        raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+        raise AppError(ErrorCode.INVALID_INPUT, str(exc)) from exc
     limit = ctx.ops.max_file_bytes()
     if path.stat().st_size > limit:
         raise AppError(
@@ -466,7 +466,7 @@ async def _delete_document(ctx: RunContext, p: Payload) -> Outcome:
 
 def _memory(ctx: RunContext) -> MemoryService:
     if ctx.memory is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner memory is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Owner memory is not running")
     return ctx.memory
 
 

@@ -99,13 +99,13 @@ async def test_missing_unknown_revoked_and_wrong_scope(
     missing = await client.get(url)
     unknown = await client.get(url, headers={"X-API-Key": KEY_PREFIX + "nope"})
     wrong = await client.get(url, headers={"X-API-Key": leads})
-    assert (missing.status_code, missing.json()["error"]["code"]) == (401, "AUTH_REQUIRED")
-    assert (unknown.status_code, unknown.json()["error"]["code"]) == (401, "AUTH_INVALID")
+    assert (missing.status_code, missing.json()["error"]["code"]) == (401, "UNAUTHENTICATED")
+    assert (unknown.status_code, unknown.json()["error"]["code"]) == (401, "INVALID_API_KEY")
     assert (wrong.status_code, wrong.json()["error"]["code"]) == (403, "FORBIDDEN")
 
     await fakes.api_keys.revoke("leads", clock())
     revoked = await client.get("/admin/v1/whoami", headers={"X-API-Key": leads})
-    assert (revoked.status_code, revoked.json()["error"]["code"]) == (401, "AUTH_INVALID")
+    assert (revoked.status_code, revoked.json()["error"]["code"]) == (401, "INVALID_API_KEY")
 
 
 async def test_whoami_and_last_used_at_once_a_minute(
@@ -184,7 +184,7 @@ async def test_override_put_rejects_bad_shapes(
         f"/admin/v1/models/overrides/{model_id}", json=body, headers=headers
     )
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert response.json()["error"]["code"] == "INVALID_INPUT"
     assert fakes.audit.entries == []
     assert fakes.overrides.rows == {}
 

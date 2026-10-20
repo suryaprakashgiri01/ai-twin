@@ -1,4 +1,5 @@
-"""Render every failure as one envelope: ``{"error": {code, message, request_id, details}}``."""
+"""Render every failure as one envelope:
+``{"status": "error", "message", "result": null, "error": {code, requestId, details?}}``."""
 
 from __future__ import annotations
 
@@ -13,9 +14,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.context import get_request_id
 from app.exceptions.base import AppError
-from app.exceptions.codes import CODE_BY_HTTP_STATUS, ErrorCode
+from app.exceptions.codes import CATALOG, CODE_BY_HTTP_STATUS, ErrorCode
 
 logger = structlog.get_logger(__name__)
+
+
+def error_body(code: ErrorCode, message: str, details: Any = None) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code.value, "requestId": get_request_id()}
+    if details is not None:
+        error["details"] = details
+    return {"status": "error", "message": message, "result": None, "error": error}
 
 
 def _envelope(
@@ -26,14 +34,9 @@ def _envelope(
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     trace.get_current_span().set_attribute("error.code", code.value)
-    body: dict[str, Any] = {
-        "code": code.value,
-        "message": message,
-        "request_id": get_request_id(),
-    }
-    if details is not None:
-        body["details"] = details
-    return JSONResponse(status_code=status, content={"error": body}, headers=headers)
+    return JSONResponse(
+        status_code=status, content=error_body(code, message, details), headers=headers
+    )
 
 
 async def app_error_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -50,14 +53,16 @@ async def validation_error_handler(_request: Request, exc: Exception) -> JSONRes
         {"loc": list(err.get("loc", ())), "msg": err.get("msg"), "type": err.get("type")}
         for err in exc.errors()
     ]
-    logger.warning("request validation failed", error_code="VALIDATION_ERROR", errors=errors)
-    return _envelope(ErrorCode.VALIDATION_ERROR, "Request validation failed", 422, errors)
+    code = ErrorCode.INVALID_INPUT
+    logger.warning("request validation failed", error_code=code.value, errors=errors)
+    return _envelope(code, "Request validation failed", CATALOG[code].status, errors)
 
 
 async def http_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, StarletteHTTPException)
     code = CODE_BY_HTTP_STATUS.get(exc.status_code, ErrorCode.INTERNAL_ERROR)
-    return _envelope(code, str(exc.detail), exc.status_code)
+    headers = dict(exc.headers) if exc.headers else None
+    return _envelope(code, str(exc.detail), exc.status_code, headers=headers)
 
 
 def render_unhandled(exc: Exception) -> JSONResponse:
@@ -65,7 +70,8 @@ def render_unhandled(exc: Exception) -> JSONResponse:
     span = trace.get_current_span()
     span.record_exception(exc)
     span.set_status(trace.Status(trace.StatusCode.ERROR, type(exc).__name__))
-    return _envelope(ErrorCode.INTERNAL_ERROR, "Internal server error", 500)
+    code = ErrorCode.INTERNAL_ERROR
+    return _envelope(code, CATALOG[code].message, CATALOG[code].status)
 
 
 def register_exception_handlers(app: FastAPI) -> None:

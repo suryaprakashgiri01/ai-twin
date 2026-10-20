@@ -211,7 +211,7 @@ class IntakeService:
             before = await self._graph.aget_state(config)
         except Exception as exc:
             logger.error("intake state unreadable", error_type=type(exc).__name__)
-            yield "error", self._error(cid, ErrorCode.DEPENDENCY_UNAVAILABLE, "State unavailable")
+            yield "error", self._error(cid, ErrorCode.SERVICE_UNAVAILABLE, "State unavailable")
             return
         resumed = bool(before.interrupts)
         yield "meta", {"conversation_id": cid, "mode": "intake", "resumed": resumed}

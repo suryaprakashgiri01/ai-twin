@@ -30,7 +30,9 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 router = APIRouter(prefix=PUBLIC_PREFIX, tags=["public"])
 
-AUTH_FAILURES = frozenset({ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_INVALID, ErrorCode.FORBIDDEN})
+AUTH_FAILURES = frozenset(
+    {ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_API_KEY, ErrorCode.FORBIDDEN}
+)
 # A burst of the same failure is recorded once per this many seconds.
 AUTH_EVENT_WINDOW = 60
 
@@ -89,7 +91,7 @@ async def rate_limited_visitor(
 def _chat(request: Request) -> PublicChat:
     service: PublicChat | None = getattr(request.app.state, "public_chat", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Public chat is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Public chat is not running")
     return service
 
 
@@ -165,7 +167,7 @@ async def lead_visitor(request: Request, principal: LeadKey) -> Visitor:
 def _leads(request: Request) -> LeadService:
     service: LeadService | None = getattr(request.app.state, "leads", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Opportunities are not available")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Opportunities are not available")
     return service
 
 

@@ -55,7 +55,7 @@ async def test_publish_requires_public_and_approved(api: Api) -> None:
     private = await ingest(api, persona.note(), "experience")
     refused = await call(api, "POST", f"/documents/{private}/publish")
     assert refused.status_code == 409
-    assert "public" in refused.json()["error"]["message"]
+    assert "public" in refused.json()["message"]
     await call(api, "POST", f"/documents/{private}/approve")
     assert (await call(api, "POST", f"/documents/{private}/publish")).status_code == 409
 
@@ -63,7 +63,7 @@ async def test_publish_requires_public_and_approved(api: Api) -> None:
     public = await ingest(api, "My blog post on caching.", "blog")
     unapproved = await call(api, "POST", f"/documents/{public}/publish")
     assert unapproved.status_code == 409
-    assert "Approve" in unapproved.json()["error"]["message"]
+    assert "Approve" in unapproved.json()["message"]
     assert await api.h.index.count("kb_public") == 0
 
 

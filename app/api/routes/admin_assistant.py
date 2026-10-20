@@ -22,7 +22,7 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 def _service(request: Request) -> IntakeService:
     service: IntakeService | None = getattr(request.app.state, "intake", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "The intake assistant is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "The intake assistant is not running")
     return service
 
 

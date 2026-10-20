@@ -24,7 +24,7 @@ AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
 def _memory(request: Request) -> MemoryService:
     service: MemoryService | None = getattr(request.app.state, "memory", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner memory is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Owner memory is not running")
     return service
 
 

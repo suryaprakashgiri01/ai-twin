@@ -107,7 +107,7 @@ class Api:
             raise CliError(f"{KEY_NAME} lacks the admin scope (403).")
         if response.status_code >= 400:
             try:
-                message = response.json()["error"]["message"]
+                message = response.json()["message"]
             except (ValueError, KeyError, TypeError):
                 message = response.text[:200]
             raise CliError(f"{response.status_code}: {message}")

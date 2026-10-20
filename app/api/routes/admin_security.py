@@ -74,7 +74,7 @@ class AlertTestResult(BaseModel):
 def _worker(request: Request) -> AlertWorker:
     worker: AlertWorker | None = getattr(request.app.state, "alert_worker", None)
     if worker is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "The alert worker is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "The alert worker is not running")
     return worker
 
 
@@ -125,7 +125,7 @@ async def test_alert(principal: AdminKey, request: Request) -> AlertTestResult:
     worker = _worker(request)
     if not worker.configured:
         raise AppError(
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            ErrorCode.SERVICE_UNAVAILABLE,
             "Alert email is not configured (SMTP_HOST, LEAD_EMAIL_FROM, ALERT_EMAIL_TO or "
             "LEAD_EMAIL_TO)",
         )

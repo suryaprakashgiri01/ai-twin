@@ -209,7 +209,7 @@ def to_app_error(exc: IngestError, **details: Any) -> AppError:
     code = (
         ErrorCode.PAYLOAD_TOO_LARGE
         if exc.code == IngestErrorCode.TOO_LARGE
-        else ErrorCode.VALIDATION_ERROR
+        else ErrorCode.INVALID_INPUT
     )
     extra = {"reason": exc.code.value, **({"detected": exc.detected} if exc.detected else {})}
     return AppError(code, exc.message, details={**details, **extra})
@@ -354,12 +354,12 @@ class AdminOps:
 
     def _service(self) -> IngestionService:
         if self._d.ingestion is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Ingestion is not running")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Ingestion is not running")
         return self._d.ingestion
 
     def _publisher(self) -> Publisher:
         if self._d.pipeline is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Ingestion is not running")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Ingestion is not running")
         redis = self._d.redis
         return Publisher(
             store=self._d.kb,
@@ -395,7 +395,7 @@ class AdminOps:
     def check_file_count(self, count: int) -> None:
         limit = self._d.settings.ingest_max_files
         if count > limit:
-            raise AppError(ErrorCode.VALIDATION_ERROR, f"At most {limit} files per batch")
+            raise AppError(ErrorCode.INVALID_INPUT, f"At most {limit} files per batch")
 
     def max_file_bytes(self) -> int:
         return ingest_max_bytes(self._d.settings)
@@ -480,7 +480,7 @@ class AdminOps:
         detected = dispatch.detect(upload.data)
         if detected != "zip":
             raise AppError(
-                ErrorCode.VALIDATION_ERROR,
+                ErrorCode.INVALID_INPUT,
                 f"Expected a ZIP archive, detected {detected}",
                 details={"detected": detected},
             )
@@ -521,7 +521,7 @@ class AdminOps:
         and resets approval. Restricted removes the text, chunks and vectors."""
         changes = patch.model_dump(exclude_none=True)
         if not changes:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Nothing to change")
+            raise AppError(ErrorCode.INVALID_INPUT, "Nothing to change")
         publisher = self._publisher()
         before = await publisher.get(parse_id(document_id))
         after = await publisher.update(before.id, dict(changes))
@@ -574,10 +574,10 @@ class AdminOps:
         kb = self._d.kb
         doc = await kb.get_document(parse_id(document_id))
         if doc is None or doc.deleted_at is not None:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "resume_document_id is not a document")
+            raise AppError(ErrorCode.INVALID_INPUT, "resume_document_id is not a document")
         source = await kb.get_source(doc.source_id)
         if source is None or source.blob is None:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "That document has no stored file")
+            raise AppError(ErrorCode.INVALID_INPUT, "That document has no stored file")
         return source.blob
 
     async def put_profile(self, body: ProfileIn, actor: str) -> ProfileOut:
@@ -605,7 +605,7 @@ class AdminOps:
     async def create_records(self, bodies: Sequence[RecordIn], actor: str) -> list[RecordOut]:
         """Create many records in one call (daily application dumps). Audits each id."""
         if not bodies:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Provide at least one record")
+            raise AppError(ErrorCode.INVALID_INPUT, "Provide at least one record")
         records = list(await self._d.records.create_many(bodies))
         for record in records:
             await self._audit(actor, "record.create", record.id, {"batch": True})
@@ -614,7 +614,7 @@ class AdminOps:
     async def update_record(self, record_id: str, body: RecordPatch, actor: str) -> RecordOut:
         changes = body.model_dump(exclude_unset=True)
         if not changes:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Nothing to change")
+            raise AppError(ErrorCode.INVALID_INPUT, "Nothing to change")
         record = await self._d.records.update(parse_id(record_id), changes)
         if record is None:
             raise AppError(ErrorCode.NOT_FOUND, "Record not found")
@@ -630,7 +630,7 @@ class AdminOps:
 
     def _leads(self) -> LeadStore:
         if self._d.leads is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Leads are not available")
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Leads are not available")
         return self._d.leads
 
     async def list_leads(

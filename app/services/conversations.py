@@ -226,9 +226,7 @@ class ConversationService:
             stored = await self._store.load(conversation_id, self._cache_turns)
         except Exception as exc:
             logger.warning("conversation reload failed", error_type=type(exc).__name__)
-            raise AppError(
-                ErrorCode.DEPENDENCY_UNAVAILABLE, "Conversation store unavailable"
-            ) from exc
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Conversation store unavailable") from exc
         if stored is None:
             if channel is not None:
                 await self._redis.set(

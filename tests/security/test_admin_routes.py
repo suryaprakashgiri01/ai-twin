@@ -63,7 +63,7 @@ def api() -> Api:
 async def test_events_are_listed_newest_first_without_text(api: Api) -> None:
     api.store.add("meta_probe", T0, severity="low", rules=["scope:model"], visitor_hash="a" * 64)
     api.store.add("canary_hit", T0 + minutes(1), severity="critical", rules=["canary"])
-    api.store.add("auth_failed", T0 + minutes(2), rules=["AUTH_INVALID"], surface="admin")
+    api.store.add("auth_failed", T0 + minutes(2), rules=["INVALID_API_KEY"], surface="admin")
     async for c in client(api):
         everything = (await c.get("/admin/v1/security/events")).json()
         critical = (await c.get("/admin/v1/security/events?severity=critical")).json()

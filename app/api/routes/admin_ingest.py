@@ -76,7 +76,7 @@ def _form_meta(
             }
         )
     except ValueError as exc:
-        raise AppError(ErrorCode.VALIDATION_ERROR, "Invalid form fields", details=str(exc)) from exc
+        raise AppError(ErrorCode.INVALID_INPUT, "Invalid form fields", details=str(exc)) from exc
 
 
 @router.post("/ingest/text", status_code=status.HTTP_202_ACCEPTED, summary="Ingest a typed note")

@@ -349,7 +349,7 @@ class OwnerChatService:
             and self._known_models
             and request.model not in self._known_models
         ):
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Unknown model id", details=[request.model])
+            raise AppError(ErrorCode.INVALID_INPUT, "Unknown model id", details=[request.model])
         if request.conversation_id is None:
             ref = await self._conversations.start("owner")
             await self._title(ref.id, request.message)
