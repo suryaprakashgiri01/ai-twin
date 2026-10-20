@@ -63,6 +63,13 @@ from app.agents.intake.drafts import (
     normalise,
     only_github_repo_urls,
 )
+from app.agents.intake.labels import (
+    camel_to_snake_payload,
+    find_json_object,
+    merge_labelled,
+    parse_labels,
+    validate_paste,
+)
 from app.agents.intake.suggest import suggest
 from app.agents.prompts import intake as prompts
 from app.agents.routing import (
@@ -451,6 +458,19 @@ def pending_prompt(pending: dict[str, Any]) -> str:
     return f"{pending['summary']}\n\n{verb} (yes / no / tell me what to change)"
 
 
+def _pasted_fields(
+    spec: ActionSpec, message: str, *, partial: bool
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """JSON the owner pasted, validated like the action's API body; empty when there is none."""
+    raw = find_json_object(message)
+    if raw is None:
+        return {}, {}
+    cleaned = camel_to_snake_payload(raw)
+    required = spec.required
+    complete = bool(required) and all(cleaned.get(name) not in (None, "", []) for name in required)
+    return validate_paste(raw, spec.model, partial=partial or not complete)
+
+
 class IntakeNodes:
     def __init__(self, deps: IntakeDeps) -> None:
         self.deps = deps
@@ -506,10 +526,29 @@ class IntakeNodes:
         base = {} if switched or current is None else dict(state.get("payload") or {})
         if retry is not None:
             base = dict(retry["payload"])
+        labelled = parse_labels(state["message"], set(spec.fields))
+        pasted, paste_errors = _pasted_fields(spec, state["message"], partial=bool(base))
+        if paste_errors and not pasted:
+            _step("gather", started, action=spec.name, model=model_id, paste_errors=True)
+            return Command(
+                goto=END,
+                update={
+                    "action": spec.name,
+                    "payload": base,
+                    "missing": [],
+                    "pending": None,
+                    "reply": _missing_text(spec, [], paste_errors),
+                    "status": "asked",
+                },
+            )
+        model_payload = {**extracted.payload, **{k: v for k, v in pasted.items() if k != "extras"}}
         given, dropped = ground(
-            spec, extracted.payload, state["message"], base, self.deps.timezone, self.deps.now()
+            spec, model_payload, state["message"], base, self.deps.timezone, self.deps.now()
         )
-        payload = self._defaults(spec, merge(base, given), state["message"])
+        # Owner-labelled and pasted values always win and were never subject to grounding.
+        payload = merge_labelled(merge_labelled(merge(base, given), labelled), pasted)
+        dropped = [name for name in dropped if name not in labelled and name not in pasted]
+        payload = self._defaults(spec, payload, state["message"])
         if spec.name in ("add_record", "update_record"):
             payload = _record_defaults(
                 payload,
@@ -518,6 +557,8 @@ class IntakeNodes:
                 self.deps.now(),
                 adding=spec.name == "add_record",
             )
+            # Labels win again over regex fallbacks when both spoke.
+            payload = merge_labelled(merge_labelled(payload, labelled), pasted)
         return await self._settle(spec, payload, state, started, model_id, switched, dropped)
 
     async def _settle(
