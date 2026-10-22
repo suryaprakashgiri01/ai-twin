@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     denylist_path: Path = Path("vault/config/denylist.yaml")
     # Comma-separated strings redaction keeps: the owner's published e-mail, phone, name.
     public_contact_allowlist: str = ""
+    # Comma-separated spellings of the owner's own name, never redacted as a person (each part
+    # alone counts too). Empty means PUBLIC_OWNER_NAME.
+    owner_names: str = ""
     # Comma-separated `owner/name` list: the only repositories GitHub sync may read.
     github_sync_repos: str = ""
     github_token: SecretStr | None = None

@@ -31,13 +31,16 @@ class Ingestion:
 
 def build_ingestion(settings: Settings, resources: Resources, llm: LLMServices) -> Ingestion:
     allowlist = split_list(settings.public_contact_allowlist)
+    owner_names = split_list(settings.owner_names) or [settings.public_owner_name]
     model_path = settings.models_dir / "spacy" / "en_core_web_md"
     token = settings.github_token.get_secret_value() if settings.github_token else None
     pipeline = Pipeline(
         store=resources.kb,
         vectors=resources.vectors,
         blobs=resources.blobs,
-        redactor=lambda: Redactor(default_detector(model_path), allowlist=allowlist),
+        redactor=lambda: Redactor(
+            default_detector(model_path), allowlist=allowlist, owner_names=owner_names
+        ),
         guard=EmployerGuard(settings.denylist_path),
         labeller=Labeller(llm.orchestrator, llm.classifier),
         embedder=FastEmbedder(settings.models_dir / "fastembed"),
