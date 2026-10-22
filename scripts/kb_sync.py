@@ -68,6 +68,8 @@ TERMINAL = frozenset({"done", "quarantined", "failed"})
 KINDS = ("file", "text", "url", "repos", "local_repo")
 # Built from a local git repository by scripts.repo_digest; git-ignored like the rest of vault/.
 GENERATED = "docs/generated"
+CARD_BATCH = 5
+CARD_TIMEOUT = 600.0
 META_KEYS = ("category", "tags", "tier", "summary", "occurredAt")
 
 
@@ -301,7 +303,9 @@ def apply(
 def cards(client: httpx.Client) -> int:
     written = 0
     while True:
-        batch = result(client.post("/documents/cards", json={"missingOnly": True, "limit": 20}))
+        # Local models write a card in seconds each: small batches, a long wait per batch.
+        body = {"missingOnly": True, "limit": CARD_BATCH}
+        batch = result(client.post("/documents/cards", json=body, timeout=CARD_TIMEOUT))
         written += int(batch["written"])
         if batch["checked"] == 0 or batch["written"] == 0:
             return written
