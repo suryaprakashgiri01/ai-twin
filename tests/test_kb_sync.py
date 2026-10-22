@@ -194,3 +194,22 @@ def test_reset_stops_before_the_backup_when_stores_are_down(
     assert kb_sync.main(["--reset", "--apply"]) == 1
     out = capsys.readouterr()
     assert "nothing was backed up or deleted" in out.out + out.err
+
+
+def test_a_failed_source_is_retried_on_the_next_run(tmp_path: Path) -> None:
+    entries = setup(tmp_path, MANIFEST)
+    api = FakeApi()
+    failing = api.__call__
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/admin/v1/sources/s4"):  # the repos entry
+            return ok(
+                {"status": "failed", "documentIds": [], "errorMessage": "GitHub answered 404"}
+            )
+        return failing(request)
+
+    client = httpx.Client(base_url="http://t/admin/v1", transport=httpx.MockTransport(handler))
+    state: dict[str, kb_sync.EntryState] = {}
+    kb_sync.apply(client, entries, state, timeout=1)
+    assert state["repos"].checksum == ""
+    assert [s for e, s in kb_sync.plan(entries, state) if e.key == "repos"] == ["changed"]

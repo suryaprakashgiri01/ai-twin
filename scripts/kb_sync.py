@@ -258,17 +258,21 @@ def sync_entry(
             client.delete(f"/documents/{document_id}")
     sources = submit(client, entry, refresh)
     documents: list[str] = []
+    failed = 0
     for source_id in sources:
         status = wait_for(client, source_id, timeout)
         documents += status.get("documentIds", [])
         if status["status"] not in ("done", "quarantined"):
-            warn(f"{entry.key}: source {source_id} ended {status['status']}")
+            failed += 1
+            reason = status.get("errorMessage") or status.get("errorCode") or ""
+            warn(f"{entry.key}: source {source_id} ended {status['status']} {reason}".rstrip())
         elif status["status"] == "quarantined" and entry.release != "local":
             warn(f"{entry.key}: quarantined; add `release: local` to use it locally")
     released = release_quarantined(client, entry, documents)
     if released:
         info(f"{entry.key}: {released} quarantined document(s) released for local use")
-    return EntryState(entry.checksum(), sources, documents)
+    # A failed source leaves the entry unfinished: no checksum, so the next run tries again.
+    return EntryState("" if failed else entry.checksum(), sources, documents)
 
 
 def apply(
@@ -286,7 +290,11 @@ def apply(
         info(f"{entry.key}: {status}, ingesting")
         state[entry.key] = sync_entry(client, entry, state.get(entry.key), timeout)
         save_state(state)  # a later failure keeps what is already done
-        ok(f"{entry.key}: {len(state[entry.key].documents)} document(s)")
+        done = state[entry.key]
+        (ok if done.checksum else warn)(
+            f"{entry.key}: {len(done.documents)} document(s)"
+            + ("" if done.checksum else "; not finished, the next --apply retries it")
+        )
     return counts
 
 
