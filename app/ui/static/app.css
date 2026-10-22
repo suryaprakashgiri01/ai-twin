@@ -256,3 +256,21 @@ tr.clickable { cursor: pointer; }
   .theme-toggle { min-width: 0; }
   .chat { padding: 0 12px; }
 }
+
+/* --- API tabs ------------------------------------------------------------------------------- */
+.form { display: flex; flex-direction: column; gap: 10px; }
+.form .row > .field { flex: 1; min-width: 160px; }
+.subtabs { margin-bottom: 4px; }
+.subtab-body { display: flex; flex-direction: column; gap: 12px; }
+.ok-line { color: var(--ok); background: var(--ok-bg); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.pager { margin-top: 10px; align-items: center; }
+.list-body { margin-top: 10px; }
+.preview { font: 12.5px/1.45 var(--mono); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; max-height: 50vh; overflow: auto; }
+.relabel { margin: 10px 0; }
+.relabel .field { min-width: 120px; flex: 1; }
+.source-line { padding: 4px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.agents { display: flex; flex-direction: column; gap: 12px; }
+.agent-row { border-top: 1px solid var(--border); padding-top: 10px; }
+.agent-row .field { min-width: 140px; }
+.batch summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 12px; }
+td .mono { white-space: nowrap; }

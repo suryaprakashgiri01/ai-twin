@@ -65,9 +65,14 @@ function available() {
 
 async function loadModels() {
   const r = await request("GET", "/admin/v1/models");
-  models = rows(r).filter((m) => m.enabled && m.roles.includes("generator"));
+  models = rows(r).filter((m) => m.status !== "disabled" && m.roles.includes("generator"));
+  // Only active models can be pinned; the rest show why (needs install, no key, unreachable).
   clear(els.modelPick, h("option", { value: "", text: "Auto (gateway picks)" }),
-    models.map((m) => h("option", { value: m.id, text: `${m.id} · ${m.local ? "local" : m.provider} · ≤${m.maxTier}` })));
+    models.map((m) => h("option", {
+      value: m.id,
+      disabled: m.status !== "active",
+      text: `${m.id} · ${m.local ? "local" : m.provider} · ≤${m.maxTier}${m.status === "active" ? "" : ` · ${m.status === "not pulled" ? "needs install" : m.status}`}`,
+    })));
   els.modelPick.value = chat.model;
 }
 

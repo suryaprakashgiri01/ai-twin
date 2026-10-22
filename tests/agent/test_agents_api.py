@@ -13,8 +13,10 @@ from app.agents.models import AgentModel, AgentModels
 from app.auth.keys import issue_key
 from app.core.app_factory import create_app
 from app.core.config import Settings
+from app.core.llm import provider_secrets
 from app.exceptions import AppError
 from app.services.agent_settings import AgentSettingsIn, AgentSettingsService
+from app.services.model_status import ModelStatusChecker
 from llm_orchestrator import Tier
 from tests.conftest import FakeCheck
 from tests.envelope import result
@@ -90,6 +92,11 @@ async def api() -> AsyncIterator[Api]:
         api_keys=keys, audit=audit, overrides=MemoryOverrideStore()
     )
     app.state.agent_settings = AgentSettingsService(models(), MemoryAgentOverrideStore())
+    # No real Ollama or provider is called from a unit test.
+    offline = httpx.MockTransport(lambda _: httpx.Response(503))
+    app.state.model_status = ModelStatusChecker(
+        app.state.settings, provider_secrets(app.state.settings), offline
+    )
     key = (await issue_key(keys, "owner", ["admin"]))[1]
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -120,6 +127,8 @@ async def test_agent_routes_list_put_reset_and_audit(api: Api) -> None:
 
 async def test_model_list_for_the_picker_hides_provider_names(api: Api) -> None:
     listed = result(await api.client.get("/admin/v1/models", headers=api.headers))
-    assert listed and {"id", "provider", "maxTier", "enabled", "local", "roles"} <= set(listed[0])
+    assert listed and {"id", "status", "provider", "maxTier", "enabled", "local"} <= set(listed[0])
+    statuses = {m["status"] for m in listed}
+    assert statuses <= {"active", "disabled", "no key", "not pulled", "unreachable"}
     assert all("model" not in m for m in listed)
     assert all(m["local"] == (m["provider"] in {"ollama", "mock"}) for m in listed)
