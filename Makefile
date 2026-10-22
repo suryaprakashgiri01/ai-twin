@@ -103,7 +103,7 @@ downgrade: ## Roll back migrations newer than a version (dry run): ARGS="0003 --
 # its prompt above the last shutdown lines and the cursor looks stuck: press Enter. Running the
 # server through scripts/dev.ps1 (no make in between) avoids it.
 ifeq ($(OS),Windows_NT)
-RUN_HINT = @echo "Tip (Windows): ./scripts/dev.ps1 run stops cleanly on Ctrl+C; with make, press Enter after it stops."
+RUN_HINT = @echo "Windows: Ctrl+C stops the server quietly under make (no lines after the prompt); ./scripts/dev.ps1 run shows the full shutdown."
 else
 RUN_HINT = @true
 endif
