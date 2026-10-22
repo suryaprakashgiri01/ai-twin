@@ -94,6 +94,7 @@ _REPORT = re.compile(
     r"interview (today|tomorrow|at)|applied (to|for))\b",
     re.I,
 )
+NOT_SAVED = "Nothing was saved: the intake assistant did not recognise a change to make."
 HEADINGS: dict[AgentKind, str] = {
     "intake": "Saved",
     "ask": "From your vault",
@@ -137,6 +138,18 @@ class SuperRequest(ApiModel):
 
 
 @dataclass
+class Told:
+    """What one message to the intake conversation produced."""
+
+    conversation_id: str
+    text: str = ""
+    draft: dict[str, Any] | None = None
+    action: str | None = None
+    # Intake's turn status: "done" means something was written.
+    status: str = ""
+
+
+@dataclass
 class StepResult:
     agent: AgentKind
     text: str = ""
@@ -148,6 +161,8 @@ class StepResult:
     error: str | None = None
     # The linked intake conversation an intake step ran in.
     intake_conversation: str | None = None
+    # An intake step that wrote something (not a draft waiting, not a chat reply).
+    saved: bool = False
 
     def summary(self) -> dict[str, Any]:
         status = "error" if self.error else "pending" if self.pending else "done"
@@ -385,47 +400,51 @@ class SuperAgent:
 
     async def _intake(self, step: Step, prepared: Prepared, intake_cid: str | None) -> StepResult:
         """Runs the step in the linked intake conversation, confirming additive drafts."""
-        cid, text, draft, action = await self._tell(step.instruction, intake_cid, prepared)
+        told = await self._tell(step.instruction, intake_cid, prepared)
+        draft = told.draft
         if (
             draft is not None
             and draft.get("kind") == "draft"
             and draft.get("action") in AUTO_CONFIRM
         ):
-            cid, text, draft, action = await self._tell("yes", cid, prepared)
-        pending = draft is not None
-        if pending and draft is not None:
+            told = await self._tell("yes", told.conversation_id, prepared)
+            draft = told.draft
+        text = told.text
+        if draft is not None:
             text = "\n\n".join(p for p in (text, str(draft.get("prompt") or "")) if p)
+        elif told.status != "done":
+            # Intake answered without writing (it did not recognise a change): say so plainly.
+            text = "\n\n".join(p for p in (NOT_SAVED, text) if p)
         return StepResult(
             agent="intake",
             text=text,
             tier=Tier.CONFIDENTIAL,
             model="local",
-            pending=pending,
-            action=action,
-            intake_conversation=cid,
+            pending=draft is not None,
+            action=told.action,
+            intake_conversation=told.conversation_id,
+            saved=draft is None and told.status == "done",
         )
 
-    async def _tell(
-        self, message: str, intake_cid: str | None, prepared: Prepared
-    ) -> tuple[str, str, dict[str, Any] | None, str | None]:
+    async def _tell(self, message: str, intake_cid: str | None, prepared: Prepared) -> Told:
         ready = await self.d.intake.prepare(
             AssistantRequest(conversation_id=intake_cid, message=message), prepared.key_name
         )
+        told = Told(conversation_id=ready.conversation_id)
         parts: list[str] = []
-        draft: dict[str, Any] | None = None
-        action: str | None = None
         async for event, data in self.d.intake.events(ready):
             if event == "token":
                 parts.append(str(data.get("text", "")))
             elif event == "draft":
-                draft = data
+                told.draft = data
             elif event == "done":
-                action = data.get("action")
+                told.action, told.status = data.get("action"), str(data.get("status") or "")
                 if not data.get("pending"):
-                    draft = None
+                    told.draft = None
             elif event == "error":
                 raise AppError(ErrorCode(data["code"]), str(data["message"]))
-        return ready.conversation_id, "".join(parts).strip(), draft, action
+        told.text = "".join(parts).strip()
+        return told
 
     async def _store(
         self,
@@ -482,6 +501,8 @@ def compose(results: list[StepResult]) -> str:
     blocks = []
     for r in useful:
         heading = HEADINGS[r.agent]
+        if r.agent == "intake" and not r.saved:
+            heading = "Waiting for your answer" if r.pending else "Not saved"
         blocks.append(f"**{heading}**\n{r.text}" if heading else r.text)
     return "\n\n".join(blocks) or "Nothing to do."
 

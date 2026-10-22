@@ -58,12 +58,16 @@ class FakeIntake:
         self.told.append(ready.message)
         if ready.message == "yes":
             yield "token", {"text": "Added the Acme interview (today 15:00)."}
-            yield "done", {"action": self.action, "pending": False}
+            yield "done", {"action": self.action, "pending": False, "status": "done"}
+            return
+        if self.action == "none":
+            yield "token", {"text": "I can add notes and records. What would you like to do?"}
+            yield "done", {"action": None, "pending": False, "status": "chat"}
             return
         draft = {"kind": "draft", "action": self.action, "prompt": "Save this? (yes/no)"}
         yield "token", {"text": "Here is the draft."}
         yield "draft", draft
-        yield "done", {"action": self.action, "pending": True}
+        yield "done", {"action": self.action, "pending": True, "status": "draft"}
 
 
 def plan(*steps: tuple[str, str]) -> str:
@@ -165,7 +169,10 @@ def test_rule_plan_and_compose() -> None:
     assert rule_plan("what did I learn about raft?").steps[0].agent == "ask"
     one = [StepResult(agent="ask", text="Raft [1].")]
     assert compose(one) == "Raft [1]."
-    two = [StepResult(agent="intake", text="Added."), StepResult(agent="prep", text="I am…")]
+    two = [
+        StepResult(agent="intake", text="Added.", saved=True),
+        StepResult(agent="prep", text="I am…"),
+    ]
     assert compose(two) == "**Saved**\nAdded.\n\n**Your answer**\nI am…"
 
 
@@ -240,3 +247,18 @@ async def test_confidential_question_runs_local_and_planner_falls_back() -> None
     # The cloud model may try to plan (the planner's fallback), but never sees the offer.
     seen = [str(m.content) for call in factory.models["cloud"].seen for m in call]
     assert not any(CONF_TEXT in text for text in seen)
+
+
+async def test_an_intake_step_that_wrote_nothing_says_so() -> None:
+    intake = FakeIntake(action="none")
+    agent, _, conversations = make(
+        planner=[plan(("intake", "Interview with Acme today"), ("prep", "pitch")), "I build."],
+        cloud=["unused"],
+        local=["unused"],
+        hits=[hit("p1", Tier.PRIVATE, PRIV_TEXT)],
+        intake=intake,
+    )
+    events, _ = await turn(agent, conversations, "Interview with Acme today; give me a pitch")
+    answer = of(events, "token")[0]["text"]
+    assert answer.startswith("**Not saved**\nNothing was saved")
+    assert "**Saved**" not in answer
