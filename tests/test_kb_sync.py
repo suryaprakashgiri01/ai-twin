@@ -182,3 +182,15 @@ def test_local_repo_digest_is_built_ingested_and_tracks_new_commits(tmp_path: Pa
         kb_sync.parse_entries(
             {"entries": [{"key": "x", "local_repo": str(repo), "category": "other"}]}
         )
+
+
+def test_reset_stops_before_the_backup_when_stores_are_down(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import export
+
+    monkeypatch.setattr(kb_sync, "stores_down", lambda: ["MongoDB at mongodb://x"])
+    monkeypatch.setattr(export, "main", lambda _argv: pytest.fail("no backup prompt"))
+    assert kb_sync.main(["--reset", "--apply"]) == 1
+    out = capsys.readouterr()
+    assert "nothing was backed up or deleted" in out.out + out.err

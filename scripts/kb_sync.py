@@ -342,9 +342,39 @@ def _secret(value: Any) -> str | None:
     return value.get_secret_value() if value is not None else None
 
 
+def stores_down() -> list[str]:
+    """MongoDB and Qdrant that do not answer, checked before anything asks for a passphrase."""
+    from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
+
+    from app.core.config import Settings
+
+    settings = Settings()
+    down: list[str] = []
+    client: MongoClient[dict[str, Any]] = MongoClient(
+        settings.mongodb_uri, serverSelectionTimeoutMS=2000
+    )
+    try:
+        client.admin.command("ping")
+    except PyMongoError:
+        down.append(f"MongoDB at {settings.mongodb_uri}")
+    finally:
+        client.close()
+    try:
+        httpx.get(f"{settings.qdrant_url.rstrip('/')}/readyz", timeout=2).raise_for_status()
+    except httpx.HTTPError:
+        down.append(f"Qdrant at {settings.qdrant_url}")
+    return down
+
+
 def reset() -> int:
     from scripts import export
 
+    down = stores_down()
+    if down:
+        fail(f"{' and '.join(down)} not reachable; nothing was backed up or deleted")
+        info("Start the stack first: make up  (Windows: ./scripts/dev.ps1 up)")
+        return 1
     info("Exporting an encrypted backup first (make export)")
     if export.main([]) != 0:
         fail("Backup failed; nothing was deleted")
