@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "owner-v3"
+PROMPT_VERSION = "owner-v4"
 
 NOT_IN_VAULT = "I don't have that in the vault."
 WRITE_REDIRECT = (
@@ -48,7 +48,13 @@ Answer only from the numbered context:
 - Lead with the direct answer. For a summary or overview, give one short paragraph or bullet \
 per document or project: what it is, the owner's role, the technologies, and the outcomes or \
 numbers the context states.
-- Entries marked "(document summary)" describe a whole document; use them for the overview and \
+- Each entry's header gives its category in brackets. "company-projects" and "work-note" are \
+work for an employer; "project" is a personal repository or side project. When the question is \
+about the owner's company, employer or job, describe only employer work; never list personal \
+projects as company work.
+- Several entries can describe the same project (a repository, its design document, an \
+overview page): merge them into one bullet for that project, never list a project twice.
+- Entries marked "document summary" describe a whole document; use them for the overview and \
 the other entries for detail.
 - Cite each fact inline as [n] with the context's numbers.
 - Never invent facts, names or numbers. If the context does not answer the question, reply \

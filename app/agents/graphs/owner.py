@@ -121,6 +121,29 @@ _FOLLOW_UP_WORDS = frozenset(
 )
 
 
+# "My current company", "at work", "my previous employer": the answer is about employer work.
+_EMPLOYER = re.compile(
+    r"\b(?:(?:my|current|present|previous|former|past|last)\s+(?:company|employer|job|"
+    r"workplace|organi[sz]ation|team|office)|at work|at my (?:job|company|employer))\b",
+    re.IGNORECASE,
+)
+# Categories that describe work for an employer (or the career record itself). A personal
+# GitHub repository is `project`, so it never answers "what did I build at my company".
+EMPLOYER_CATEGORIES = frozenset(
+    {"company-projects", "work-note", "experience", "achievement", "resume", "offer"}
+)
+
+
+def is_employer_question(question: str) -> bool:
+    return bool(_EMPLOYER.search(question))
+
+
+def employer_only(hits: list[Hit]) -> list[Hit]:
+    """Employer and career sources only; all hits when none of them qualify."""
+    kept = [h for h in hits if h.category in EMPLOYER_CATEGORIES]
+    return kept or hits
+
+
 def is_broad(question: str) -> bool:
     """An overview question, answered from document cards rather than a few chunks."""
     return bool(_BROAD.search(question))
@@ -385,6 +408,8 @@ class OwnerNodes:
         if broad:
             # Cards first (one per document), then the best chunks for detail.
             hits = _merge(await self._cards(query, state, None), hits, 2 * top_k)
+        if is_employer_question(state["question"]) or is_employer_question(query):
+            hits = employer_only(hits)
         update: dict[str, Any] = {}
         # A small router can send a counting question to the KB: try the records tool once.
         if not hits and looks_like_records(query):

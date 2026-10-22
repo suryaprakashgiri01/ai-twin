@@ -62,10 +62,13 @@ class BuiltContext(BaseModel):
         return not self.chunks
 
     def render(self) -> str:
-        """`[n] title` headers followed by chunk text, in rank order; cards say so."""
+        """`[n] title (category)` headers followed by chunk text, in rank order; cards say so.
+
+        The category tells the generator an employer project (`company-projects`) from a
+        personal repository (`project`)."""
         return "\n\n".join(
-            f"[{c.citation}] {c.hit.title}{' (document summary)' if c.hit.card else ''}\n"
-            f"{c.hit.text}"
+            f"[{c.citation}] {c.hit.title} ({c.hit.category or 'uncategorised'}"
+            f"{', document summary' if c.hit.card else ''})\n{c.hit.text}"
             for c in self.chunks
         )
 
