@@ -861,6 +861,7 @@ class IntakeNodes:
         for attempt in range(EXTRACT_ATTEMPTS):
             try:
                 model, prefer = deps.models.pick(INTAKE_TIER)
+                need = await deps.models.need_for(state["message"], INTAKE_TIER, None)
                 result = await deps.orchestrator.structured_call(
                     Role.ROUTER,
                     INTAKE_TIER,
@@ -869,6 +870,7 @@ class IntakeNodes:
                     model=model,
                     prefer=prefer,
                     privileged=True,
+                    need=need,
                 )
                 return result.value, result.model_id
             except AllModelsFailedError:

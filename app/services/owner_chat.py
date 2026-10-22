@@ -300,6 +300,13 @@ class MongoConversationIndex:
         return [Turn.model_validate(m.model_dump(include=fields)) for m in messages]
 
 
+def custom_event(chunk: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """A graph's custom stream item as an SSE event: answer text, or the model's thinking."""
+    if "thinking" in chunk:
+        return "thinking", {"text": chunk["thinking"]}
+    return "token", {"text": chunk["token"]}
+
+
 def _meta(found: Conversation) -> ConversationMeta:
     return ConversationMeta(
         id=found.id,
@@ -424,7 +431,7 @@ class OwnerChatService:
 
     def _on_chunk(self, run: _Run, mode: str, chunk: Any) -> list[tuple[str, dict[str, Any]]]:
         if mode == "custom":
-            return [("token", {"text": chunk["token"]})]
+            return [custom_event(chunk)]
         events: list[tuple[str, dict[str, Any]]] = []
         for node, update in chunk.items():
             run.state.update(update or {})
@@ -598,6 +605,7 @@ def owner_deps(
             llm.orchestrator, idle_timeout_seconds=settings.llm_timeout_seconds
         ),
         models=llm.agents.choice("owner"),
+        profiler=llm.profiler,
         settings=OwnerSettings(
             top_k=settings.retrieval_top_k,
             context_tokens=settings.owner_context_tokens,

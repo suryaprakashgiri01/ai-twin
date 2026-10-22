@@ -321,6 +321,7 @@ PREP_COMMANDS = (
 PREP_KINDS = ("behavioural", "scenario", "application", "pitch", "project")
 COMMANDS = (
     "Commands: /remember <text> (followed from your next message) · /memory (what I remember) · "
+    "/thinking (show or hide the model's reasoning) · "
     "/exit (or Ctrl+C) leaves; the conversation is kept for make chat-continue."
 )
 REMEMBER = "/remember"
@@ -405,14 +406,46 @@ def ask(api: Api, message: str, conversation_id: str | None) -> str | None:
     with _thinking(ASK_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id):
             conversation_id = data.get("conversationId", conversation_id)
-            if event in ("token", "sources", "done", "error"):
+            if event in ("thinking", "token", "sources", "done", "error"):
                 thinking.stop()
             _show_answer_event(event, data)
     return conversation_id
 
 
+class ThinkingView:
+    """The model's thinking, dimmed above the answer; `/thinking` turns it on or off."""
+
+    def __init__(self) -> None:
+        self.show = True
+        self._open = False
+
+    def thinking(self, text: str) -> None:
+        if not self.show or not text:
+            return
+        if not self._open:
+            print("\n" + paint("  thinking: ", "dim"), end="")
+            self._open = True
+        print(paint(text, "dim"), end="", flush=True)
+
+    def answer(self) -> None:
+        """Close the thinking block before the first answer text."""
+        if self._open:
+            print("\n")
+            self._open = False
+
+    def toggle(self) -> None:
+        self.show = not self.show
+        ok(f"Thinking {'shown' if self.show else 'hidden'}")
+
+
+THINKING = ThinkingView()
+
+
 def _show_answer_event(event: str, data: dict[str, Any]) -> None:
-    if event == "token":
+    if event == "thinking":
+        THINKING.thinking(str(data.get("text", "")))
+    elif event == "token":
+        THINKING.answer()
         print(data.get("text", ""), end="", flush=True)
     elif event == "sources" and data.get("sources"):
         titles = "; ".join(f"[{s['index']}] {s['title']}" for s in data["sources"])
@@ -447,7 +480,7 @@ def prep(
     with _thinking(ASK_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id, path="/prep", extra=extra):
             conversation_id = data.get("conversationId", conversation_id)
-            if event in ("token", "sources", "done", "error"):
+            if event in ("thinking", "token", "sources", "done", "error"):
                 thinking.stop()
             _show_prep_event(event, data)
     return conversation_id
@@ -473,7 +506,7 @@ def orchestrate(api: Api, message: str, conversation_id: str | None) -> str | No
     with _thinking(ASK_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id, path="/super"):
             conversation_id = data.get("conversationId", conversation_id)
-            if event in ("token", "error"):
+            if event in ("thinking", "token", "error"):
                 thinking.stop()
             _show_super_event(event, data)
     return conversation_id
@@ -497,7 +530,7 @@ def _show_super_event(event: str, data: dict[str, Any]) -> None:
         )
         if data.get("pending"):
             print(paint("  waiting for your answer (yes / no / an edit)", "yellow"))
-    elif event in ("token", "sources", "error"):
+    elif event in ("thinking", "token", "sources", "error"):
         _show_answer_event(event, data)
         if event == "token":
             print()
@@ -654,6 +687,9 @@ def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
         if message.lower() in EXIT_WORDS:
             break
         if memory_command(api, message):
+            continue
+        if message == "/thinking":
+            THINKING.toggle()
             continue
         try:
             conversation_id = turn(api, message, conversation_id)

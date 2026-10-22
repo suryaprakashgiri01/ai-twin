@@ -49,6 +49,7 @@ from llm_orchestrator import (
     OrchestratorError,
     OverrideRejectedError,
     Prefer,
+    Profiler,
     Rejection,
     Role,
     Tier,
@@ -176,6 +177,7 @@ class PrepDeps:
     filter: OutwardFilter
     settings: PrepSettings = field(default_factory=PrepSettings)
     models: ModelChoice = AUTO_CHOICE
+    profiler: Profiler | None = None
 
 
 class PrepState(TypedDict, total=False):
@@ -210,6 +212,7 @@ class PrepState(TypedDict, total=False):
     error: ErrorInfo | None
     input_tokens: int
     output_tokens: int
+    thinking: str
     # finalized
     seq: int
     latency_ms: float
@@ -324,6 +327,7 @@ class PrepNodes:
             "error": error,
             "input_tokens": gen.input_tokens,
             "output_tokens": gen.output_tokens,
+            "thinking": "".join(gen.thinking),
         }
 
     def _messages(
@@ -343,9 +347,17 @@ class PrepNodes:
     ) -> tuple[str, ErrorInfo | None]:
         parts: list[str] = []
         model, prefer = choose(state, self.deps.models, tier)
+        models: ModelChoice = state.get("models") or self.deps.models
+        need = await models.need_for(state["target"], tier, self.deps.profiler)
         try:
             async for text in self.deps.generator.stream(
-                tier, messages, gen, model=model, prefer=prefer
+                tier,
+                messages,
+                gen,
+                model=model,
+                prefer=prefer,
+                need=need,
+                on_thinking=lambda t: get_stream_writer()({"thinking": t}),
             ):
                 parts.append(text)
         except MidStreamError as exc:

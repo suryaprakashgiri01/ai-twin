@@ -12,6 +12,7 @@ from llm_orchestrator import (
     Orchestrator,
     OrchestratorSettings,
     OverrideStore,
+    Profiler,
     ProviderSecrets,
 )
 from llm_orchestrator.classify import (
@@ -30,6 +31,8 @@ class LLMServices:
     overrides: OverrideStore
     # Per-agent model choice from config/agents.yaml.
     agents: AgentModels = field(default_factory=AgentModels.empty)
+    # Reads a request's complexity for the gateway (rules, plus Laya when enabled).
+    profiler: Profiler = field(default_factory=Profiler)
 
 
 def provider_secrets(settings: Settings) -> ProviderSecrets:
@@ -79,14 +82,20 @@ def build_llm(settings: Settings, overrides: OverrideStore | None = None) -> LLM
         if key is not None and key.get_secret_value().strip()
         else None
     )
+    laya = LayaClassifier(device=settings.laya_device)
     classifier = FlaggedClassifier(
         LLMClassifier(orchestrator),
         jev,
         enabled=lambda: settings.ff_jev_enabled,
-        laya=LayaClassifier(device=settings.laya_device),
+        laya=laya,
         laya_enabled=lambda: settings.ff_laya_enabled,
     )
+    profiler = Profiler(laya, laya_enabled=settings.ff_laya_enabled)
     agents = AgentModels.load(inventory, settings.agent_models_path)
     return LLMServices(
-        orchestrator=orchestrator, classifier=classifier, overrides=overrides, agents=agents
+        orchestrator=orchestrator,
+        classifier=classifier,
+        overrides=overrides,
+        agents=agents,
+        profiler=profiler,
     )

@@ -4,6 +4,8 @@
 #   prefer:              fast | quality | paid | local | local-quality | local-max (auto order)
 #   confidential_model:  auto | a LOCAL id, used when the step reads confidential text
 #   confidential_prefer: as `prefer`, for confidential steps
+#   need:                simple | moderate | complex: the gateway fits the model to it. Unset means
+#                        each request is profiled (rules, plus Laya when FF_LAYA_ENABLED is on).
 #
 # auto: the role chain in config/models.yaml picks the first available model, `prefer` first.
 # A pinned id is used whenever its max_tier allows the step's tier; otherwise the agent falls
@@ -15,10 +17,12 @@ agents:
     confidential_model: auto
   prep:
     model: auto
+    need: complex
     prefer: quality
     confidential_model: auto
     confidential_prefer: local-quality
   intake:
+    need: moderate
     # Reads your message into a draft (always local: intake runs at confidential). The 7B model
     # understands mixed messages far better than the 3B router; set `local` to prefer speed.
     confidential_prefer: local-quality

@@ -11,7 +11,7 @@ import logging
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import structlog
@@ -228,3 +228,38 @@ def quiet_presidio() -> None:
 
 def get_logger(name: str) -> Any:
     return structlog.get_logger(name)
+
+
+# uvicorn's first lines once Ctrl+C is pressed: the server's, and the reloader's (`--reload`).
+_SHUTDOWN_STARTS = ("Shutting down", "Stopping reloader process")
+
+
+class QuietAfterShutdown(logging.Filter):
+    """Drop every log line from the moment uvicorn starts shutting down.
+
+    On Windows, GNU make exits as soon as Ctrl+C is pressed, without waiting for the server, so
+    PowerShell prints its prompt and the server's shutdown lines land after it. The cursor then
+    sits after them, which looks like a hang. Under make the shutdown is therefore silent;
+    `./scripts/dev.ps1 run` waits for the server and keeps every line.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.quiet = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self.quiet and record.name.startswith("uvicorn"):
+            self.quiet = record.getMessage().startswith(_SHUTDOWN_STARTS)
+        return not self.quiet
+
+
+def quiet_shutdown_wanted(environ: Mapping[str, str], os_name: str) -> bool:
+    """Windows, run by make (make sets MAKELEVEL in every process it starts)."""
+    return os_name == "nt" and "MAKELEVEL" in environ
+
+
+def install_quiet_shutdown() -> QuietAfterShutdown:
+    quiet = QuietAfterShutdown()
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(quiet)
+    return quiet

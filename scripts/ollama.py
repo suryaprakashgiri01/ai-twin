@@ -7,7 +7,8 @@ macOS, the GPU driver on Windows), never in the compose stack, and only on a loo
 - `install` macOS: `brew install ollama` · Windows: `winget install --id Ollama.Ollama -e`
 - `start`   start `ollama serve` in the background unless one answers (log: vault/logs/ollama.log)
 - `stop`    stop the server `start` launched (a desktop-app or `brew services` server is left alone)
-- `pull`    pull every configured Ollama model, or the one named (`pull qwen2.5:7b`)
+- `pull`    pull every required Ollama model, or the one named (`pull qwen2.5:14b`); optional
+            (`local-max`) models are pulled only when named
 - `smoke`   one tiny fixed prompt to each configured model; prints latency and token counts
 
 Configured models: each Ollama entry in config/models.yaml, with OLLAMA_MODEL replacing
@@ -71,10 +72,17 @@ class Target:
     model: str
     # Every configured Ollama model, `model` (the router/classifier one) first.
     models: tuple[str, ...] = ()
+    # Models some agents prefer but none needs (the `local-max` ones, e.g. qwen2.5:14b): a
+    # missing one is reported as optional, and a plain `pull` skips it.
+    optional: tuple[str, ...] = ()
 
     @property
     def all_models(self) -> tuple[str, ...]:
         return self.models or (self.model,)
+
+    @property
+    def required_models(self) -> tuple[str, ...]:
+        return tuple(m for m in self.all_models if m not in self.optional)
 
     @property
     def loopback(self) -> bool:
@@ -82,12 +90,13 @@ class Target:
 
 
 def inventory_models(path: Path = INVENTORY) -> dict[str, str]:
-    """Ollama entries of the inventory: id -> model name, in file order."""
+    """Enabled Ollama entries of the inventory: id -> model name, in file order. A disabled
+    entry (an optional model such as Qwen3) is not pulled or checked until it is enabled."""
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
     return {
         str(spec["id"]): str(spec["model"])
         for spec in data.get("models", [])
-        if spec.get("provider") == "ollama"
+        if spec.get("provider") == "ollama" and spec.get("enabled", True)
     }
 
 
@@ -96,6 +105,19 @@ def inventory_model(path: Path = INVENTORY) -> str:
     if "ollama-local" not in models:
         raise OllamaError("config/models.yaml has no ollama-local model")
     return models["ollama-local"]
+
+
+def optional_models(env: dict[str, str], path: Path = INVENTORY) -> tuple[str, ...]:
+    """Enabled Ollama models only `local-max` entries use, after .env overrides. A model another
+    (required) entry also uses is required."""
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    entries = [
+        (env.get(MODEL_ENV.get(str(spec["id"]), "")) or str(spec["model"]), spec.get("tags") or [])
+        for spec in data.get("models", [])
+        if spec.get("provider") == "ollama" and spec.get("enabled", True)
+    ]
+    required = {name for name, tags in entries if "local-max" not in tags}
+    return tuple(name for name, tags in entries if "local-max" in tags and name not in required)
 
 
 def configured_models(env: dict[str, str], path: Path = INVENTORY) -> tuple[str, ...]:
@@ -114,7 +136,10 @@ def target(env: dict[str, str]) -> Target:
     port = parts.port or (443 if parts.scheme == "https" else 11434)
     model = env.get("OLLAMA_MODEL") or inventory_model()
     models = tuple(dict.fromkeys((model, *configured_models(env))))
-    return Target(url=url, host=parts.hostname, port=port, model=model, models=models)
+    optional = tuple(m for m in optional_models(env) if m != model)
+    return Target(
+        url=url, host=parts.hostname, port=port, model=model, models=models, optional=optional
+    )
 
 
 def require_loopback(t: Target) -> None:
@@ -202,12 +227,15 @@ def cmd_status(t: Target, api: Api) -> int:
     ok(f"Ollama {version} at {t.url}{'' if t.loopback else '  (NOT loopback)'}")
     pulled = api.models()
     info(f"Pulled: {', '.join(pulled) or 'none'}")
-    missing = [m for m in t.all_models if not has_model(pulled, m)]
+    missing = [m for m in t.required_models if not has_model(pulled, m)]
     for model in t.all_models:
-        if model not in missing:
+        if has_model(pulled, model):
             ok(f"Configured model {model} is pulled")
     for model in missing:
         warn(f"Configured model {model} is not pulled; run: {hint('pull ' + model)}")
+    for model in t.optional:
+        if not has_model(pulled, model):
+            info(f"Optional model {model} not pulled (agents fall back to smaller ones)")
     return 1 if missing else 0
 
 
@@ -309,8 +337,12 @@ def cmd_pull(t: Target, api: Api, model: str | None) -> int:
     if api.version() is None:
         fail(f"No Ollama answering at {t.url}; run: {hint('start')}")
         return 1
-    for name in (model,) if model else t.all_models:
+    for name in (model,) if model else t.required_models:
         _pull_one(api, name)
+    for name in () if model else t.optional:
+        info(
+            f"Skipped optional {name}; pull it when this machine can run it: {hint('pull ' + name)}"
+        )
     return 0
 
 

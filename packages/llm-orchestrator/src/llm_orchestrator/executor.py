@@ -21,8 +21,10 @@ from langchain_core.runnables import RunnableConfig
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_random_exponential
 from tenacity.wait import wait_base
 
+from llm_orchestrator.cooloff import MissingModels
 from llm_orchestrator.hooks import AttemptEvent, notify_attempt
 from llm_orchestrator.providers import ModelFactory
+from llm_orchestrator.thinking import REASONING_KEY, strip_thinking
 from llm_orchestrator.types import (
     Attempt,
     ModelSpec,
@@ -73,6 +75,29 @@ def usage_of(message: AIMessage) -> TokenUsage:
     return TokenUsage(input_tokens=meta["input_tokens"], output_tokens=meta["output_tokens"])
 
 
+def without_thinking(message: AIMessage, spec: ModelSpec) -> AIMessage:
+    """The reply with any `<think>` text moved out of the content into
+    `additional_kwargs["reasoning_content"]`, where the Ollama client already puts it. Only the
+    amount is logged."""
+    if not isinstance(message.content, str):
+        return message
+    text, thinking = strip_thinking(message.content)
+    if not thinking and text == message.content:
+        return message
+    logger.info("thinking separated", model=spec.id, chars=len(thinking))
+    earlier = str(message.additional_kwargs.get(REASONING_KEY) or "")
+    kwargs = {
+        **message.additional_kwargs,
+        REASONING_KEY: "\n".join(p for p in (earlier, thinking) if p),
+    }
+    return message.model_copy(update={"content": text, "additional_kwargs": kwargs})
+
+
+def thinking_of(message: AIMessage) -> str:
+    """The reply's thinking, if the model reasoned visibly."""
+    return str(message.additional_kwargs.get(REASONING_KEY) or "")
+
+
 def limit_kwargs(spec: ModelSpec, max_tokens: int | None) -> dict[str, Any]:
     """The output-token limit as each provider's chat model takes it at call time.
 
@@ -112,6 +137,7 @@ class Executor:
         timeout_seconds: float,
         timeout_for: Callable[[ModelSpec], float] | None = None,
         wait: wait_base | None = None,
+        missing: MissingModels | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -121,6 +147,7 @@ class Executor:
         self._timeout = timeout_seconds
         self._timeout_for = timeout_for
         self._wait = wait or wait_random_exponential(multiplier=0.5, max=8)
+        self._missing = missing
 
     def model_for(self, spec: ModelSpec) -> BaseChatModel:
         """Build each model once; specs only change in enabled/max_tier, which policy reads."""
@@ -171,6 +198,8 @@ class Executor:
                 message = await model.ainvoke(list(messages), config=config, **kwargs)
         except Exception as exc:
             transient, status = classify_error(exc)
+            if self._missing is not None:
+                self._missing.note(spec, status)
             self._record(
                 spec,
                 ctx,
@@ -182,7 +211,7 @@ class Executor:
             )
             raise
         self._record(spec, ctx, number, started, outcome="ok", usage=usage_of(message))
-        return message
+        return without_thinking(message, spec)
 
     def _record(
         self,

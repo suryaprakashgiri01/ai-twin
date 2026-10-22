@@ -138,3 +138,23 @@ async def test_employer_question_leaves_personal_repositories_out() -> None:
     )
     state, _ = await general.run("summary of all my projects")
     assert {h.document_id for h in state["hits"]} == {"w1", "r1"}
+
+
+async def test_thinking_is_shown_to_the_owner_but_never_in_the_answer() -> None:
+    from app.services.owner_chat import custom_event
+
+    q = "What did I learn at the meetup?"
+    agent = make_agent(
+        router=[route_json("kb_search", q)],
+        hits=[hit("priv", Tier.PRIVATE, PRIV_TEXT)],
+        streams={"cloud": [["<think>", "check the raft notes", "</think>", "Raft [1]."]]},
+        cloud=["unused"],
+    )
+    state, tokens = await agent.run(q)
+    assert state["answer"] == "Raft [1]." and "raft notes" not in "".join(tokens)
+    assert "".join(agent.thinking) == "check the raft notes"
+    assert state["thinking"] == "check the raft notes"
+    stored = (await agent.history(state["conversation_id"]))[-1]
+    assert "raft notes" not in stored.content  # never saved with the conversation
+    assert custom_event({"thinking": "x"}) == ("thinking", {"text": "x"})
+    assert custom_event({"token": "y"}) == ("token", {"text": "y"})

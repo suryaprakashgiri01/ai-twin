@@ -66,11 +66,13 @@ All of them accept `model`, `prefer`, `privileged`, plus `callbacks` and `max_to
 
 - unique ids; every chain id exists, serves that role and is not repeated;
 - no model may serve `restricted`;
-- a model with `trains_on_inputs: true` is capped at `public`.
+- a model with `trains_on_inputs: true` is capped at `public`;
+- a model on a cloud provider (anything but Ollama and mock) is capped at `private`.
 
 A `ModelSpec` carries `provider`, `model`, `roles`, `max_tier`, `context_window`, `trains_on_inputs`,
 `free_tier` and `cost` (documentation of provider limits; the orchestrator does not enforce quotas), `enabled`,
-`tags` (ordering hints for `prefer`) and an optional `base_url`.
+`tags` (ordering hints for `prefer`), an optional `base_url`, `capabilities` (`text`, `tools`, `reasoning`;
+`text` is always added) and `quality` (1–5, a rough strength rank the gateway uses).
 
 Current shape of the default inventory (see the file for exact ids and models):
 
@@ -80,12 +82,36 @@ Current shape of the default inventory (see the file for exact ids and models):
 | Cerebras | router, classifier, generator, judge | `private` | Inputs and outputs not retained; first fallback |
 | Gemini free tier | router, classifier, generator, judge | `public` | Inputs may improve provider products, so public only |
 | OpenRouter `:free` | router, classifier, generator, judge | `public` | Upstream may log or train |
-| Ollama (local) | router, classifier, generator, judge | `confidential` | The only real model allowed confidential text |
+| Ollama (local) | router, classifier, generator, judge | `confidential` | The only real model allowed confidential text. `qwen2.5:7b`/`14b`, `llama3.2:3b`; Qwen3 entries are optional (disabled until pulled) |
+| Anthropic, OpenAI (paid) | router, generator, judge | `private` | Disabled until enabled; a cloud model above `private` fails validation |
 | mock | router, classifier, generator, judge | `confidential` | Tests and keyless runs; only when `LLM_MOCK_ENABLED` |
 
 Chains run no-training cloud providers first, then public-only free tiers, then the local model, then the mock.
 For private and confidential requests the public-only entries are filtered out, so the chain collapses to the
 eligible subset. A provider with no key (or no endpoint, for Ollama) is **disabled**, not an error.
+
+## Gateway (`need`)
+
+`select`, `chat`, `structured_call` and `chat_models` take an optional `need: Need`:
+- **Fields:** `complexity` (`simple`, `moderate` or `complex`), `tools` and `reasoning`.
+- **Ordering:** after policy has filtered the chain, `gateway.fit_order` reorders it. Models with every required
+  capability come first; the rest stay as fallbacks. A complex need puts the strongest first; otherwise the
+  model whose `quality` is nearest at or above the target (2 for simple, 3 for moderate) goes first, cheaper
+  before dearer.
+- **Precedence:** `prefer` is applied after the fit order, so it still wins, and a pinned `model` skips both.
+- **Logging:** one `gateway` line per selection with the need, its source and the first three models.
+
+`gateway.Profiler` derives a `Need` from text: rules (length, structure, words such as "step by step",
+"compare", "design"), refined by Laya when enabled and confident (≥ 0.5). Laya runs locally, so it may read
+up to confidential text.
+
+**Reasoning output.** Ollama models that declare `reasoning` run with the client's `reasoning=True`. Any
+`<think>…</think>` left in a reply is moved out of the content into `additional_kwargs["reasoning_content"]`
+(`CallResult.thinking`); streamed text goes through `thinking.ThinkingFilter`. Thinking is never part of an
+answer and never logged (only its size).
+
+**Retired ids.** A call that fails with 404 puts the model on a 10-minute cool-off (`cooloff.MissingModels`).
+Selection skips it meanwhile, and a warning names the id to update.
 
 ## Roles
 
@@ -165,8 +191,11 @@ label, normalised probabilities and a confidence) with three implementations:
 - `JevClassifier`: the TypeSafe Jev adapter, one `choice` question to `POST /v1/systemone` over httpx. **Public
   tier only** (`JEV_MAX_TIER`); a higher tier raises `NoEligibleModelError`. 429, 529, 408 and 5xx are transient
   (honouring `retry-after`, capped at 30 s); other 4xx are permanent. Neither text nor answer is logged.
-- `FlaggedClassifier`: uses Jev when the feature flag (`FF_JEV_ENABLED`) is on, a Jev client exists and the tier is
-  public; on any Jev failure it falls back to the LLM classifier. Private and confidential text never reaches Jev.
+- `LayaClassifier`: Laya, the open-source local alternative to Jev (optional `laya` package). Same `choice`
+  question shape; runs on this machine, so up to confidential (`LAYA_MAX_TIER`).
+- `FlaggedClassifier`: tries Laya first when its flag (`FF_LAYA_ENABLED`) is on, then Jev when its flag
+  (`FF_JEV_ENABLED`) is on and the tier is public, then the LLM classifier; each failure falls through to the
+  next. Private and confidential text never reaches Jev.
 
 The flag may be a callable so it can be read at runtime on every call. The app uses it for the scope router, the
 input guard's borderline second opinion and the grounding judge.

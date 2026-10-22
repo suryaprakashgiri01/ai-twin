@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import structlog
@@ -24,6 +24,8 @@ from llm_orchestrator.types import NoEligibleModelError, ProviderError, Role, Ti
 logger = structlog.get_logger(__name__)
 
 LAYA_MAX_TIER = Tier.CONFIDENTIAL
+# After a failed load (weights not downloaded, no network), wait this long before trying again.
+LOAD_RETRY_SECONDS = 600.0
 _QUESTION_KEY = "q"
 
 
@@ -32,10 +34,21 @@ class LayaError(ProviderError):
 
 
 class LayaClassifier:
-    def __init__(self, *, device: str = "cpu", router: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        device: str = "cpu",
+        router: Any = None,
+        retry_after: float = LOAD_RETRY_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._device = device
         self._router = router
         self._lock = asyncio.Lock()
+        self._retry_after = retry_after
+        self._clock = clock
+        # After a failed load (no weights, no network), calls fail fast until this time.
+        self._blocked_until = 0.0
 
     @property
     def model_id(self) -> str:
@@ -51,7 +64,18 @@ class LayaClassifier:
     async def _router_ready(self) -> Any:
         async with self._lock:
             if self._router is None:
-                self._router = await asyncio.to_thread(self._load)
+                if self._clock() < self._blocked_until:
+                    raise LayaError("laya failed to load recently; retrying later", transient=True)
+                try:
+                    self._router = await asyncio.to_thread(self._load)
+                except Exception as exc:
+                    self._blocked_until = self._clock() + self._retry_after
+                    logger.warning(
+                        "laya failed to load; paused",
+                        error_type=type(exc).__name__,
+                        seconds=self._retry_after,
+                    )
+                    raise
         return self._router
 
     async def classify(

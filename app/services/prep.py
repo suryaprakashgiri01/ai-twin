@@ -41,7 +41,7 @@ from app.observability.tracing import tracing
 from app.services.conversations import ConversationService, Turn
 from app.services.intake import IntakeIndex
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import TurnHook
+from app.services.owner_chat import TurnHook, custom_event
 from llm_orchestrator import Prefer, Tier
 
 logger = structlog.get_logger(__name__)
@@ -182,7 +182,7 @@ class PrepService:
         self, cid: str, state: dict[str, Any], mode: str, chunk: Any
     ) -> list[tuple[str, dict[str, Any]]]:
         if mode == "custom":
-            return [("token", {"text": chunk["token"]})]
+            return [custom_event(chunk)]
         events: list[tuple[str, dict[str, Any]]] = []
         for node, update in chunk.items():
             state.update(update or {})
@@ -267,6 +267,7 @@ def prep_deps(
         filter=OutwardFilter(denylist=EmployerGuard(settings.denylist_path).rules),
         settings=PrepSettings(),
         models=llm.agents.choice("prep"),
+        profiler=llm.profiler,
     )
 
 

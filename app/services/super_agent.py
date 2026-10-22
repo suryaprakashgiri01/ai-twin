@@ -167,6 +167,8 @@ class StepResult:
     # An intake step that wrote something (not a draft waiting, not a chat reply).
     saved: bool = False
     waiting: Waiting = None
+    # The model's thinking for this step (owner-only event; never stored).
+    thinking: str = ""
 
     def summary(self) -> dict[str, Any]:
         status = "error" if self.error else "pending" if self.pending else "done"
@@ -283,6 +285,8 @@ class SuperAgent:
             result = await self._run(step, prepared, intake_cid, results)
             intake_cid = result.intake_conversation or intake_cid
             results.append(result)
+            if result.thinking:
+                yield "thinking", {"index": index, "agent": step.agent, "text": result.thinking}
             yield "step", {"index": index, **result.summary()}
         answer = compose(results)
         sources = _sources(results)
@@ -380,6 +384,7 @@ class SuperAgent:
             tier=final.get("tier") or floor_tier(Tier.CONFIDENTIAL),
             model=final.get("model_id"),
             error=error.message if error else None,
+            thinking=str(final.get("thinking") or ""),
         )
 
     async def _prep(self, step: Step, prepared: Prepared, done: list[StepResult]) -> StepResult:
@@ -405,6 +410,7 @@ class SuperAgent:
             tier=final.get("tier") or Tier.PRIVATE,
             model=final.get("model_id"),
             error=error.message if error else None,
+            thinking=str(final.get("thinking") or ""),
         )
 
     async def _intake(self, step: Step, prepared: Prepared, intake_cid: str | None) -> StepResult:
