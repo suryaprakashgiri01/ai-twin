@@ -359,3 +359,23 @@ async def test_laya_without_the_package_fails_fast(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(importlib, "import_module", missing)
     with pytest.raises(LayaError, match="not installed"):
         await LayaClassifier().classify("x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC)
+
+
+async def test_laya_pauses_after_a_failed_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [0.0]
+    loads = [0]
+    laya = LayaClassifier(retry_after=600, clock=lambda: now[0])
+
+    def broken() -> Any:
+        loads[0] += 1
+        raise OSError("weights not downloaded")
+
+    monkeypatch.setattr(laya, "_load", broken)
+    for _ in range(3):
+        with pytest.raises((OSError, LayaError)):
+            await laya.classify("x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC)
+    assert loads[0] == 1  # one real attempt; the rest fail fast
+    now[0] = 601.0
+    with pytest.raises(OSError):
+        await laya.classify("x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC)
+    assert loads[0] == 2
