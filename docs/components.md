@@ -87,7 +87,8 @@ flowchart TB
 | `app/kb/retrieval` | Hybrid retriever, local cross-encoder rerank, budgeted context builder |
 | `app/kb/publishing.py` | Review actions; the only writer of `kb_public` |
 | `app/leads` | Opportunity capture (public graph nodes), lead storage, triage, email outbox, Turnstile |
-| `app/services` | Chat, prep and super-agent services (SSE), conversations, memory, profile facts, resume, rate limits, answer cache, audit |
+| `app/services` | Chat, prep and super-agent services (SSE), conversations (scoped browsing, soft delete, turn trace), memory, profile facts, resume, rate limits, answer cache, audit, per-agent model settings, model status |
+| `app/ui/static` | The owner console (static ES modules, CSP `script-src 'self'`): see [`owner-console.md`](owner-console.md) |
 | `app/observability` | Langfuse facade, per-channel masking, metrics |
 | `app/security` | Security events and debounced email alerts |
 | `app/db`, `app/storage`, `app/vector`, `app/cache` | MongoDB documents, encrypted blob store, Qdrant client, Redis/Valkey |
