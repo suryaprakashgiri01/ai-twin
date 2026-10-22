@@ -41,7 +41,7 @@ from app.observability.tracing import tracing
 from app.services.conversations import ConversationService, Turn
 from app.services.intake import IntakeIndex
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import TurnHook, custom_event
+from app.services.owner_chat import TokenCounts, TurnHook, custom_event
 from llm_orchestrator import Prefer, Tier
 
 logger = structlog.get_logger(__name__)
@@ -78,6 +78,7 @@ class PrepResponse(ApiModel):
     checks: list[str] = Field(default_factory=list)
     withheld: int = 0
     latency_ms: float | None = None
+    tokens: TokenCounts = Field(default_factory=TokenCounts)
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,9 @@ def response(cid: str, state: dict[str, Any]) -> PrepResponse:
         checks=state.get("checks", []),
         withheld=state.get("withheld", 0),
         latency_ms=state.get("latency_ms"),
+        tokens=TokenCounts(
+            input=state.get("input_tokens", 0), output=state.get("output_tokens", 0)
+        ),
     )
 
 

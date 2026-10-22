@@ -18,6 +18,7 @@ from app.api.routes import (
     admin_records,
     admin_review,
     admin_security,
+    admin_starters,
     admin_super,
 )
 
@@ -29,6 +30,7 @@ def build_admin_router() -> APIRouter:
     router.include_router(admin_meta.router)
     router.include_router(admin_models.router)
     router.include_router(admin_agents.router)
+    router.include_router(admin_starters.router)
     router.include_router(admin_ingest.router)
     router.include_router(admin_review.router)
     router.include_router(admin_profile.router)

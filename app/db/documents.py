@@ -550,6 +550,20 @@ class AgentModelOverride(Document):
         name = "agent_model_overrides"
 
 
+class ChatStarter(Document):
+    """A conversation starter the owner saved for one console agent."""
+
+    agent: str
+    text: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "chat_starters"
+        indexes: ClassVar[list[IndexModel]] = [
+            IndexModel([("agent", ASCENDING), ("created_at", ASCENDING)], name="agent_created")
+        ]
+
+
 class AppliedMigration(Document):
     """Marker written once a data migration has run; its `_id` is the migration version."""
 
@@ -642,6 +656,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     AuditEntry,
     ModelOverride,
     AgentModelOverride,
+    ChatStarter,
     AppliedMigration,
     CheckpointEntry,
     CheckpointWrite,

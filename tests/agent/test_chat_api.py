@@ -214,7 +214,14 @@ async def test_follow_up_and_conversation_routes(api: ChatApi) -> None:
     assert turns[1]["citations"] == ["priv"] and turns[1]["route"] == "kb_search"
     trace = turns[1]["trace"]  # the console replays how the answer was made
     assert trace["agents"] == ["ask"] and trace["models"] == ["cloud"]
-    assert trace["sources"][0] == {"index": 1, "documentId": "priv", "title": "Doc priv"}
+    assert trace["sources"][0] == {
+        "index": 1,
+        "documentId": "priv",
+        "title": "Doc priv",
+        "category": trace["sources"][0]["category"],
+        "tier": "private",
+    }
+    assert trace["sources"][0]["category"]  # kept for grouping in the console
     assert turns[0]["trace"] is None
 
 

@@ -450,6 +450,7 @@ class PrepNodes:
                     tier=state["tier"].label,
                     sources=trace_sources(state.get("sources", [])),
                     thinking=str(state.get("thinking") or ""),
+                    output_tokens=state.get("output_tokens") or None,
                 ).capped(),
             ),
         )

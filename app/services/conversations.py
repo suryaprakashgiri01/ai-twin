@@ -68,6 +68,9 @@ class TraceSource(ApiModel):
     index: int
     document_id: str
     title: str
+    # Kept so the console can group and tell apart sources (titles may be redacted).
+    category: str | None = None
+    tier: str | None = None
 
 
 class Cited(Protocol):
@@ -77,7 +80,16 @@ class Cited(Protocol):
 
 
 def trace_sources(sources: Sequence[Cited]) -> list[TraceSource]:
-    return [TraceSource(index=s.index, document_id=s.document_id, title=s.title) for s in sources]
+    return [
+        TraceSource(
+            index=s.index,
+            document_id=s.document_id,
+            title=s.title,
+            category=getattr(s, "category", None),
+            tier=getattr(getattr(s, "tier", None), "label", None),
+        )
+        for s in sources
+    ]
 
 
 class TurnTrace(ApiModel):
@@ -95,6 +107,8 @@ class TurnTrace(ApiModel):
     tier: str | None = None
     sources: list[TraceSource] = Field(default_factory=list)
     thinking: str = ""
+    # Tokens the model wrote for this answer, when known (owner chat and prep).
+    output_tokens: int | None = None
 
     def capped(self) -> TurnTrace:
         budget = TRACE_THINKING_MAX

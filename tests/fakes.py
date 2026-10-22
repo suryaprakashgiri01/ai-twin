@@ -15,6 +15,7 @@ from app.auth.keys import KeyRecord
 from app.db.documents import Scope, utcnow
 from app.services.conversations import ConversationRef, StoredConversation, Turn
 from app.services.model_overrides import Override, OverrideIn
+from app.services.starters import Starter, StarterAgent, StarterIn
 
 
 class MemoryConversationStore:
@@ -204,3 +205,21 @@ class FakeQdrant:
     ) -> None:
         self.collections[name]["payload"][field_name] = field_schema
         self.writes.append(f"index {name}.{field_name}")
+
+
+class MemoryStarterStore:
+    def __init__(self) -> None:
+        self.rows: list[Starter] = []
+
+    async def list(self, agent: StarterAgent | None = None) -> list[Starter]:
+        return [s for s in self.rows if agent is None or s.agent == agent]
+
+    async def add(self, body: StarterIn) -> Starter:
+        saved = Starter(id=f"s{len(self.rows) + 1}", created_at=utcnow(), **body.model_dump())
+        self.rows.append(saved)
+        return saved
+
+    async def delete(self, starter_id: str) -> bool:
+        before = len(self.rows)
+        self.rows = [s for s in self.rows if s.id != starter_id]
+        return len(self.rows) < before

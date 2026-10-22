@@ -721,6 +721,7 @@ def _trace(state: OwnerState) -> TurnTrace:
         tier=_label(state["tier"]),
         sources=trace_sources(state.get("sources", [])),
         thinking=str(state.get("thinking") or ""),
+        output_tokens=state.get("output_tokens") or None,
     ).capped()
 
 
