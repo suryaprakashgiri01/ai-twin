@@ -31,8 +31,10 @@ flowchart LR
 
     subgraph vault["Local vault (profile=vault, never internet-exposed)"]
         admin["FastAPI /admin/v1"]
+        superg["Super agent"]
         ownerg["Owner graph"]
         intakeg["Intake graph"]
+        prepg["Prep graph"]
         ingest["Ingestion pipeline<br/>parse, redact, guard, chunk, label"]
         review["Review and publish"]
         ollama["Local LLM (Ollama)"]
@@ -40,8 +42,14 @@ flowchart LR
         vm[("MongoDB")]
         vr[("Valkey")]
         blob[("Encrypted blob store")]
+        admin --> superg
+        superg --> ownerg
+        superg --> intakeg
+        superg --> prepg
         admin --> ownerg
         admin --> intakeg
+        admin --> prepg
+        prepg --> vq
         admin --> ingest
         admin --> review
         intakeg -->|"answer hand-off"| ownerg
@@ -90,7 +98,7 @@ Tiers are ordered `public < private < confidential < restricted`; policy is one 
 |---|---|---|---|---|
 | public | resume content, published projects, certification names, education summary, public links | vault + cloud | `kb_public` (copy made by publish) | any enabled model |
 | private | interview notes, question bank, applications, work notes | vault | `kb_private` | no-training cloud models or local |
-| confidential | compensation summary, offers | vault | `kb_confidential` | local model only |
+| confidential | compensation summary, offers, employer work notes and projects, documents released for local use | vault | `kb_confidential` | local model only |
 | restricted | government ids, account numbers, dates of birth | encrypted raw file only; text never read | none (never embedded) | none |
 
 ```mermaid
@@ -113,7 +121,7 @@ publishing.
 | `app/kb/ingestion` | Parse, redact, employer guard, chunk, label, review queue. |
 | `app/kb/retrieval` | Hybrid dense + sparse search, rerank, budgeted context. |
 | `app/kb/publishing.py` | Approve, publish, unpublish, relabel. The only writer of `kb_public`. |
-| `app/agents` | LangGraph graphs: `public`, `owner`, `intake`. |
+| `app/agents` | LangGraph graphs: `public`, `owner`, `intake`, `prep`; the super agent (`app/services/super_agent.py`) plans and delegates to them. Per-agent models: `config/agents.yaml`. |
 | `app/guardrails` | Input guard, scope router, output guard, identifier recognisers, canary hashes. |
 | `app/leads` | Opportunity capture, triage, outbox, email, Turnstile. |
 | `app/security` | Security events, debounced email alerts. |
@@ -126,6 +134,7 @@ Details and the LangChain boundary are in [`components.md`](components.md).
 
 - Public chat: [`flows/public-flow.md`](flows/public-flow.md).
 - Owner chat and the intake assistant: [`flows/owner-flow.md`](flows/owner-flow.md).
+- The super agent and prep: [`super-agent.md`](super-agent.md).
 - Ingestion, publish and retrieval: [`rag-pipeline.md`](rag-pipeline.md).
 
 ```mermaid

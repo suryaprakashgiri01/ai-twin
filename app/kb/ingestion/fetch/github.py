@@ -94,6 +94,8 @@ class GitHubFetcher:
             title=f"{title} ({branch} branch)" if branch else title,
             category="project",
             key=f"{key}@{branch}" if branch else key,
+            # A private repository stays private (it needs GITHUB_TOKEN to be read at all).
+            tier_hint="private" if meta.get("private") else None,
         )
 
     async def _branch(self, client: httpx.AsyncClient, key: str, branch: str) -> dict[str, Any]:

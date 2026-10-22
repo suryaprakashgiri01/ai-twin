@@ -77,6 +77,7 @@ from app.agents.intake.labels import (
     validate_paste,
 )
 from app.agents.intake.suggest import suggest
+from app.agents.models import AUTO_CHOICE, ModelChoice
 from app.agents.prompts import intake as prompts
 from app.agents.routing import (
     canonical_kind,
@@ -126,7 +127,7 @@ _REPORT = re.compile(
 _BARE_REPLY = 3
 # An imperative on a document: "publish the Lumenrail note", "please approve it".
 _DOC_COMMAND = re.compile(
-    r"^\s*(?:please\s+|can you\s+|could you\s+)?(publish|unpublish|approve)\b", re.I
+    r"^\s*(?:please\s+|can you\s+|could you\s+)?(publish|unpublish|approve|release)\b", re.I
 )
 # A remark that something already happened: nothing to do.
 _ALREADY = re.compile(r"\balready\b.*\b(done|published|approved|saved|added|there)\b", re.I)
@@ -213,6 +214,8 @@ class IntakeDeps:
     owner_graph: OwnerGraph | None = None
     conversations: ConversationService | None = None
     memory: MemoryService | None = None
+    # config/agents.yaml `intake`: which local model reads the owner's message.
+    models: ModelChoice = AUTO_CHOICE
     now: Callable[[], datetime] = field(default=utcnow)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
 
@@ -433,6 +436,28 @@ def _chat_reply(reply: str) -> str:
     return reply if reply and not _CLAIMS.search(reply) else CHAT_DEFAULT
 
 
+_ANSWER_LEAD = re.compile(r"^\s*(?:it(?:'s| is| was)|this is|that's|the)\s+(?:an?\s+)?", re.I)
+_ANSWER_WORDS = 8
+
+
+def _fill_asked(spec: ActionSpec, payload: dict[str, Any], state: IntakeState) -> dict[str, Any]:
+    """A short reply to the one free-text field intake asked for is that field's value.
+
+    "screen" or "It is a technical screen." after "I still need: stage" sets the stage; the
+    model alone often leaves a bare answer unmapped."""
+    asked = state.get("missing") or []
+    if len(asked) != 1:
+        return payload
+    name = asked[0]
+    if name in spec.date_fields or name in spec.list_fields or payload.get(name):
+        return payload
+    message = state["message"].strip()
+    if _bare_reply(message) or len(message.split()) > _ANSWER_WORDS:
+        return payload
+    value = _ANSWER_LEAD.sub("", message).strip(" .!")
+    return {**payload, name: value} if value else payload
+
+
 def _bare_reply(message: str) -> bool:
     """A lone yes or no ("yes", "ok", "nope"), with no request in it ("publish it" is one)."""
     words = re.sub(r"[^\w\s']", " ", message.casefold()).split()
@@ -442,6 +467,7 @@ def _bare_reply(message: str) -> bool:
 _DOC_VERBS = {
     "publish": "publish",
     "approve": "approve",
+    "release": "release",
     "unpublish": "unpublish",
     "delete_document": "delete",
     "relabel": "relabel",
@@ -635,6 +661,8 @@ class IntakeNodes:
             )
             # Labels win again over regex fallbacks when both spoke.
             payload = merge_labelled(merge_labelled(payload, labelled), pasted)
+        if not switched:
+            payload = _fill_asked(spec, payload, state)
         return await self._settle(spec, payload, state, started, model_id, switched, dropped)
 
     async def _settle_batch(
@@ -832,8 +860,15 @@ class IntakeNodes:
         # A small local model sometimes stops mid-JSON; one more try is cheap.
         for attempt in range(EXTRACT_ATTEMPTS):
             try:
+                model, prefer = deps.models.pick(INTAKE_TIER)
                 result = await deps.orchestrator.structured_call(
-                    Role.ROUTER, INTAKE_TIER, IntakeDraft, messages, privileged=True
+                    Role.ROUTER,
+                    INTAKE_TIER,
+                    IntakeDraft,
+                    messages,
+                    model=model,
+                    prefer=prefer,
+                    privileged=True,
                 )
                 return result.value, result.model_id
             except AllModelsFailedError:

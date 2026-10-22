@@ -1,5 +1,9 @@
 """The owner graph: route → retrieve | records | profile → generate → finalize.
 
+Overview questions ("summarise all my projects") run in broad mode: document cards first, more
+results and a larger context. A short follow-up whose own search finds nothing reuses the
+documents the previous answer cited.
+
 Every node logs one `owner step` line with counts, tiers, model and latency. No question,
 context or answer text is ever logged at INFO or above. Answer text reaches the caller through
 LangGraph's custom stream (`{"token": ...}` chunks) and the final state.
@@ -7,6 +11,7 @@ LangGraph's custom stream (`{"token": ...}` chunks) and the final state.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -23,6 +28,7 @@ from pydantic import BaseModel
 
 from app.agents.context import OwnerContext
 from app.agents.generation import AnswerGenerator, Generation, MidStreamError
+from app.agents.models import AUTO_CHOICE, ModelChoice
 from app.agents.prompts import owner as prompts
 from app.agents.routing import (
     GuardResult,
@@ -59,11 +65,83 @@ logger = structlog.get_logger(__name__)
 # Router input: each history turn is cut to this many characters.
 ROUTER_TURN_CHARS = 600
 NEEDS_PRIVATE = "That needs private records; ask again with max_tier private or higher."
+_BROAD = re.compile(
+    r"\b(summar(y|ise|ize)|overview|all (of )?my|list (all |my )|every|each of my|"
+    r"what (projects|work) (have|did) i)\b",
+    re.IGNORECASE,
+)
+
+
+# Words that ask for more of the same without naming a topic ("give me the summary").
+_FOLLOW_UP_WORDS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "about",
+        "again",
+        "all",
+        "any",
+        "brief",
+        "briefly",
+        "can",
+        "could",
+        "detail",
+        "details",
+        "do",
+        "elaborate",
+        "else",
+        "explain",
+        "expand",
+        "give",
+        "in",
+        "it",
+        "its",
+        "me",
+        "more",
+        "of",
+        "on",
+        "please",
+        "short",
+        "shorter",
+        "longer",
+        "summarise",
+        "summarize",
+        "summary",
+        "tell",
+        "that",
+        "the",
+        "them",
+        "these",
+        "this",
+        "those",
+        "what",
+        "you",
+    ]
+)
+
+
+def is_broad(question: str) -> bool:
+    """An overview question, answered from document cards rather than a few chunks."""
+    return bool(_BROAD.search(question))
+
+
+def is_vague_follow_up(question: str) -> bool:
+    """A follow-up that names no topic of its own, so only the previous answer can ground it."""
+    words = re.findall(r"[a-z']+", question.lower())
+    return bool(words) and all(w in _FOLLOW_UP_WORDS for w in words)
 
 
 class Searcher(Protocol):
     async def search(
-        self, query: str, *, max_tier: Tier, filters: SearchFilters | None, limit: int
+        self,
+        query: str,
+        *,
+        max_tier: Tier,
+        filters: SearchFilters | None,
+        limit: int,
+        cards_only: bool = False,
+        document_ids: Sequence[str] | None = None,
     ) -> list[Hit]: ...
 
 
@@ -73,6 +151,11 @@ class OwnerSettings:
     candidates: int = 20
     context_tokens: int = 3000
     history_turns: int = 8
+    # Broad mode: overview questions.
+    broad_top_k: int = 12
+    broad_context_tokens: int = 6000
+    # A follow-up this short may reuse the previous answer's documents.
+    follow_up_words: int = 12
 
 
 @dataclass(frozen=True)
@@ -85,6 +168,8 @@ class OwnerDeps:
     conversations: ConversationService
     generator: AnswerGenerator
     settings: OwnerSettings = field(default_factory=OwnerSettings)
+    # config/agents.yaml for this agent; a caller's state may pass another (the super agent).
+    models: ModelChoice = AUTO_CHOICE
     today: Callable[[], date] = field(default=lambda: utcnow().date())
 
 
@@ -105,6 +190,8 @@ class OwnerState(TypedDict, total=False):
     # Raises every model call to at least this tier (the intake assistant passes confidential,
     # so only local models answer there).
     min_tier: Tier | None
+    # Overrides the graph's own model choice (the super agent passes its own).
+    models: ModelChoice | None
     # The owner's active preferences and the conversation summary (never for visitors).
     context: OwnerContext | None
     started: float
@@ -115,6 +202,8 @@ class OwnerState(TypedDict, total=False):
     router_model: str | None
     records_query: RecordsQuery | None
     # gathered
+    broad: bool
+    reused: bool
     hits: list[Hit]
     records: RecordsResult | None
     profile: ProfileFacts | None
@@ -185,6 +274,12 @@ def _label(tier: Tier) -> TierLabel:
 
 def _step(step: str, started: float, **fields: Any) -> None:
     logger.info("owner step", step=step, latency_ms=_ms(started), **fields)
+
+
+def choose(state: Any, default: ModelChoice, tier: Tier) -> tuple[str | None, Prefer | None]:
+    """The generator model and prefer for a step at `tier` (request > agent config > auto)."""
+    models: ModelChoice = state.get("models") or default
+    return models.pick(tier, state.get("model"), state.get("prefer"))
 
 
 class OwnerNodes:
@@ -271,28 +366,79 @@ class OwnerNodes:
     async def retrieve(self, state: OwnerState) -> dict[str, Any]:
         started = time.perf_counter()
         query = state["query"]
+        broad = is_broad(state["question"]) or is_broad(query)
+        top_k = self.settings.broad_top_k if broad else self.settings.top_k
+        cited = self._follow_up_documents(state)
+        if cited and is_vague_follow_up(state["question"]):
+            # "Give me the summary" names nothing a search can match: stay on the last answer.
+            hits = _merge(await self._cards(query, state, cited), [], top_k)
+            hits = _merge(hits, await self._search_in(query, state, cited), 2 * top_k)
+            if hits:
+                return self._retrieved(started, len(hits), hits, broad=broad, reused=True)
         candidates = await self.deps.retriever.search(
             query,
             max_tier=state["max_tier"],
             filters=state.get("filters"),
             limit=self.settings.candidates,
         )
-        hits = await self.deps.reranker.rerank(query, candidates, self.settings.top_k)
-        update: dict[str, Any] = {"hits": hits}
+        hits = await self.deps.reranker.rerank(query, candidates, top_k)
+        if broad:
+            # Cards first (one per document), then the best chunks for detail.
+            hits = _merge(await self._cards(query, state, None), hits, 2 * top_k)
+        update: dict[str, Any] = {}
         # A small router can send a counting question to the KB: try the records tool once.
         if not hits and looks_like_records(query):
             fallback = records_query(query, self.deps.today())
             if fallback is not None:
-                update |= {"route": "records", "records_query": fallback}
+                update = {"route": "records", "records_query": fallback}
+        return self._retrieved(started, len(candidates), hits, broad=broad, reused=False, **update)
+
+    @staticmethod
+    def _retrieved(
+        started: float, candidates: int, hits: list[Hit], *, broad: bool, reused: bool, **extra: Any
+    ) -> dict[str, Any]:
         _step(
             "retrieve",
             started,
-            candidates=len(candidates),
+            candidates=candidates,
             hits=len(hits),
+            cards=sum(h.card for h in hits),
+            broad=broad,
+            reused=reused,
             tiers=sorted({h.tier.label for h in hits}),
-            rerouted=update.get("route") == "records",
+            rerouted=extra.get("route") == "records",
         )
-        return update
+        return {"hits": hits, "broad": broad, "reused": reused, **extra}
+
+    async def _cards(
+        self, query: str, state: OwnerState, document_ids: Sequence[str] | None
+    ) -> list[Hit]:
+        return await self.deps.retriever.search(
+            query,
+            max_tier=state["max_tier"],
+            filters=state.get("filters"),
+            limit=self.settings.broad_top_k,
+            cards_only=True,
+            document_ids=document_ids,
+        )
+
+    async def _search_in(self, query: str, state: OwnerState, document_ids: list[str]) -> list[Hit]:
+        # No rerank: the reranker's score floor is what dropped them for a vague follow-up.
+        return await self.deps.retriever.search(
+            query,
+            max_tier=state["max_tier"],
+            filters=state.get("filters"),
+            limit=self.settings.top_k,
+            document_ids=document_ids,
+        )
+
+    def _follow_up_documents(self, state: OwnerState) -> list[str]:
+        if len(state["question"].split()) > self.settings.follow_up_words:
+            return []
+        for turn in reversed(state["history"]):
+            if turn.role == "assistant" and turn_tier(turn) <= state["max_tier"]:
+                return list(turn.citations)
+        return []
 
     async def records(self, state: OwnerState) -> dict[str, Any]:
         started = time.perf_counter()
@@ -372,8 +518,9 @@ class OwnerNodes:
         writer: Callable[[Any], None],
     ) -> ErrorInfo | None:
         try:
+            model, prefer = choose(state, self.deps.models, plan.tier)
             async for text in self.deps.generator.stream(
-                plan.tier, plan.messages, gen, model=state.get("model"), prefer=state.get("prefer")
+                plan.tier, plan.messages, gen, model=model, prefer=prefer
             ):
                 parts.append(text)
                 writer({"token": text})
@@ -424,8 +571,12 @@ class OwnerNodes:
 
     async def _plan_kb(self, state: OwnerState) -> Plan:
         hits = state.get("hits", [])
-        floor = state_floor(state)
-        budget = self.settings.context_tokens
+        floor = await self._conversation_floor(state)
+        budget = (
+            self.settings.broad_context_tokens
+            if state.get("broad")
+            else self.settings.context_tokens
+        )
         context = build_context(hits, budget_tokens=budget, ceiling=state["max_tier"])
         tier = max(floor, context.tier or floor)
         if tier >= Tier.CONFIDENTIAL and not await self._can_generate(tier, state):
@@ -436,19 +587,26 @@ class OwnerNodes:
             if context.withheld:
                 text += prompts.withheld_note(context.withheld)
             return Plan(tier=floor, fixed=text, withheld=context.withheld)
-        system = prompts.GENERATE_KB_V1.format(not_in_vault=prompts.NOT_IN_VAULT)
+        system = prompts.GENERATE_KB_V3.format(not_in_vault=prompts.NOT_IN_VAULT)
         plan = self._with_messages(state, tier, system, f"Context:\n{context.render()}")
         plan.sources, plan.withheld = context.sources, context.withheld
         return plan
 
+    async def _conversation_floor(self, state: OwnerState) -> Tier:
+        """The request floor, raised to the conversation's highest visible turn when a model
+        may read it: a follow-up to a confidential answer must still see that answer."""
+        floor = state_floor(state)
+        history = visible_history(state["history"], state["max_tier"], self.settings.history_turns)
+        earlier = max((turn_tier(t) for t in history), default=floor)
+        if earlier > floor and await self._can_generate(earlier, state):
+            return earlier
+        return floor
+
     async def _can_generate(self, tier: Tier, state: OwnerState) -> bool:
+        model, prefer = choose(state, self.deps.models, tier)
         try:
             await self.deps.orchestrator.select(
-                Role.GENERATOR,
-                tier,
-                model=state.get("model"),
-                prefer=state.get("prefer"),
-                privileged=True,
+                Role.GENERATOR, tier, model=model, prefer=prefer, privileged=True
             )
         except NoEligibleModelError:
             return False
@@ -501,6 +659,17 @@ class OwnerNodes:
         return {"seq": assistant.seq, "latency_ms": latency}
 
 
+def _merge(first: list[Hit], second: list[Hit], limit: int) -> list[Hit]:
+    """`first` then `second`, one entry per chunk, at most `limit`."""
+    seen: set[tuple[str, int]] = set()
+    merged: list[Hit] = []
+    for hit in [*first, *second]:
+        if hit.key not in seen:
+            seen.add(hit.key)
+            merged.append(hit)
+    return merged[:limit]
+
+
 def _after_route(state: OwnerState) -> str:
     return {"kb_search": "retrieve", "records": "records", "profile": "profile"}.get(
         state["route"], "generate"
@@ -514,9 +683,12 @@ def _after_retrieve(state: OwnerState) -> str:
 OwnerGraph = CompiledStateGraph[OwnerState, None, OwnerState, OwnerState]
 
 
-def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> OwnerGraph:
+def build_owner_graph(
+    deps: OwnerDeps, *, checkpointer: Checkpointer = None, persist: bool = True
+) -> OwnerGraph:
     """`checkpointer=False` when another graph runs this one inside a node: it then keeps no
-    checkpoints of its own instead of inheriting the caller's."""
+    checkpoints of its own instead of inheriting the caller's. `persist=False` ends after
+    `generate`, storing no turns (the super agent stores its own)."""
     nodes = OwnerNodes(deps)
     graph = StateGraph(OwnerState)
     graph.add_node("route", nodes.route)
@@ -524,7 +696,8 @@ def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> 
     graph.add_node("records", nodes.records)
     graph.add_node("profile", nodes.profile)
     graph.add_node("generate", nodes.generate)
-    graph.add_node("finalize", nodes.finalize)
+    if persist:
+        graph.add_node("finalize", nodes.finalize)
     graph.add_edge(START, "route")
     graph.add_conditional_edges(
         "route",
@@ -541,8 +714,11 @@ def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> 
     )
     graph.add_edge("records", "generate")
     graph.add_edge("profile", "generate")
-    graph.add_edge("generate", "finalize")
-    graph.add_edge("finalize", END)
+    if persist:
+        graph.add_edge("generate", "finalize")
+        graph.add_edge("finalize", END)
+    else:
+        graph.add_edge("generate", END)
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -557,6 +733,7 @@ def initial_state(
     prefer: Prefer | None = None,
     min_tier: Tier | None = None,
     context: OwnerContext | None = None,
+    models: ModelChoice | None = None,
 ) -> OwnerState:
     return OwnerState(
         conversation_id=conversation_id,
@@ -568,5 +745,6 @@ def initial_state(
         prefer=prefer,
         min_tier=min_tier,
         context=context,
+        models=models,
         started=time.perf_counter(),
     )

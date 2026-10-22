@@ -18,6 +18,8 @@ from llm_orchestrator.classify import (
     FlaggedClassifier,
     JevClassifier,
     JevError,
+    LayaClassifier,
+    LayaError,
     LLMClassifier,
 )
 from tests.llm_orchestrator.fakes import SECRET_PROMPT, Factory, inventory, orchestrator, spec
@@ -294,3 +296,66 @@ async def test_flagged_reads_flag_each_call_and_handles_no_jev() -> None:
     assert await model() == "jev"
     no_jev = FlaggedClassifier(llm, None, enabled=True)
     assert not no_jev.uses_jev(Tier.PUBLIC)
+
+
+class FakeLayaRouter:
+    """Laya's `Router.predict(state, questions)` as its docs describe the answer."""
+
+    def __init__(self, choice: str = "off_topic") -> None:
+        self.choice = choice
+        self.seen: list[tuple[str, dict[str, Any]]] = []
+
+    def predict(self, state: str, questions: dict[str, Any]) -> dict[str, Any]:
+        self.seen.append((state, questions))
+        answer = {"choice": self.choice, "answer_confidence": 0.8}
+        return {"answers": {"q": answer}, "routing": {"model": "english"}}
+
+
+async def test_laya_maps_the_choice_and_refuses_restricted() -> None:
+    router = FakeLayaRouter()
+    laya = LayaClassifier(router=router)
+    result = await laya.classify("x", question=QUESTION, labels=LABELS, tier=Tier.CONFIDENTIAL)
+    assert (result.label, result.model, result.confidence) == ("off_topic", "laya:english", 0.8)
+    assert router.seen[0][1]["q"] == {
+        "type": "choice",
+        "instructions": QUESTION,
+        "criteria": LABELS,
+    }
+    with pytest.raises(NoEligibleModelError):
+        await laya.classify("x", question=QUESTION, labels=LABELS, tier=Tier.RESTRICTED)
+    with pytest.raises(LayaError, match="unknown label"):
+        await LayaClassifier(router=FakeLayaRouter("nope")).classify(
+            "x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC
+        )
+
+
+async def test_flagged_tries_laya_first_then_falls_through() -> None:
+    llm, jev, laya = StubClassifier("llm"), StubClassifier("jev"), StubClassifier("laya")
+    flagged = FlaggedClassifier(llm, jev, enabled=True, laya=laya, laya_enabled=True)
+    assert (
+        await flagged.classify("x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC)
+    ).model == "laya"
+    broken = StubClassifier("laya", fail=True)
+    flagged = FlaggedClassifier(llm, jev, enabled=True, laya=broken, laya_enabled=True)
+    assert (
+        await flagged.classify("x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC)
+    ).model == "jev"
+    # Confidential text: Laya (local) may read it; Jev may not, so the LLM classifier answers.
+    off = FlaggedClassifier(llm, jev, enabled=True, laya=laya, laya_enabled=False)
+    result = await off.classify("x", question=QUESTION, labels=LABELS, tier=Tier.CONFIDENTIAL)
+    assert result.model == "llm"
+
+
+async def test_laya_without_the_package_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    real = importlib.import_module
+
+    def missing(name: str, *args: Any) -> Any:
+        if name == "laya":
+            raise ImportError("no laya")
+        return real(name, *args)
+
+    monkeypatch.setattr(importlib, "import_module", missing)
+    with pytest.raises(LayaError, match="not installed"):
+        await LayaClassifier().classify("x", question=QUESTION, labels=LABELS, tier=Tier.PUBLIC)

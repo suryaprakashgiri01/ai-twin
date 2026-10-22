@@ -1,0 +1,30 @@
+# Which models each owner agent uses. Edit freely; the tier rule always has the last word.
+#
+#   model:               auto | an id from config/models.yaml
+#   prefer:              fast | quality | paid | local | local-quality | local-max (auto order)
+#   confidential_model:  auto | a LOCAL id, used when the step reads confidential text
+#   confidential_prefer: as `prefer`, for confidential steps
+#
+# auto: the role chain in config/models.yaml picks the first available model, `prefer` first.
+# A pinned id is used whenever its max_tier allows the step's tier; otherwise the agent falls
+# back to auto, so confidential text only ever reaches local models. A request's own `model`
+# (API field, or a pinned id passed by the CLI) overrides both.
+agents:
+  owner:
+    model: auto
+    confidential_model: auto
+  prep:
+    model: auto
+    prefer: quality
+    confidential_model: auto
+    confidential_prefer: local-quality
+  intake:
+    # Reads your message into a draft (always local: intake runs at confidential). The 7B model
+    # understands mixed messages far better than the 3B router; set `local` to prefer speed.
+    confidential_prefer: local-quality
+  super:
+    model: auto
+    prefer: quality
+    confidential_model: auto
+    # qwen2.5:14b first when pulled, then the smaller local models.
+    confidential_prefer: local-max

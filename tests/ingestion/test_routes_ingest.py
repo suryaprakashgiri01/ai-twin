@@ -185,3 +185,39 @@ async def test_unknown_source_and_stopped_ingestion(api: Api) -> None:
     api.app.state.ingestion = None
     response = await api.client.post("/admin/v1/ingest/text", json=TEXT, headers=api.headers)
     assert response.status_code == 503
+
+
+async def test_private_repo_is_private_and_refresh_replaces_documents(api: Api) -> None:
+    import httpx
+
+    from app.kb.ingestion.fetch.github import GitHubFetcher, parse_allowlist
+    from tests.ingestion.conftest import web_handler
+
+    def private(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.github.com" and request.url.path.endswith("rate-limiter"):
+            return httpx.Response(200, json={"full_name": REPO, "private": True})
+        return web_handler(request)
+
+    api.h.pipeline.github = GitHubFetcher(
+        parse_allowlist(REPO), transport=httpx.MockTransport(private)
+    )
+    body = {"repos": [REPO]}
+    post = api.client.post
+    first = result(await post("/admin/v1/ingest/github", json=body, headers=api.headers))[
+        "sources"
+    ][0]
+    await api.wait()
+    [before] = (await status_of(api, first["sourceId"]))["documentIds"]
+    doc = await api.h.store.document_by_uid(before)
+    assert doc is not None and doc.tier == "private"
+    same = result(await post("/admin/v1/ingest/github", json=body, headers=api.headers))
+    assert same["sources"][0]["duplicate"] is True
+    again = await api.client.post(
+        "/admin/v1/ingest/github", json={**body, "refresh": True}, headers=api.headers
+    )
+    [queued] = result(again)["sources"]
+    assert queued["status"] == "queued" and queued["duplicate"] is False
+    await api.wait()
+    [after] = (await status_of(api, first["sourceId"]))["documentIds"]
+    assert after != before and await api.h.store.document_by_uid(before) is None
+    assert any(e.get("refreshed") is True for e in api.audit.entries)

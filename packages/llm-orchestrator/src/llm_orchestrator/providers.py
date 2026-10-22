@@ -6,8 +6,10 @@ transient errors from permanent ones and fall back across providers.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+import importlib
+import importlib.util
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -32,10 +34,16 @@ class ProviderSecrets:
     cerebras_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
     ollama_base_url: str | None = None
-    # Replaces the spec's model name for Ollama, so any locally pulled tag can be used.
-    ollama_model: str | None = None
+    # Ollama spec id -> model name that replaces the spec's, so any locally pulled tag can be used.
+    ollama_models: Mapping[str, str] = field(default_factory=dict)
     mock_enabled: bool = False
+
+
+def _installed(module: str) -> bool:
+    return importlib.util.find_spec(module) is not None
 
 
 def _present(secret: SecretStr | None) -> bool:
@@ -56,6 +64,11 @@ def is_available(spec: ModelSpec, secrets: ProviderSecrets) -> bool:
             return bool(secrets.ollama_base_url)
         case Provider.MOCK:
             return secrets.mock_enabled
+        case Provider.ANTHROPIC:
+            # An optional extra: `uv add --package llm-orchestrator langchain-anthropic`.
+            return _present(secrets.anthropic_api_key) and _installed("langchain_anthropic")
+        case Provider.OPENAI:
+            return _present(secrets.openai_api_key)
 
 
 class MockChatModel(BaseChatModel):
@@ -129,12 +142,31 @@ def build_chat_model(spec: ModelSpec, secrets: ProviderSecrets, timeout: float) 
             from langchain_ollama import ChatOllama
 
             return ChatOllama(
-                model=secrets.ollama_model or spec.model,
+                model=secrets.ollama_models.get(spec.id) or spec.model,
                 base_url=secrets.ollama_base_url,
                 client_kwargs={"timeout": timeout},
             )
         case Provider.MOCK:
             return MockChatModel()
+        case Provider.ANTHROPIC:
+            anthropic: Any = importlib.import_module("langchain_anthropic")
+            model: BaseChatModel = anthropic.ChatAnthropic(
+                model=spec.model,
+                api_key=_key(secrets.anthropic_api_key),
+                timeout=timeout,
+                max_retries=0,
+            )
+            return model
+        case Provider.OPENAI:
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                model=spec.model,
+                api_key=_key(secrets.openai_api_key),
+                base_url=spec.base_url,
+                timeout=timeout,
+                max_retries=0,
+            )
 
 
 def default_factory(

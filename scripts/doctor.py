@@ -159,11 +159,14 @@ def check_ollama(env: dict[str, str], api: ollama.Api | None = None) -> list[Fin
         return [
             Finding("warn", f"Ollama not answering at {target.url}; run: {ollama.hint('start')}")
         ]
-    if not ollama.has_model(api.models(), target.model):
+    pulled = api.models()
+    missing = [m for m in target.all_models if not ollama.has_model(pulled, m)]
+    if missing:
         return [
-            Finding("warn", f"Ollama model {target.model} not pulled; run: {ollama.hint('pull')}")
+            Finding("warn", f"Ollama model {m} not pulled; run: {ollama.hint('pull ' + m)}")
+            for m in missing
         ]
-    return [Finding("ok", f"Ollama {version} with {target.model}")]
+    return [Finding("ok", f"Ollama {version} with {', '.join(target.all_models)}")]
 
 
 def check_graphify() -> Finding:

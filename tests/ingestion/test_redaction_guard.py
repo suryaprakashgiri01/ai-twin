@@ -97,6 +97,33 @@ def test_large_text_is_redacted_in_blocks(redactor: Redactor) -> None:
     assert persona.PAN not in result.text
 
 
+class NameDetector:
+    """Labels every listed name as a PERSON, as spaCy would."""
+
+    NAMES = ("Kavya Testpal", "Kavya", "Testpal", "Kavya Sharma", "Rahul Sharma")
+
+    def spans(self, text: str) -> list[tuple[int, int, str, float]]:
+        found = []
+        for name in sorted(self.NAMES, key=len, reverse=True):
+            start = text.find(name)
+            while start != -1:
+                found.append((start, start + len(name), "PERSON", 0.85))
+                start = text.find(name, start + len(name))
+        return found
+
+
+def test_owner_name_parts_are_kept_other_names_redacted() -> None:
+    redactor = Redactor(NameDetector(), owner_names=[persona.NAME])
+    text = (
+        "Kavya Testpal led it. Kavya wrote the RFC; Testpal shipped. Rahul Sharma and Kavya Sharma"
+    )
+    result = redactor.redact(text)
+    assert result.text.startswith("Kavya Testpal led it. Kavya wrote the RFC; Testpal shipped.")
+    assert "Rahul" not in result.text and "Kavya Sharma" not in result.text
+    assert result.report == {"PERSON": 2}
+    assert Redactor(NameDetector()).redact("Kavya Testpal").text == "[PERSON]"
+
+
 def test_redactor_without_presidio_uses_rules_only() -> None:
     result = Redactor(None).redact(f"PAN {persona.PAN}, mail {persona.PRIVATE_EMAIL}")
     assert "[PAN]" in result.text

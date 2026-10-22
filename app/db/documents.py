@@ -22,7 +22,7 @@ from pymongo import ASCENDING, DESCENDING, TEXT, IndexModel
 Tier = Literal["public", "private", "confidential", "restricted"]
 Channel = Literal["public", "owner"]
 # Owner conversations: `ask` questions the vault, `intake` adds knowledge through the assistant.
-ConversationMode = Literal["ask", "intake"]
+ConversationMode = Literal["ask", "intake", "prep", "super"]
 Role = Literal["user", "assistant", "system", "tool"]
 SourceKind = Literal["text", "file", "url", "github", "linkedin_export"]
 ReviewStatus = Literal["pending", "approved", "rejected", "quarantined"]
@@ -189,6 +189,9 @@ class KbDocumentFields(BaseModel):
     review_status: ReviewStatus = "pending"
     # Default deny: nothing is public until the owner approves it.
     published: bool = False
+    # A quarantined document the owner released for their own use: indexed at confidential
+    # (local models only) and never publishable while set.
+    local_only: bool = False
     published_at: datetime | None = None
     approved_at: datetime | None = None
     occurred_at: datetime | None = None
@@ -196,6 +199,8 @@ class KbDocumentFields(BaseModel):
     # Redacted Markdown, shown in review. None for restricted documents (metadata only).
     text: str | None = None
     summary: str | None = None
+    # A short model-written summary, indexed as the document's card point (see kb.ingestion.cards).
+    card: str | None = None
     # Denylist rule names that matched (never the matched text).
     quarantine_rules: list[str] = Field(default_factory=list)
     # Placeholder type -> count; values are never stored.

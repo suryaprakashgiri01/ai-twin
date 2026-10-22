@@ -274,3 +274,18 @@ def test_make_memory_commands(
         ("PATCH", {"status": "archived"}),
         ("DELETE", b""),
     ]
+
+
+def test_prep_commands_set_limits_modes_and_revisions() -> None:
+    options = chat.PrepOptions()
+    assert chat.prep_command("/words 150", options) == (True, None)
+    assert options.body() == {"words": 150}
+    assert chat.prep_command("/chars 600", options) == (True, None)
+    assert options.body() == {"chars": 600}
+    assert chat.prep_command("/mode scenario", options) == (True, None)
+    assert options.body() == {"kind": "scenario", "chars": 600}
+    assert chat.prep_command("/limit off", options) == (True, None)
+    assert chat.prep_command("/shorter", options) == (True, "shorter")
+    assert chat.prep_command("/mode nonsense", options) == (True, None)
+    assert chat.prep_command("Tell me about yourself", options) == (False, None)
+    assert options.body() == {"kind": "scenario"}

@@ -62,8 +62,12 @@ class BuiltContext(BaseModel):
         return not self.chunks
 
     def render(self) -> str:
-        """`[n] title` headers followed by chunk text, in rank order."""
-        return "\n\n".join(f"[{c.citation}] {c.hit.title}\n{c.hit.text}" for c in self.chunks)
+        """`[n] title` headers followed by chunk text, in rank order; cards say so."""
+        return "\n\n".join(
+            f"[{c.citation}] {c.hit.title}{' (document summary)' if c.hit.card else ''}\n"
+            f"{c.hit.text}"
+            for c in self.chunks
+        )
 
 
 def build_context(hits: Sequence[Hit], *, budget_tokens: int, ceiling: Tier) -> BuiltContext:

@@ -52,12 +52,18 @@ flowchart TD
 | Stage | Notes |
 |---|---|
 | Parse | Parsers per type; images through local OCR; URLs and GitHub repos are fetched by the pipeline |
-| Redact | Runs before everything that reads text, so the guard, chunks, labels, models, logs and vectors only ever see placeholders such as `[AADHAAR]`. Published contact details are allowlisted. Reports hold counts, never values |
+| Redact | Runs before everything that reads text, so the guard, chunks, labels, models, logs and vectors only ever see placeholders such as `[AADHAAR]`. Published contact details are allowlisted, and so is a person name made only of the owner's own name parts (`OWNER_NAMES`). Reports hold counts, never values |
 | Employer guard | Owner denylist in the git-ignored vault; only rule names are stored or logged |
 | Chunk | Heading path is repeated at the top of every chunk so a chunk read alone still says what it is about |
 | Label | Rules (category, source), redaction results (identifiers found → at least `private`), then the `classifier` role at tier `confidential`, so only local models are eligible. Final tier = max(rules, classifier). With no eligible model the rule label stands |
 | Embed | `BAAI/bge-small-en-v1.5` dense (384) and `Qdrant/bm25` sparse, local via fastembed; nothing is sent to a cloud embedder |
+| Tag | A document ingested without tags gets 3–6 from one short `classifier`-role call at its own tier (quarantined and restricted ones never) |
 | Index | New and relabelled documents go to the collection of their tier (`public` and `private` documents both land in `kb_private` until published) |
+| Card | A ≤ 800-character summary written by a generator allowed at the document's tier, stored on the document (`card`) and indexed as one extra point with `card: true`. The offline mock never writes cards. `POST /admin/v1/documents/cards` (`make kb-sync ARGS="cards --apply"`) backfills older documents |
+
+- **Source-implied tier:** a private GitHub repository sets a private hint, so it is never labelled public.
+- **Refresh:** `refresh: true` on URL and GitHub ingest re-runs a finished source. The job removes the documents
+  and vectors the last run made, then ingests afresh. `make kb-sync` uses it when a manifest entry changes.
 
 ## Review and publish
 
@@ -88,6 +94,11 @@ sequenceDiagram
 `unpublish` removes the document from `kb_public`, flags the private copy unpublished and bumps the same
 version. The private copies always stay for owner retrieval.
 
+**Local-only release.** `POST /documents/{id}/release` with `localOnly: true` (the default, and what the intake
+`release` action uses) indexes a quarantined document at `confidential`, so only local models read it. It sets
+`localOnly`: publish is refused for good, and the tier cannot be lowered below confidential. `localOnly: false`
+releases at the tier the labels give.
+
 ## Retrieval
 
 ```mermaid
@@ -109,6 +120,8 @@ flowchart TD
 | No restricted text | Restricted documents are never embedded, so no collection holds them |
 | Canary safety | Canary chunks are excluded in the Qdrant filter and again on the way out |
 | Freshness | Deleted documents are dropped by a live-document check |
+
+`search` also takes `cards_only` (document cards only) and `document_ids` (search inside those documents).
 
 ## Context building
 

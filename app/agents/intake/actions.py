@@ -30,6 +30,7 @@ from app.services.admin_ops import (
     FileIn,
     GitHubIn,
     MetaIn,
+    ReleaseIn,
     SourceStatus,
     TextIn,
     UrlsIn,
@@ -418,6 +419,12 @@ async def _approve(ctx: RunContext, p: Payload) -> Outcome:
     return _doc_outcome("approve", "Approved", await ctx.ops.approve(p["document_id"], ctx.actor))
 
 
+async def _release(ctx: RunContext, p: Payload) -> Outcome:
+    """Quarantined → usable by local models only. Never publishable afterwards."""
+    result = await ctx.ops.release(p["document_id"], ctx.actor, ReleaseIn(local_only=True))
+    return _doc_outcome("release", "Released for local use", result.document, chunks=result.chunks)
+
+
 async def _publish(ctx: RunContext, p: Payload) -> Outcome:
     """The owner asked to publish and confirmed a draft that said what would change: a private
     document is made public and approved first. Confidential and restricted ones never get here
@@ -780,6 +787,13 @@ _SPECS = [
     ),
     _doc_action(
         "approve", "Approve a document", "approve a document at its current tier", _approve
+    ),
+    _doc_action(
+        "release",
+        "Use a quarantined document locally",
+        "release a quarantined document for the owner's own local use (confidential, local "
+        "models only, never published)",
+        _release,
     ),
     _doc_action(
         "publish",

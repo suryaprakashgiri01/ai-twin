@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -54,6 +54,9 @@ keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
 seed: ## Fake-persona demo data via the API: dry run; ARGS="--apply" | "--remove --apply"
 	$(PY) scripts.seed $(ARGS)
 
+kb-sync: ## Build/refresh the KB from vault/kb/manifest.yaml: dry run; ARGS="--apply" | "cards --apply" | "--reset --apply"
+	$(PY) scripts.kb_sync $(ARGS)
+
 export: ## Encrypted vault archive under vault/exports/ (prompts for a passphrase)
 	$(PY) scripts.export $(ARGS)
 
@@ -68,6 +71,12 @@ chat: ## Chat with the vault in the terminal (new conversation; ARGS="rename X n
 
 twin: ## Add knowledge in plain language (intake assistant; confirms before every write)
 	$(PY) scripts.chat twin $(ARGS)
+
+super: ## The super agent: one conversation that saves, answers and prepares (local only)
+	$(PY) scripts.chat super $(ARGS)
+
+prep: ## Interview and application answers in your voice (first person, from your vault)
+	$(PY) scripts.chat prep $(ARGS)
 
 chat-list: ## List conversations: name, mode, id, updated, turns, description
 	$(PY) scripts.chat list $(ARGS)

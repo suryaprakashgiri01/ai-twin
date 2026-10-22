@@ -62,6 +62,8 @@ class Hit(BaseModel):
     text: str
     score: float
     collection: str
+    # A document card (one summary per document) rather than a chunk of its text.
+    card: bool = False
 
     @property
     def key(self) -> tuple[str, int]:
@@ -112,8 +114,12 @@ class MongoDocumentFilter:
         return [str(row["_id"]) async for row in cursor]
 
 
-def _qdrant_filter(filters: SearchFilters | None, document_ids: list[str] | None) -> models.Filter:
+def _qdrant_filter(
+    filters: SearchFilters | None, document_ids: list[str] | None, cards_only: bool = False
+) -> models.Filter:
     must: list[models.Condition] = []
+    if cards_only:
+        must.append(models.FieldCondition(key="card", match=models.MatchValue(value=True)))
     if filters is not None and filters.category:
         must.append(
             models.FieldCondition(key="category", match=models.MatchValue(value=filters.category))
@@ -145,6 +151,7 @@ def _hit(point: models.ScoredPoint, collection: str) -> Hit | None:
         text=str(payload.get("text", "")),
         score=float(point.score),
         collection=collection,
+        card=bool(payload.get("card")),
     )
 
 
@@ -171,18 +178,24 @@ class Retriever:
         max_tier: Tier,
         filters: SearchFilters | None = None,
         limit: int = 20,
+        cards_only: bool = False,
+        document_ids: Sequence[str] | None = None,
     ) -> list[Hit]:
-        """Fused hits across the allowed collections, best first, one per chunk."""
+        """Fused hits across the allowed collections, best first, one per chunk.
+
+        `cards_only` keeps document cards; `document_ids` limits the search to those documents.
+        """
         started = time.perf_counter()
         names = collections_for(max_tier, self._collections)
-        document_ids: list[str] | None = None
+        ids = list(document_ids) if document_ids is not None else None
         if filters is not None and filters.needs_documents():
-            document_ids = await self._documents.matching(filters)
-            if not document_ids:
-                self._log(names, 0, 0, started, max_tier)
-                return []
+            matching = await self._documents.matching(filters)
+            ids = matching if ids is None else [i for i in ids if i in set(matching)]
+        if ids is not None and not ids:
+            self._log(names, 0, 0, started, max_tier)
+            return []
         embedding = (await self._embedder.embed([query]))[0]
-        qfilter = _qdrant_filter(filters, document_ids)
+        qfilter = _qdrant_filter(filters, ids, cards_only)
         raw: list[Hit] = []
         for name in names:
             raw += await self._query(name, embedding, qfilter, limit)

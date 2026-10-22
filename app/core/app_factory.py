@@ -34,9 +34,11 @@ from app.services.intake import build_intake, prune_checkpoints
 from app.services.memory import build_memory
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
 from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
+from app.services.prep import build_prep
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
 from app.services.security_events import recording_exhausted_chains
+from app.services.super_agent import build_super
 
 logger = structlog.get_logger(__name__)
 
@@ -152,6 +154,25 @@ async def _start_services(
             memory=app.state.memory,
         )
         app.state.intake = intake
+        app.state.prep = build_prep(
+            settings,
+            resources,
+            app.state.llm,
+            owner,
+            index=MongoConversationIndex(),
+            context=context,
+            on_turn=digester.after_turn,
+        )
+        app.state.super_agent = build_super(
+            settings,
+            resources,
+            app.state.llm,
+            owner,
+            intake,
+            index=MongoConversationIndex(),
+            context=context,
+            on_turn=digester.after_turn,
+        )
         await prune_checkpoints(saver, settings.intake_checkpoint_days)
     else:
         embedder = FastEmbedder(settings.models_dir / "fastembed")

@@ -59,6 +59,10 @@ class KbStore(Protocol):
 
     async def review_queue(self, limit: int) -> list[DocumentView]: ...
 
+    async def card_candidates(self, limit: int, *, missing_only: bool) -> list[DocumentView]:
+        """Indexed documents (not deleted, quarantined or restricted) for a card backfill."""
+        ...
+
     async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:
         """Documents (not deleted) whose title shares words with `text`, best match first."""
         ...
@@ -156,6 +160,18 @@ class MongoKbStore:
             .limit(limit)
             .to_list()
         )
+        return [_document_view(d) for d in docs]
+
+    async def card_candidates(self, limit: int, *, missing_only: bool) -> list[DocumentView]:
+        query: dict[str, Any] = {
+            "deleted_at": None,
+            "review_status": {"$ne": "quarantined"},
+            "tier": {"$ne": "restricted"},
+            "text": {"$ne": None},
+        }
+        if missing_only:
+            query["card"] = None
+        docs = await KbDocument.find(query).sort("created_at").limit(limit).to_list()
         return [_document_view(d) for d in docs]
 
     async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:
