@@ -53,6 +53,12 @@ def first_heading(markdown: str) -> str | None:
     return None
 
 
+def _higher(a: str | None, b: str | None) -> str | None:
+    if a is None or b is None:
+        return a or b
+    return max(Tier.parse(a), Tier.parse(b)).label
+
+
 @dataclass
 class Pipeline:
     store: KbStore
@@ -205,7 +211,7 @@ class Pipeline:
             category=parsed.category or meta.category or "work-note",
             tags=list(meta.tags),
             occurred_at=meta.occurred_at,
-            tier_hint=meta.tier_hint,
+            tier_hint=_higher(meta.tier_hint, parsed.tier_hint),
             summary=meta.summary,
             detected=parsed.detected,
             markdown=parsed.markdown,

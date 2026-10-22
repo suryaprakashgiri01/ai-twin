@@ -80,7 +80,8 @@ CATEGORY_RULES: dict[str, CategoryRule] = {
     "profile-link": CategoryRule(Tier.PUBLIC, "a public profile"),
 }
 SOURCE_RULES: dict[str, CategoryRule] = {
-    "github": CategoryRule(Tier.PUBLIC, "an allowlisted public repository"),
+    # A private repository's fetch sets a private hint, which raises this.
+    "github": CategoryRule(Tier.PUBLIC, "an allowlisted repository (public unless private)"),
 }
 DEFAULT_RULE = CategoryRule(Tier.PRIVATE, "default: private until reviewed")
 

@@ -45,6 +45,8 @@ class Parsed(BaseModel):
     ocr_used: bool = False
     # Stable key within a multi-document source (a LinkedIn entity, a repo).
     key: str | None = None
+    # A tier the source itself implies (a private repository), raised like an owner hint.
+    tier_hint: str | None = None
 
 
 class ChunkDraft(BaseModel):

@@ -20,7 +20,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "chat", "migrate", "memory", "graph")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "kb-sync", "chat", "migrate", "memory", "graph")
 
 switch ($Command) {
     "help" {
@@ -43,7 +43,7 @@ switch ($Command) {
             Write-Error "Unknown command '$Command'. Try: ./scripts/dev.ps1 help"
         }
         # `import` is a Python keyword, so its module is `import_`.
-        $module = if ($Command -eq "import") { "import_" } else { $Command }
+        $module = if ($Command -eq "import") { "import_" } else { $Command -replace "-", "_" }
         uv run python -m "scripts.$module" @Rest
     }
 }

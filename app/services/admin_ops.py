@@ -135,6 +135,8 @@ class TextIn(MetaIn):
 
 class UrlsIn(MetaIn):
     urls: list[str] = Field(min_length=1, max_length=MAX_URLS)
+    # Re-fetch a URL ingested before and replace its documents.
+    refresh: bool = False
 
 
 class GitHubIn(ApiModel):
@@ -143,6 +145,8 @@ class GitHubIn(ApiModel):
     # `owner/name`, or `owner/name@branch` for a branch other than the default.
     repos: list[str] = Field(min_length=1, max_length=50)
     tags: list[str] = Field(default_factory=list, max_length=20)
+    # Re-sync a repository synced before and replace its documents.
+    refresh: bool = False
 
 
 @dataclass(frozen=True)
@@ -404,12 +408,13 @@ class AdminOps:
 
     # --- ingestion --------------------------------------------------------------------------
 
-    async def _submit(self, actor: str, fields: SourceFields) -> Submitted:
-        source, queued = await self._service().submit(fields)
+    async def _submit(self, actor: str, fields: SourceFields, refresh: bool = False) -> Submitted:
+        # `source` is as it was before this call, so a refreshed one still says done.
+        source, queued = await self._service().submit(fields, refresh=refresh)
+        refreshed = queued and source.status in ("done", "quarantined")
         duplicate = not queued and source.status != "failed"
-        await self._audit(
-            actor, "ingest.submit", source.uid, {"kind": fields.kind, "duplicate": duplicate}
-        )
+        details = {"kind": fields.kind, "duplicate": duplicate, "refreshed": refreshed}
+        await self._audit(actor, "ingest.submit", source.uid, details)
         status_now: JobStatus = "queued" if queued else source.status
         return Submitted(
             source_id=source.uid,
@@ -485,7 +490,7 @@ class AdminOps:
             fields = SourceFields(
                 kind="url", uri=url, checksum=_sha(f"url:{url}".encode()), meta=body.meta()
             )
-            submitted.append(await self._submit(actor, fields))
+            submitted.append(await self._submit(actor, fields, body.refresh))
         return SubmittedBatch(sources=submitted)
 
     def github_allowlist(self) -> frozenset[str]:
@@ -507,7 +512,7 @@ class AdminOps:
             fields = SourceFields(
                 kind="github", uri=repo, checksum=_sha(f"github:{repo}".encode()), meta=meta
             )
-            submitted.append(await self._submit(actor, fields))
+            submitted.append(await self._submit(actor, fields, body.refresh))
         return SubmittedBatch(sources=submitted)
 
     async def ingest_linkedin(self, upload: FileIn, actor: str) -> Submitted:
