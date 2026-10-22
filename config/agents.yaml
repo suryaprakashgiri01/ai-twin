@@ -18,6 +18,10 @@ agents:
     prefer: quality
     confidential_model: auto
     confidential_prefer: local-quality
+  intake:
+    # Reads your message into a draft (always local: intake runs at confidential). The 7B model
+    # understands mixed messages far better than the 3B router; set `local` to prefer speed.
+    confidential_prefer: local-quality
   super:
     model: auto
     prefer: quality

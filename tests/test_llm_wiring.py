@@ -63,9 +63,9 @@ async def test_keys_and_endpoints_enable_models() -> None:
         llm_mock_enabled=True,
     )
     body = await _readyz(settings)
-    # Groq (1 per role) + Ollama (3 for generator/judge) + mock; the guard role is Groq only.
+    # Groq (1 per role) + Ollama (2 routers, 3 for generator/judge) + mock; guard is Groq only.
     assert body["models"] == {
-        "router": 3,
+        "router": 4,
         "classifier": 3,
         "generator": 5,
         "judge": 5,
@@ -116,7 +116,8 @@ async def test_confidential_answers_prefer_the_quality_local_model() -> None:
     private = await orch.select(Role.GENERATOR, Tier.PRIVATE)
     assert private.models[0].id == "groq-gpt-oss-120b"
     router = await orch.select(Role.ROUTER, Tier.CONFIDENTIAL)
-    assert "ollama-qwen" not in [m.id for m in router.models]
+    # The 3B model routes first; the 7B one follows (intake prefers it via agents.yaml).
+    assert [m.id for m in router.models][:2] == ["ollama-local", "ollama-qwen"]
     assert provider_secrets(settings).ollama_models == {"ollama-local": "llama3.2:1b"}
 
 
@@ -128,6 +129,7 @@ def test_agent_models_resolve_auto_pins_and_the_tier_rule(tmp_path: Path) -> Non
     shipped = AgentModels.load(inventory)
     assert shipped.choice("super").pick(Tier.CONFIDENTIAL) == (None, "local-max")
     assert shipped.choice("prep").pick(Tier.PRIVATE) == (None, "quality")
+    assert shipped.choice("intake").pick(Tier.CONFIDENTIAL) == (None, "local-quality")
     assert shipped.choice("owner").pick(Tier.PRIVATE, "mock") == ("mock", None)
     pinned = AgentModels.build(
         {"super": AgentModel(model="groq-gpt-oss-120b", confidential_model="ollama-qwen-14b")},

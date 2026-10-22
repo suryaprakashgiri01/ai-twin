@@ -96,7 +96,7 @@ models:
   - id: ollama-qwen
     provider: ollama
     model: qwen2.5:7b
-    roles: [generator, judge]
+    roles: [router, generator, judge]
     max_tier: confidential
     context_window: 32768
     trains_on_inputs: false
@@ -172,7 +172,7 @@ models:
     tags: [local]
 
 roles:
-  router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
+  router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, ollama-qwen, mock]
   classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
   generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, anthropic-sonnet, anthropic-opus, mock]
   judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, anthropic-sonnet, anthropic-opus, mock]

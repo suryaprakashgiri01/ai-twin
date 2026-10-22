@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 from llm_orchestrator import Inventory, ModelSpec, Prefer, Tier
 from llm_orchestrator.types import LOCAL_PROVIDERS
 
-AgentName = Literal["owner", "prep", "super"]
+AgentName = Literal["owner", "prep", "super", "intake"]
 AUTO = "auto"
 DEFAULT_AGENTS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
 

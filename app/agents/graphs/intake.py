@@ -77,6 +77,7 @@ from app.agents.intake.labels import (
     validate_paste,
 )
 from app.agents.intake.suggest import suggest
+from app.agents.models import AUTO_CHOICE, ModelChoice
 from app.agents.prompts import intake as prompts
 from app.agents.routing import (
     canonical_kind,
@@ -213,6 +214,8 @@ class IntakeDeps:
     owner_graph: OwnerGraph | None = None
     conversations: ConversationService | None = None
     memory: MemoryService | None = None
+    # config/agents.yaml `intake`: which local model reads the owner's message.
+    models: ModelChoice = AUTO_CHOICE
     now: Callable[[], datetime] = field(default=utcnow)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
 
@@ -833,8 +836,15 @@ class IntakeNodes:
         # A small local model sometimes stops mid-JSON; one more try is cheap.
         for attempt in range(EXTRACT_ATTEMPTS):
             try:
+                model, prefer = deps.models.pick(INTAKE_TIER)
                 result = await deps.orchestrator.structured_call(
-                    Role.ROUTER, INTAKE_TIER, IntakeDraft, messages, privileged=True
+                    Role.ROUTER,
+                    INTAKE_TIER,
+                    IntakeDraft,
+                    messages,
+                    model=model,
+                    prefer=prefer,
+                    privileged=True,
                 )
                 return result.value, result.model_id
             except AllModelsFailedError:
