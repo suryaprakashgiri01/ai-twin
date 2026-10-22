@@ -24,7 +24,7 @@ from tenacity.wait import wait_base
 from llm_orchestrator.cooloff import MissingModels
 from llm_orchestrator.hooks import AttemptEvent, notify_attempt
 from llm_orchestrator.providers import ModelFactory
-from llm_orchestrator.thinking import strip_thinking
+from llm_orchestrator.thinking import REASONING_KEY, strip_thinking
 from llm_orchestrator.types import (
     Attempt,
     ModelSpec,
@@ -76,14 +76,26 @@ def usage_of(message: AIMessage) -> TokenUsage:
 
 
 def without_thinking(message: AIMessage, spec: ModelSpec) -> AIMessage:
-    """The reply with any `<think>` text removed; only the amount removed is logged."""
+    """The reply with any `<think>` text moved out of the content into
+    `additional_kwargs["reasoning_content"]`, where the Ollama client already puts it. Only the
+    amount is logged."""
     if not isinstance(message.content, str):
         return message
-    text, removed = strip_thinking(message.content)
-    if not removed:
+    text, thinking = strip_thinking(message.content)
+    if not thinking and text == message.content:
         return message
-    logger.info("thinking removed", model=spec.id, chars=removed)
-    return message.model_copy(update={"content": text})
+    logger.info("thinking separated", model=spec.id, chars=len(thinking))
+    earlier = str(message.additional_kwargs.get(REASONING_KEY) or "")
+    kwargs = {
+        **message.additional_kwargs,
+        REASONING_KEY: "\n".join(p for p in (earlier, thinking) if p),
+    }
+    return message.model_copy(update={"content": text, "additional_kwargs": kwargs})
+
+
+def thinking_of(message: AIMessage) -> str:
+    """The reply's thinking, if the model reasoned visibly."""
+    return str(message.additional_kwargs.get(REASONING_KEY) or "")
 
 
 def limit_kwargs(spec: ModelSpec, max_tokens: int | None) -> dict[str, Any]:

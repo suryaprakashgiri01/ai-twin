@@ -194,6 +194,7 @@ class Agent:
     conversations: ConversationService
     store: MemoryConversationStore
     redis: FakeAsyncRedis
+    thinking: list[str] = field(default_factory=list)
 
     async def run(
         self,
@@ -217,8 +218,10 @@ class Agent:
         final: Any = None
         async for item in self.graph.astream(state, stream_mode=["custom", "values"]):
             mode, chunk = cast(tuple[str, Any], item)
-            if mode == "custom":
+            if mode == "custom" and "token" in chunk:
                 tokens.append(chunk["token"])
+            elif mode == "custom":
+                self.thinking.append(chunk["thinking"])
             else:
                 final = chunk
         await self.conversations.drain()

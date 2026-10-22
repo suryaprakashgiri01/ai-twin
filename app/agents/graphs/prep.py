@@ -212,6 +212,7 @@ class PrepState(TypedDict, total=False):
     error: ErrorInfo | None
     input_tokens: int
     output_tokens: int
+    thinking: str
     # finalized
     seq: int
     latency_ms: float
@@ -326,6 +327,7 @@ class PrepNodes:
             "error": error,
             "input_tokens": gen.input_tokens,
             "output_tokens": gen.output_tokens,
+            "thinking": "".join(gen.thinking),
         }
 
     def _messages(
@@ -349,7 +351,13 @@ class PrepNodes:
         need = await models.need_for(state["target"], tier, self.deps.profiler)
         try:
             async for text in self.deps.generator.stream(
-                tier, messages, gen, model=model, prefer=prefer, need=need
+                tier,
+                messages,
+                gen,
+                model=model,
+                prefer=prefer,
+                need=need,
+                on_thinking=lambda t: get_stream_writer()({"thinking": t}),
             ):
                 parts.append(text)
         except MidStreamError as exc:

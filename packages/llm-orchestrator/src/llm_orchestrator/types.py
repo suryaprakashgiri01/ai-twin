@@ -172,6 +172,8 @@ class CallResult(BaseModel):
     attempts: list[Attempt]
     fallback_used: bool
     usage: TokenUsage = TokenUsage()
+    # A reasoning model's thinking, kept apart from `text`; never logged.
+    thinking: str = ""
 
 
 class StructuredResult[T: BaseModel](BaseModel):

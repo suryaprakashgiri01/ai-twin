@@ -289,3 +289,17 @@ def test_prep_commands_set_limits_modes_and_revisions() -> None:
     assert chat.prep_command("/mode nonsense", options) == (True, None)
     assert chat.prep_command("Tell me about yourself", options) == (False, None)
     assert options.body() == {"kind": "scenario"}
+
+
+def test_thinking_is_dimmed_above_the_answer_and_can_be_hidden(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    chat.THINKING.show = True
+    chat._show_answer_event("thinking", {"text": "check the notes"})
+    chat._show_answer_event("token", {"text": "Answer."})
+    out = capsys.readouterr().out
+    assert out.index("thinking:") < out.index("check the notes") < out.index("Answer.")
+    chat.THINKING.toggle()
+    chat._show_answer_event("thinking", {"text": "hidden thought"})
+    assert "hidden thought" not in capsys.readouterr().out
+    chat.THINKING.toggle()

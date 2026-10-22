@@ -18,7 +18,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, BaseMessageChunk
 from langchain_core.runnables import RunnableConfig
 
-from app.agents.generation import Generation, MidStreamError
+from app.agents.generation import Generation, MidStreamError, Thinking
 from app.api.envelope import camel_keys
 from llm_orchestrator import (
     Attempt,
@@ -32,9 +32,19 @@ from llm_orchestrator import (
 )
 from llm_orchestrator.executor import CallContext, classify_error, log_attempt
 from llm_orchestrator.hooks import exhausted
-from llm_orchestrator.thinking import ThinkingFilter
+from llm_orchestrator.thinking import REASONING_KEY, ThinkingFilter
 
 logger = structlog.get_logger(__name__)
+
+
+def _think(text: str, out: Generation, on_thinking: Thinking | None) -> int:
+    """Keep and forward a piece of thinking; returns its size for the log line."""
+    if not text:
+        return 0
+    out.thinking.append(text)
+    if on_thinking is not None:
+        on_thinking(text)
+    return len(text)
 
 
 def sse(event: str, data: dict[str, Any]) -> str:
@@ -64,6 +74,7 @@ class StreamingGenerator:
         model: str | None = None,
         prefer: Prefer | None = None,
         need: Need | None = None,
+        on_thinking: Thinking | None = None,
     ) -> AsyncIterator[str]:
         candidates = await self._orchestrator.chat_models(
             Role.GENERATOR, tier, model=model, prefer=prefer, privileged=True, need=need
@@ -73,17 +84,23 @@ class StreamingGenerator:
             started = time.perf_counter()
             streamed = False
             thinking = ThinkingFilter()
+            thought = 0
             try:
                 async for chunk in self._chunks(chat, spec, messages, ctx):
                     self._count(out, chunk)
                     text = thinking.feed(chunk.text)
+                    # Thinking separated by the client, or cut out of the text by the filter.
+                    reasoning = str(chunk.additional_kwargs.get(REASONING_KEY) or "")
+                    thought += _think(reasoning + thinking.take(), out, on_thinking)
                     if not text:
                         continue
                     if not streamed:
                         streamed = True
                         out.model_id, out.fallback_used = spec.id, index > 0
                     yield text
-                if tail := thinking.flush():
+                tail = thinking.flush()
+                thought += _think(thinking.take(), out, on_thinking)
+                if tail:
                     yield tail
             except Exception as exc:
                 self._failed(ctx, spec, started, exc)
@@ -91,8 +108,8 @@ class StreamingGenerator:
                     raise MidStreamError(spec.id, type(exc).__name__) from exc
                 continue
             out.model_id, out.fallback_used = spec.id, index > 0
-            if thinking.removed:
-                logger.info("thinking removed", model=spec.id, chars=thinking.removed)
+            if thought:
+                logger.info("thinking separated", model=spec.id, chars=thought)
             usage = TokenUsage(input_tokens=out.input_tokens, output_tokens=out.output_tokens)
             log_attempt(ctx, spec, number=1, outcome="ok", latency_ms=_ms(started), usage=usage)
             return

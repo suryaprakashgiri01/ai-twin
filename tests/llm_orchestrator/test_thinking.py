@@ -19,9 +19,9 @@ SECRET = "the owner's offer is 99 units"
     ],
 )
 def test_strip_thinking(raw: str, clean: str) -> None:
-    text, removed = strip_thinking(raw)
+    text, thinking = strip_thinking(raw)
     assert text == clean and SECRET not in text
-    assert (removed > 0) == ("<think>" in raw)
+    assert thinking == (SECRET if "<think>" in raw else "")
 
 
 def test_filter_handles_tags_split_across_chunks() -> None:
@@ -29,7 +29,7 @@ def test_filter_handles_tags_split_across_chunks() -> None:
     filt = ThinkingFilter()
     out = "".join(filt.feed(c) for c in stream) + filt.flush()
     assert out == "Hello <b>!" and SECRET not in out
-    assert filt.removed == len(f"<think>{SECRET}</think>")
+    assert filt.take() == SECRET and filt.take() == ""
 
 
 async def test_executor_and_stream_drop_thinking() -> None:
@@ -44,11 +44,18 @@ async def test_executor_and_stream_drop_thinking() -> None:
     factory = Factory({"m": [f"<think>{SECRET}</think>Plain answer."]})
     orch = orchestrator(inventory(spec("m", roles=["generator"])), factory)
     result = await orch.chat(Role.GENERATOR, Tier.PRIVATE, [HumanMessage(content="q")])
-    assert result.text == "Plain answer."
+    assert result.text == "Plain answer." and result.thinking == SECRET
 
     streaming = Factory({})
     streaming.models["m"] = StreamModel(plays=[["<think>", SECRET, "</think>", "Streamed."]])  # type: ignore[assignment]
     orch = orchestrator(inventory(spec("m", roles=["generator"])), streaming)
     gen = StreamingGenerator(orch, idle_timeout_seconds=5)
-    parts = [t async for t in gen.stream(Tier.PRIVATE, [HumanMessage(content="q")], Generation())]
+    shown: list[str] = []
+    out = Generation()
+    stream = gen.stream(Tier.PRIVATE, [HumanMessage(content="q")], out, on_thinking=shown.append)
+    parts = [t async for t in stream]
     assert "".join(parts) == "Streamed." and all(SECRET not in p for p in parts)
+    assert "".join(shown) == SECRET and "".join(out.thinking) == SECRET
+    # Without a listener (the public channel) the thinking is simply not forwarded.
+    quiet = [t async for t in StreamingGenerator(orch).stream(Tier.PRIVATE, [], Generation())]
+    assert all(SECRET not in p for p in quiet)

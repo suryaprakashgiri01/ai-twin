@@ -15,7 +15,7 @@ from pydantic import BaseModel, ValidationError
 from tenacity.wait import wait_base
 
 from llm_orchestrator.cooloff import MissingModels
-from llm_orchestrator.executor import CallContext, Executor, usage_of
+from llm_orchestrator.executor import CallContext, Executor, thinking_of, usage_of
 from llm_orchestrator.gateway import Need
 from llm_orchestrator.hooks import exhausted
 from llm_orchestrator.inventory import Inventory
@@ -150,6 +150,7 @@ class Orchestrator:
                 attempts=ctx.attempts,
                 fallback_used=index > 0,
                 usage=usage_of(message),
+                thinking=thinking_of(message),
             )
         raise exhausted(role, tier, ctx.attempts)
 

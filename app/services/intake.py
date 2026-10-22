@@ -47,7 +47,7 @@ from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.memory import MemoryService
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook
+from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook, custom_event
 from llm_orchestrator import Orchestrator, OrchestratorError, Role
 
 logger = structlog.get_logger(__name__)
@@ -235,7 +235,7 @@ class IntakeService:
         ) as trace:
             try:
                 async for item in self._graph.astream(graph_input, config, stream_mode="custom"):
-                    yield "token", {"text": item["token"]}
+                    yield custom_event(item)
                 after = await self._graph.aget_state(config)
             except AppError as exc:
                 trace.tag("status:error")

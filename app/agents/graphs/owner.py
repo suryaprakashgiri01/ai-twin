@@ -244,6 +244,8 @@ class OwnerState(TypedDict, total=False):
     error: ErrorInfo | None
     input_tokens: int
     output_tokens: int
+    # A reasoning model's thinking: shown to the owner, never stored or part of the answer.
+    thinking: str
     # finalized
     seq: int
     latency_ms: float
@@ -536,6 +538,7 @@ class OwnerNodes:
             "error": error,
             "input_tokens": gen.input_tokens,
             "output_tokens": gen.output_tokens,
+            "thinking": "".join(gen.thinking),
         }
 
     async def _stream(
@@ -550,7 +553,14 @@ class OwnerNodes:
             model, prefer = choose(state, self.deps.models, plan.tier)
             need = await self._need(state, plan.tier)
             async for text in self.deps.generator.stream(
-                plan.tier, plan.messages, gen, model=model, prefer=prefer, need=need
+                plan.tier,
+                plan.messages,
+                gen,
+                model=model,
+                prefer=prefer,
+                need=need,
+                # Owner channels see the model's thinking as its own event, never in the answer.
+                on_thinking=lambda t: writer({"thinking": t}),
             ):
                 parts.append(text)
                 writer({"token": text})
