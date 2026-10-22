@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
-from scripts import models, ollama
+from scripts import models, models_check, ollama
 from scripts._common import (
     ENV_EXAMPLE,
     ENV_FILE,
@@ -169,6 +169,26 @@ def check_ollama(env: dict[str, str], api: ollama.Api | None = None) -> list[Fin
     return [Finding("ok", f"Ollama {version} with {', '.join(target.all_models)}")]
 
 
+def check_cloud_models() -> list[Finding]:
+    """Retired cloud model ids (make models-check has the full list); quiet when all is well."""
+    import httpx
+
+    from app.core.config import DEFAULT_MODEL_INVENTORY, Settings
+    from llm_orchestrator import Inventory
+
+    specs = list(Inventory.from_yaml(DEFAULT_MODEL_INVENTORY).models.values())
+    with httpx.Client() as client:
+        results = models_check.check(specs, Settings(), client)
+    missing = [r for r in results if r.status == "missing"]
+    if missing:
+        names = ", ".join(f"{r.model_id} ({r.provider_model})" for r in missing)
+        return [
+            Finding("warn", f"cloud model ids no longer served: {names}; run: make models-check")
+        ]
+    checked = sum(r.status == "ok" for r in results)
+    return [Finding("ok", f"{checked} cloud model id(s) confirmed live")] if checked else []
+
+
 def check_graphify() -> Finding:
     if shutil.which("graphify"):
         return Finding("ok", "graphify found")
@@ -210,6 +230,7 @@ def collect() -> list[Finding]:
     findings += check_ports(env, running)
     findings += check_ingestion_deps(env)
     findings += check_ollama(env)
+    findings += check_cloud_models()
     findings.append(check_graphify())
     if ctx := check_ollama_context(env):
         findings.append(ctx)

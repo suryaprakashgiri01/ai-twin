@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync models-check chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -53,6 +53,9 @@ keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
 
 seed: ## Fake-persona demo data via the API: dry run; ARGS="--apply" | "--remove --apply"
 	$(PY) scripts.seed $(ARGS)
+
+models-check: ## Are the cloud model ids in config/models.yaml still served? (ids only; keys never printed)
+	$(PY) scripts.models_check $(ARGS)
 
 kb-sync: ## Build/refresh the KB from vault/kb/manifest.yaml: dry run; ARGS="--apply" | "cards --apply" | "--reset --apply"
 	$(PY) scripts.kb_sync $(ARGS)

@@ -21,6 +21,7 @@ from langchain_core.runnables import RunnableConfig
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_random_exponential
 from tenacity.wait import wait_base
 
+from llm_orchestrator.cooloff import MissingModels
 from llm_orchestrator.hooks import AttemptEvent, notify_attempt
 from llm_orchestrator.providers import ModelFactory
 from llm_orchestrator.thinking import strip_thinking
@@ -124,6 +125,7 @@ class Executor:
         timeout_seconds: float,
         timeout_for: Callable[[ModelSpec], float] | None = None,
         wait: wait_base | None = None,
+        missing: MissingModels | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
@@ -133,6 +135,7 @@ class Executor:
         self._timeout = timeout_seconds
         self._timeout_for = timeout_for
         self._wait = wait or wait_random_exponential(multiplier=0.5, max=8)
+        self._missing = missing
 
     def model_for(self, spec: ModelSpec) -> BaseChatModel:
         """Build each model once; specs only change in enabled/max_tier, which policy reads."""
@@ -183,6 +186,8 @@ class Executor:
                 message = await model.ainvoke(list(messages), config=config, **kwargs)
         except Exception as exc:
             transient, status = classify_error(exc)
+            if self._missing is not None:
+                self._missing.note(spec, status)
             self._record(
                 spec,
                 ctx,

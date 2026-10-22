@@ -131,9 +131,9 @@ class StreamingGenerator:
             out.input_tokens += usage.get("input_tokens", 0)
             out.output_tokens += usage.get("output_tokens", 0)
 
-    @staticmethod
-    def _failed(ctx: CallContext, spec: ModelSpec, started: float, exc: Exception) -> None:
+    def _failed(self, ctx: CallContext, spec: ModelSpec, started: float, exc: Exception) -> None:
         transient, status = classify_error(exc)
+        self._orchestrator.missing.note(spec, status)
         attempt = Attempt(
             model_id=spec.id,
             number=1,

@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from pydantic import BaseModel, ValidationError
 from tenacity.wait import wait_base
 
+from llm_orchestrator.cooloff import MissingModels
 from llm_orchestrator.executor import CallContext, Executor, usage_of
 from llm_orchestrator.gateway import Need
 from llm_orchestrator.hooks import exhausted
@@ -65,12 +66,15 @@ class Orchestrator:
         self._settings = settings
         self._store = override_store
         self._factory = factory or default_factory(settings.secrets, settings.timeout_for)
+        # Models that answered 404 (a retired id, an Ollama model not pulled) sit out a while.
+        self.missing = MissingModels()
         self._executor = Executor(
             self._factory,
             max_attempts=settings.max_attempts,
             timeout_seconds=settings.timeout_seconds,
             timeout_for=settings.timeout_for,
             wait=wait,
+            missing=self.missing,
         )
 
     def timeout_for(self, spec: ModelSpec) -> float:
@@ -94,7 +98,7 @@ class Orchestrator:
         return self._inventory
 
     def _available(self, spec: ModelSpec) -> bool:
-        return is_available(spec, self._settings.secrets)
+        return is_available(spec, self._settings.secrets) and not self.missing.cooling(spec.id)
 
     async def select(
         self,
