@@ -42,7 +42,13 @@ from app.exceptions import ErrorCode
 from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import Hit
-from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.conversations import (
+    ConversationRef,
+    ConversationService,
+    Turn,
+    TurnTrace,
+    trace_sources,
+)
 from llm_orchestrator import (
     NoEligibleModelError,
     Orchestrator,
@@ -438,6 +444,13 @@ class PrepNodes:
                 citations=[s.document_id for s in state.get("sources", [])],
                 incomplete=state.get("error") is not None,
                 withheld=state.get("withheld", 0),
+                trace=TurnTrace(
+                    agents=["prep"],
+                    models=[m for m in [state.get("model_id")] if m],
+                    tier=state["tier"].label,
+                    sources=trace_sources(state.get("sources", [])),
+                    thinking=str(state.get("thinking") or ""),
+                ).capped(),
             ),
         )
         _step("finalize", started, seq=assistant.seq)

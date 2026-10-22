@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
@@ -38,10 +38,74 @@ CACHE_TTL: dict[Channel, timedelta] = {
 # Shutdown waits this long for background writes.
 DRAIN_SECONDS = 5.0
 
+# The most of a turn's reasoning kept in its trace (the rest is cut, marked as cut).
+TRACE_THINKING_MAX = 20_000
+_CUT = "\n[… reasoning cut]"
+
 
 def _to_millis(value: datetime) -> datetime:
     """MongoDB keeps milliseconds; truncating up front keeps cache and database copies equal."""
     return value.replace(microsecond=value.microsecond // 1000 * 1000)
+
+
+def cap_thinking(text: str, budget: int = TRACE_THINKING_MAX) -> str:
+    text = text.strip()
+    return text if len(text) <= budget else text[: max(0, budget - len(_CUT))] + _CUT
+
+
+class TraceStep(ApiModel):
+    """One agent step of a super-agent turn, with that step's own reasoning."""
+
+    agent: str
+    status: str = "done"
+    model: str | None = None
+    tier: str | None = None
+    action: str | None = None
+    thinking: str = ""
+
+
+class TraceSource(ApiModel):
+    index: int
+    document_id: str
+    title: str
+
+
+class Cited(Protocol):
+    index: int
+    document_id: str
+    title: str
+
+
+def trace_sources(sources: Sequence[Cited]) -> list[TraceSource]:
+    return [TraceSource(index=s.index, document_id=s.document_id, title=s.title) for s in sources]
+
+
+class TurnTrace(ApiModel):
+    """How an owner answer was made, for the console to replay: the agents and steps, the
+    models, the tier, the sources and the model's reasoning. Owner channels only, never public.
+
+    Stored with the message in MongoDB and returned with the conversation; kept out of the
+    Redis history and out of every prompt. Reasoning is capped at `TRACE_THINKING_MAX` per turn,
+    shared across steps in order.
+    """
+
+    agents: list[str] = Field(default_factory=list)
+    steps: list[TraceStep] = Field(default_factory=list)
+    models: list[str] = Field(default_factory=list)
+    tier: str | None = None
+    sources: list[TraceSource] = Field(default_factory=list)
+    thinking: str = ""
+
+    def capped(self) -> TurnTrace:
+        budget = TRACE_THINKING_MAX
+        thinking = cap_thinking(self.thinking, budget)
+        budget -= len(thinking)
+        steps = []
+        for step in self.steps:
+            kept = cap_thinking(step.thinking, budget) if budget > len(_CUT) else ""
+            budget -= len(kept)
+            steps.append(step.model_copy(update={"thinking": kept}))
+        return self.model_copy(update={"thinking": thinking, "steps": steps})
 
 
 class Turn(ApiModel):
@@ -65,12 +129,18 @@ class Turn(ApiModel):
     withheld: int = 0
     # Public answers served from the answer cache.
     cache_hit: bool = False
+    # Owner answers only: how the answer was made (see `TurnTrace`).
+    trace: TurnTrace | None = None
     created_at: datetime = Field(default_factory=lambda: _to_millis(utcnow()))
 
     @field_validator("created_at")
     @classmethod
     def _millis(cls, value: datetime) -> datetime:
         return _to_millis(value)
+
+
+# What history (Redis and the reload from MongoDB) carries: everything but the trace.
+HISTORY_FIELDS = set(Turn.model_fields) - {"trace"}
 
 
 @dataclass(frozen=True)
@@ -148,8 +218,9 @@ class MongoConversationStore:
             .limit(limit)
             .to_list()
         )
-        fields = set(Turn.model_fields)
-        turns = [Turn.model_validate(m.model_dump(include=fields)) for m in reversed(messages)]
+        turns = [
+            Turn.model_validate(m.model_dump(include=HISTORY_FIELDS)) for m in reversed(messages)
+        ]
         return StoredConversation(channel=conversation.channel, turns=turns)
 
 
@@ -209,7 +280,8 @@ class ConversationService:
         stamped = turn.model_copy(update={"seq": seq})
         ttl = CACHE_TTL[conversation.channel]
         async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.rpush(list_key, stamped.model_dump_json())
+            # The trace is for the console, not for prompts: only MongoDB keeps it.
+            pipe.rpush(list_key, stamped.model_dump_json(exclude={"trace"}))
             pipe.ltrim(list_key, -self._cache_turns, -1)
             pipe.expire(list_key, ttl)
             pipe.expire(seq_key, ttl)

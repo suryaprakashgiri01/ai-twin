@@ -48,7 +48,13 @@ from app.exceptions import ErrorCode
 from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import Hit, SearchFilters
-from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.conversations import (
+    ConversationRef,
+    ConversationService,
+    Turn,
+    TurnTrace,
+    trace_sources,
+)
 from llm_orchestrator import (
     Need,
     NoEligibleModelError,
@@ -244,7 +250,8 @@ class OwnerState(TypedDict, total=False):
     error: ErrorInfo | None
     input_tokens: int
     output_tokens: int
-    # A reasoning model's thinking: shown to the owner, never stored or part of the answer.
+    # A reasoning model's thinking: shown to the owner and kept in the owner trace (capped);
+    # never part of the answer.
     thinking: str
     # finalized
     seq: int
@@ -699,10 +706,22 @@ class OwnerNodes:
                 citations=[s.document_id for s in state.get("sources", [])],
                 incomplete=state.get("incomplete", False),
                 withheld=state.get("withheld", 0),
+                trace=_trace(state),
             ),
         )
         _step("finalize", started, seq=assistant.seq, incomplete=assistant.incomplete)
         return {"seq": assistant.seq, "latency_ms": latency}
+
+
+def _trace(state: OwnerState) -> TurnTrace:
+    model = state.get("model_id")
+    return TurnTrace(
+        agents=["ask"],
+        models=[model] if model else [],
+        tier=_label(state["tier"]),
+        sources=trace_sources(state.get("sources", [])),
+        thinking=str(state.get("thinking") or ""),
+    ).capped()
 
 
 def _merge(first: list[Hit], second: list[Hit], limit: int) -> list[Hit]:

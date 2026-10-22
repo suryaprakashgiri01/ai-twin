@@ -37,7 +37,10 @@ class MemoryConversationStore:
         meta = self.conversations.get(conversation_id)
         if meta is None or meta.get("deleted_at") is not None:
             return None
-        turns = [t for _, t in sorted(self.turns.get(conversation_id, {}).items())]
+        turns = [
+            t.model_copy(update={"trace": None})
+            for _, t in sorted(self.turns.get(conversation_id, {}).items())
+        ]
         return StoredConversation(channel=meta["channel"], turns=turns[-limit:])
 
     async def soft_delete(self, conversation_id: str, at: datetime) -> bool:

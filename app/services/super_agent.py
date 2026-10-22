@@ -56,7 +56,14 @@ from app.db.documents import ConversationMode, utcnow
 from app.exceptions import AppError, ErrorCode
 from app.kb.retrieval.context import Source
 from app.observability.tracing import tracing
-from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.conversations import (
+    ConversationRef,
+    ConversationService,
+    TraceStep,
+    Turn,
+    TurnTrace,
+    trace_sources,
+)
 from app.services.intake import AssistantRequest, IntakeIndex, IntakeService
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
 from app.services.owner_chat import TurnHook
@@ -167,7 +174,7 @@ class StepResult:
     # An intake step that wrote something (not a draft waiting, not a chat reply).
     saved: bool = False
     waiting: Waiting = None
-    # The model's thinking for this step (owner-only event; never stored).
+    # The model's thinking for this step: an owner-only event, and kept in the owner trace.
     thinking: str = ""
 
     def summary(self) -> dict[str, Any]:
@@ -503,6 +510,7 @@ class SuperAgent:
                 citations=[s.document_id for s in sources],
                 incomplete=any(r.error for r in results),
                 guards=guards,
+                trace=_trace(results, sources, tier),
             ),
         )
         return stored.seq
@@ -531,6 +539,18 @@ def compose(results: list[StepResult]) -> str:
             heading = "Waiting for your answer" if r.pending else "Not saved"
         blocks.append(f"**{heading}**\n{r.text}" if heading else r.text)
     return "\n\n".join(blocks) or "Nothing to do."
+
+
+def _trace(results: list[StepResult], sources: list[Source], tier: Tier) -> TurnTrace:
+    """Each step with its own reasoning, so the console can show it under that step."""
+    steps = [TraceStep(**r.summary(), thinking=r.thinking) for r in results]
+    return TurnTrace(
+        agents=[r.agent for r in results],
+        steps=steps,
+        models=sorted({r.model for r in results if r.model}),
+        tier=tier.label,
+        sources=trace_sources(sources),
+    ).capped()
 
 
 def _sources(results: list[StepResult]) -> list[Source]:

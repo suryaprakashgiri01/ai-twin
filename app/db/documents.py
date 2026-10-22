@@ -466,6 +466,8 @@ class Message(Document):
     withheld: int = 0
     # A public answer served from the answer cache.
     cache_hit: bool = False
+    # Owner answers only: agents, steps, models, sources and capped reasoning (`TurnTrace`).
+    trace: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime | None = None
 

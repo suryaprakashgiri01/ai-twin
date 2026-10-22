@@ -212,6 +212,10 @@ async def test_follow_up_and_conversation_routes(api: ChatApi) -> None:
     turns = result(detail)["turns"]
     assert [t["role"] for t in turns] == ["user", "assistant", "user", "assistant"]
     assert turns[1]["citations"] == ["priv"] and turns[1]["route"] == "kb_search"
+    trace = turns[1]["trace"]  # the console replays how the answer was made
+    assert trace["agents"] == ["ask"] and trace["models"] == ["cloud"]
+    assert trace["sources"][0] == {"index": 1, "documentId": "priv", "title": "Doc priv"}
+    assert turns[0]["trace"] is None
 
 
 async def test_history_reloads_after_a_redis_flush(api: ChatApi) -> None:
