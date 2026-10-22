@@ -2,7 +2,8 @@
 // conversation replays each answer's stored trace (steps, models, sources and reasoning).
 
 import { api, isOwner, rows } from "../api.js";
-import { badge, clear, h, select, toast } from "../dom.js";
+import { badge, clear, h, iconButton, select, toast } from "../dom.js";
+import { icon } from "../icons.js";
 import { markdown } from "../markdown.js";
 import { refresh, setActive, titleOf } from "../sidebar.js";
 
@@ -28,6 +29,7 @@ const AGENTS = {
     starters: ["What does he build?", "What is his experience with AI systems?", "How can I get in touch?"] },
 };
 const MODE_AGENT = { ask: "ask", prep: "prep", intake: "intake", super: "super" };
+const NEEDS = { "not pulled": "needs install", "no key": "no API key", unreachable: "unreachable", missing: "id retired" };
 
 const chat = { agent: "super", model: "", conversation: null, readOnly: false, controller: null };
 let els = {};
@@ -38,15 +40,21 @@ export async function mount(root) {
   const agentPick = select(available().map((a) => [a, AGENTS[a].label]), chat.agent, { "aria-label": "Agent", on: { change: (e) => switchAgent(e.target.value) } });
   const modelPick = select([["", "Auto"]], "", { "aria-label": "Model", on: { change: (e) => { chat.model = e.target.value; } } });
   const input = h("textarea", { rows: 2, placeholder: "Message…", "aria-label": "Message", on: { keydown: onKey } });
-  const send = h("button", { class: "btn btn-primary", type: "submit", text: "Send" });
-  const stop = h("button", { class: "btn", type: "button", text: "Stop", hidden: true, on: { click: () => chat.controller?.abort() } });
+  const send = iconButton(icon("send", { size: 18 }), "Send (Enter)", null, { cls: "send-btn", type: "submit" });
+  const stop = iconButton(icon("stop", { size: 16 }), "Stop", () => chat.controller?.abort(), { cls: "stop-btn" });
+  stop.hidden = true;
+  const save = isOwner()
+    ? iconButton(icon("star", { size: 16 }), "Save this message as a quick start", () => saveStarter(), { cls: "btn-ghost save-starter" })
+    : null;
+  const newest = iconButton(icon("down", { size: 16 }), "Jump to the newest message", () => toBottom(true), { cls: "jump-newest", text: "Newest" });
+  newest.hidden = true;
   els = {
-    agentPick, modelPick, input, send, stop,
+    agentPick, modelPick, input, send, stop, newest,
     head: h("div", { class: "chat-head" }),
-    log: h("div", { class: "chat-log", "aria-live": "polite" }),
+    log: h("div", { class: "chat-log", "aria-live": "polite", on: { scroll: () => { newest.hidden = atBottom(); } } }),
     composer: h("form", { class: "composer", on: { submit: (e) => { e.preventDefault(); sendMessage(input.value); } } },
-      input, h("div", { class: "composer-actions" }, stop, send)),
-    settings: h("span", { class: "muted small" }),
+      h("div", { class: "composer-box" }, input, h("div", { class: "composer-actions" }, save, stop, send))),
+    settings: h("span", { class: "muted small agent-default" }),
   };
   clear(root,
     h("div", { class: "chat" },
@@ -54,7 +62,7 @@ export async function mount(root) {
         h("label", { class: "inline" }, h("span", { text: "Agent" }), agentPick),
         isOwner() ? h("label", { class: "inline" }, h("span", { text: "Model" }), modelPick) : null,
         els.settings),
-      els.head, els.log, els.composer));
+      els.head, h("div", { class: "log-wrap" }, els.log, newest), els.composer));
   if (isOwner()) await loadModels();
   fresh();
 }
@@ -66,13 +74,15 @@ function available() {
 async function loadModels() {
   const r = await api.get("/admin/v1/models");
   models = rows(r).filter((m) => m.status !== "disabled" && m.roles.includes("generator"));
-  // Only active models can be pinned; the rest show why (needs install, no key, unreachable).
+  // Only active models can be pinned; the rest come last, each with what it needs.
+  const label = (m) => `${m.id} · ${m.local ? "local" : m.provider} · ≤${m.maxTier}`;
+  const ready = models.filter((m) => m.status === "active");
+  const blocked = models.filter((m) => m.status !== "active");
   clear(els.modelPick, h("option", { value: "", text: "Auto (gateway picks)" }),
-    models.map((m) => h("option", {
-      value: m.id,
-      disabled: m.status !== "active",
-      text: `${m.id} · ${m.local ? "local" : m.provider} · ≤${m.maxTier}${m.status === "active" ? "" : ` · ${m.status === "not pulled" ? "needs install" : m.status}`}`,
-    })));
+    h("optgroup", { label: "Available" }, ready.map((m) => h("option", { value: m.id, text: label(m) }))),
+    blocked.length ? h("optgroup", { label: "Needs setup" }, blocked.map((m) => h("option", {
+      value: m.id, disabled: true, text: `${label(m)} — ${NEEDS[m.status] || m.status}`,
+    }))) : null);
   els.modelPick.value = chat.model;
 }
 
@@ -102,11 +112,47 @@ export function fresh() {
   els.agentPick.disabled = false;
   const agent = AGENTS[chat.agent];
   clear(els.head, h("div", { class: "chat-title", text: `New ${agent.label} chat` }), h("div", { class: "muted small", text: agent.hint }));
+  els.starters = h("div", { class: "starter-list" });
   clear(els.log, h("div", { class: "starters" },
-    h("div", { class: "muted small", text: "Try one:" }),
-    agent.starters.map((s) => h("button", { class: "chip", type: "button", text: s, on: { click: () => sendMessage(s) } }))));
+    h("div", { class: "starters-title" }, icon("sparkles", { size: 15 }), h("span", { text: "Quick starts" }),
+      h("span", { class: "muted small", text: " · click one to edit it, then send" })),
+    els.starters));
+  renderStarters(agent.starters, []);
+  if (isOwner()) loadStarters();
   showSettings();
   els.input.focus();
+}
+
+// --- quick starts: built-in ones plus the owner's saved ones (stored per agent) ---------------
+
+async function loadStarters() {
+  const agent = chat.agent;
+  const r = await api.get("/admin/v1/starters", { agent });
+  if (r.ok && agent === chat.agent && !chat.conversation) renderStarters(AGENTS[agent].starters, rows(r));
+}
+
+function renderStarters(builtIn, saved) {
+  if (!els.starters) return;
+  const use = (text) => { els.input.value = text; els.input.focus(); els.input.setSelectionRange(text.length, text.length); };
+  clear(els.starters,
+    saved.map((s) => h("span", { class: "chip starter saved" },
+      h("button", { class: "chip-main", type: "button", title: "Put it in the message box", on: { click: () => use(s.text) } }, icon("star", { size: 12 }), h("span", { text: s.text })),
+      h("button", { class: "chip-x", type: "button", title: "Delete this quick start", "aria-label": "Delete this quick start", on: { click: () => deleteStarter(s) } }, icon("x", { size: 12 })))),
+    builtIn.map((text) => h("button", { class: "chip starter", type: "button", title: "Put it in the message box", text, on: { click: () => use(text) } })));
+}
+
+async function saveStarter() {
+  const text = els.input.value.trim();
+  if (!text) { toast("Type the message to save first"); return; }
+  const r = await api.post("/admin/v1/starters", { agent: chat.agent, text });
+  toast(r.ok ? "Saved as a quick start" : `Not saved: ${r.error?.code} ${r.message}`);
+  if (r.ok && !chat.conversation) loadStarters();
+}
+
+async function deleteStarter(s) {
+  const r = await api.del(`/admin/v1/starters/${s.id}`);
+  toast(r.ok ? "Quick start deleted" : `Delete failed: ${r.error?.code}`);
+  if (r.ok) loadStarters();
 }
 
 function onKey(event) {
@@ -134,7 +180,7 @@ export async function open(c) {
   setActive(detail.id);
   clear(els.head,
     h("div", { class: "chat-title", text: titleOf(detail) }),
-    h("div", { class: "muted small" }, badge(detail.channel === "public" ? "public" : `owner·${detail.mode}`, detail.channel === "public" ? "warn" : "info"),
+    h("div", { class: "muted small chat-sub" }, channelTag(detail),
       ` ${detail.messageCount} messages`, chat.readOnly ? " · a visitor's chat, read-only" : "",
       detail.summary ? h("details", { class: "summary" }, h("summary", { text: "Summary" }), h("p", { text: detail.summary })) : null));
   clear(els.log);
@@ -142,8 +188,14 @@ export async function open(c) {
     if (turn.role === "user") els.log.append(userBubble(turn.content));
     else els.log.append(storedAnswer(turn));
   }
-  els.log.scrollTop = els.log.scrollHeight;
+  toBottom(true);
   showSettings();
+}
+
+export function channelTag(c) {
+  const visitor = c.channel === "public";
+  return h("span", { class: `channel-tag ${visitor ? "visitor" : "owner"}`, title: visitor ? "A visitor's chat (public)" : "Your chat" },
+    icon(visitor ? "globe" : "user", { size: 12 }), h("span", { text: visitor ? "visitor" : c.mode || "ask" }));
 }
 
 function storedAnswer(turn) {
@@ -160,11 +212,10 @@ function storedAnswer(turn) {
   view.answer(turn.content);
   const sources = trace?.sources?.length ? trace.sources : (turn.citations || []).map((id, n) => ({ index: n + 1, documentId: id, title: id }));
   view.sources(sources);
-  view.footer([
-    turn.model && `model ${turn.model}`, turn.maxTier && `tier ${turn.maxTier}`,
-    turn.route && `route ${turn.route}`, turn.latencyMs && `${Math.round(turn.latencyMs)} ms`,
-    turn.incomplete && "incomplete", turn.withheld && `${turn.withheld} withheld`, turn.cacheHit && "cached",
-  ]);
+  view.footer({
+    model: turn.model, tier: turn.maxTier, route: turn.route, ms: turn.latencyMs,
+    tokens: trace?.outputTokens, incomplete: turn.incomplete, withheld: turn.withheld, cached: turn.cacheHit,
+  });
   return view.el;
 }
 
@@ -230,9 +281,19 @@ function replyTo(agent, reply) {
   run(agent, { message: reply, conversationId: chat.conversation }, next);
 }
 
+function atBottom() {
+  return els.log.scrollHeight - els.log.scrollTop - els.log.clientHeight < 160;
+}
+
+// Follow the stream while the reader is at the bottom; otherwise offer "Newest".
 function scroll() {
-  const nearBottom = els.log.scrollHeight - els.log.scrollTop - els.log.clientHeight < 160;
-  if (nearBottom) els.log.scrollTop = els.log.scrollHeight;
+  if (atBottom()) toBottom(false);
+  else els.newest.hidden = false;
+}
+
+function toBottom(smooth) {
+  els.log.scrollTo({ top: els.log.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  els.newest.hidden = true;
 }
 
 function userBubble(text) {
@@ -308,7 +369,7 @@ function answerView({ live = false } = {}) {
       if (text) setStatus("Answering…");
     },
     sources(list) {
-      clear(chips, list.map((s) => h("span", { class: "chip source", dataset: { n: String(s.index) }, title: [s.category, s.tier, s.documentId].filter(Boolean).join(" · "), text: `[${s.index}] ${s.title || s.documentId}` })));
+      clear(chips, sourceGroups(list));
       chips.hidden = !list.length;
     },
     draft(data, reply) {
@@ -326,21 +387,73 @@ function answerView({ live = false } = {}) {
     done(data, ms) {
       if (data.checks?.length) extras.append(h("div", { class: "note" }, h("strong", { text: "Check before sending" }), h("ul", {}, data.checks.map((c) => h("li", { text: c })))));
       if (data.removed?.length) extras.append(h("div", { class: "note" }, h("strong", { text: "Internal details removed" }), h("ul", {}, data.removed.map((c) => h("li", { text: c })))));
-      this.footer([data.model && `model ${data.model}`, data.tier && `tier ${data.tier}`,
-        data.route && `route ${data.route}`, `${data.latencyMs ? Math.round(data.latencyMs) : ms} ms`,
-        data.withheld && `${data.withheld} withheld`, data.incomplete && "incomplete", data.pending && "waiting for your reply",
-        data.cacheHit && "cached"]);
+      this.footer({
+        model: data.model, tier: data.tier, route: data.route, ms: data.latencyMs || ms, tokens: data.tokens?.output,
+        withheld: data.withheld, incomplete: data.incomplete, pending: data.pending, cached: data.cacheHit,
+      });
     },
     error(data) {
       extras.append(h("div", { class: "error-line", text: `${data.code}: ${data.message}` }));
     },
-    footer(parts) { footer.textContent = parts.filter(Boolean).join(" · "); },
+    footer(m) {
+      const chip = (name, text, title, tone = "") => h("span", { class: `meta-chip ${tone}`, title }, icon(name, { size: 12 }), h("span", { text }));
+      clear(footer,
+        m.model ? chip("cpu", m.model, "Model") : null,
+        m.tier ? chip("shield", m.tier, "Highest tier the answer read") : null,
+        m.route ? chip("route", m.route, "Route") : null,
+        m.ms ? chip("clock", m.ms >= 1000 ? `${(m.ms / 1000).toFixed(1)} s` : `${Math.round(m.ms)} ms`, "Time taken") : null,
+        m.tokens ? chip("hash", `${m.tokens.toLocaleString()} tokens`, "Output tokens") : null,
+        m.withheld ? chip("lock", `${m.withheld} withheld`, "Sources no eligible model could read", "warn") : null,
+        m.incomplete ? chip("alert", "incomplete", "The model stopped mid-answer", "err") : null,
+        m.pending ? chip("bell", "waiting for your reply", "", "warn") : null,
+        m.cached ? chip("check", "cached", "Served from the answer cache") : null);
+    },
     finish() {
       status.hidden = true;
       reasoningBox?.finish();
       for (const item of stepItems.values()) item.finish();
     },
   };
+}
+
+// --- sources, grouped by kind -------------------------------------------------------------------
+
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const PROFILE = new Set(["resume", "experience", "education", "certification", "skill", "profile-link", "persona", "achievement", "testimonial", "marksheet"]);
+const NOTES = new Set(["work-note", "blog", "learning", "interview", "interview-questions", "common-questions", "question-bank", "hr-call"]);
+const KINDS = [
+  ["repo", "GitHub repositories", "github"],
+  ["work", "Work projects", "briefcase"],
+  ["profile", "Profile & resume", "user"],
+  ["notes", "Notes", "book"],
+  ["doc", "Documents", "file"],
+];
+
+function kindOf(s) {
+  if (REPO.test(s.title || "")) return "repo";
+  if (s.category === "company-projects" || s.category === "company-details") return "work";
+  if (PROFILE.has(s.category)) return "profile";
+  if (NOTES.has(s.category)) return "notes";
+  return "doc";
+}
+
+function sourceGroups(list) {
+  const seen = new Map();
+  for (const s of list) seen.set(s.title, (seen.get(s.title) || 0) + 1);
+  return KINDS.map(([kind, label, name]) => {
+    const items = list.filter((s) => kindOf(s) === kind);
+    if (!items.length) return null;
+    return h("div", { class: "source-group" },
+      h("div", { class: "source-group-title" }, icon(name, { size: 13 }), h("span", { text: `${label} · ${items.length}` })),
+      h("div", { class: "chips" }, items.map((s) => {
+        // Redacted titles repeat ("[PERSON]"): add the category and a short id so they differ.
+        const twin = (seen.get(s.title) || 0) > 1;
+        const detail = twin ? [s.category, `#${String(s.documentId).slice(-6)}`].filter(Boolean).join(" · ") : null;
+        return h("span", { class: "chip source", dataset: { n: String(s.index) }, title: [s.category, s.tier, s.documentId].filter(Boolean).join(" · ") },
+          h("span", { class: "source-n", text: String(s.index) }), icon(name, { size: 12 }),
+          h("span", { text: s.title || s.documentId }), detail ? h("span", { class: "muted small", text: ` ${detail}` }) : null);
+      })));
+  });
 }
 
 // A reasoning item: the first lines, and the whole of it on click. Live, it follows the stream.

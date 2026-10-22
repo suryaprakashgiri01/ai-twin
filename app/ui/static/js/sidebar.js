@@ -3,10 +3,14 @@
 
 import { api, isOwner, rows } from "./api.js";
 import { clear, h, toast } from "./dom.js";
+import { icon } from "./icons.js";
 
 const PAGE = 200;
 let all = [];
 let filter = "";
+let quick = "all";
+// Quick filters: who the chat is with, or which agent ran it.
+const QUICK = [["all", "All"], ["owner", "Mine"], ["visitor", "Visitors"], ["super", "Super"], ["ask", "Ask"], ["prep", "Prep"], ["intake", "Intake"]];
 let activeId = null;
 let handlers = { open: () => {}, fresh: () => {} };
 let listEl;
@@ -30,10 +34,19 @@ export function setupSidebar(root, { open, fresh }) {
   const search = h("input", { type: "search", placeholder: "Search chats", "aria-label": "Search chats",
     on: { input: (e) => { filter = e.target.value.trim().toLowerCase(); render(); } } });
   listEl = h("nav", { class: "history", "aria-label": "Conversation history" });
+  const chips = isOwner()
+    ? h("div", { class: "quick-filters", role: "group", "aria-label": "Filter history" }, QUICK.map(([key, label]) =>
+      h("button", { class: "qf", type: "button", dataset: { key }, "aria-pressed": String(key === quick), text: label, on: { click: (e) => {
+        quick = key;
+        for (const b of e.target.parentNode.children) b.setAttribute("aria-pressed", String(b.dataset.key === key));
+        render();
+      } } })))
+    : null;
   clear(root,
     h("div", { class: "side-head" },
-      h("button", { class: "btn btn-primary new-chat", type: "button", text: "+ New chat", on: { click: () => handlers.fresh() } }),
-      search),
+      h("button", { class: "btn btn-primary new-chat", type: "button", on: { click: () => handlers.fresh() } }, icon("plus", { size: 16 }), h("span", { text: "New chat" })),
+      h("div", { class: "search-box" }, icon("search", { size: 14 }), search),
+      chips),
     listEl);
 }
 
@@ -67,7 +80,11 @@ function bucket(iso, now) {
 
 function render() {
   const now = new Date();
-  const shown = all.filter((c) => !filter || `${titleOf(c)} ${c.name || ""} ${tagOf(c)}`.toLowerCase().includes(filter));
+  const matchesQuick = (c) => quick === "all"
+    || (quick === "owner" && c.channel !== "public")
+    || (quick === "visitor" && c.channel === "public")
+    || (c.channel !== "public" && (c.mode || "ask") === quick);
+  const shown = all.filter((c) => matchesQuick(c) && (!filter || `${titleOf(c)} ${c.name || ""} ${tagOf(c)}`.toLowerCase().includes(filter)));
   if (!shown.length) {
     clear(listEl, h("div", { class: "muted small pad", text: filter ? "No chat matches." : "No conversations yet." }));
     return;
@@ -89,10 +106,11 @@ function row(c) {
   const title = h("span", { class: "conv-title", text: titleOf(c), title: c.name || "" });
   const el = h("div", { class: "conv", dataset: { id: c.id } },
     h("button", { class: "conv-open", type: "button", "aria-label": `${titleOf(c)} (${tagOf(c)})`, on: { click: () => handlers.open(c) } },
-      title, h("span", { class: `tag tag-${c.channel}`, text: tagOf(c) })),
+      title, h("span", { class: `tag tag-${c.channel}`, title: c.channel === "public" ? "A visitor's chat" : "Your chat" },
+        icon(c.channel === "public" ? "globe" : "user", { size: 11 }), h("span", { text: c.channel === "public" ? "visitor" : c.mode || "ask" }))),
     readOnly ? null : h("div", { class: "conv-actions" },
-      h("button", { class: "icon", type: "button", title: "Rename", "aria-label": "Rename", text: "✎", on: { click: () => rename(c, el, title) } }),
-      h("button", { class: "icon danger", type: "button", title: "Delete", "aria-label": "Delete", text: "🗑", on: { click: () => remove(c) } })));
+      h("button", { class: "icon edit", type: "button", title: "Rename", "aria-label": "Rename", on: { click: () => rename(c, el, title) } }, icon("edit", { size: 14 })),
+      h("button", { class: "icon danger", type: "button", title: "Delete", "aria-label": "Delete", on: { click: () => remove(c) } }, icon("trash", { size: 14 }))));
   return el;
 }
 
