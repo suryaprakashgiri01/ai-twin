@@ -1,8 +1,9 @@
-"""Chat with the vault from the terminal: `python -m scripts.chat [list|new|twin|continue|rename]`.
+"""Chat with the vault from the terminal: `python -m scripts.chat [list|new|twin|prep|...]`.
 
   list [--limit N]                         your conversations: name, mode, id, updated, turns, ...
   new                                      ask the vault questions (the default)
   twin                                     add knowledge in plain language (intake assistant)
+  prep                                     interview and application answers in your voice
   continue <name|id>                       recap the last turns, then keep going in that mode
                                            (an intake conversation resumes at its pending draft)
   rename <name|id> <new-name> [--description TEXT]
@@ -214,9 +215,13 @@ class Api:
         return result
 
     def chat(
-        self, message: str, conversation_id: str | None, path: str = "/chat"
+        self,
+        message: str,
+        conversation_id: str | None,
+        path: str = "/chat",
+        extra: dict[str, Any] | None = None,
     ) -> Iterator[tuple[str, dict[str, Any]]]:
-        body: dict[str, Any] = {"message": message}
+        body: dict[str, Any] = {"message": message, **(extra or {})}
         if conversation_id:
             body["conversationId"] = conversation_id
         try:
@@ -289,6 +294,21 @@ INTAKE_INTRO = (
     "approve, publish, unpublish, relabel or delete documents · answer questions.",
     'Try: "I had a technical round 2 with Acme yesterday for an AI Engineer role"',
 )
+PREP_INTRO = (
+    "Paste an interview or application question; I answer as you, in the first person, from "
+    "your vault. Internal names, ticket keys, cache keys, topics and internal links are "
+    "rewritten before you see the answer, and listed.",
+    "Types: behavioural (STAR), scenario (step by step + your examples), application (form "
+    "field), pitch (tell me about yourself), project. Numbers your sources don't give become "
+    "[add metric].",
+    'Try: "Tell us about the most challenging technical project you led" · /words 150 then a '
+    "form question",
+)
+PREP_COMMANDS = (
+    "Prep commands: /shorter · /longer · /variant (rewrite the last answer) · /words N · "
+    "/chars N · /limit off · /mode behavioural|scenario|application|pitch|project|auto"
+)
+PREP_KINDS = ("behavioural", "scenario", "application", "pitch", "project")
 COMMANDS = (
     "Commands: /remember <text> (followed from your next message) · /memory (what I remember) · "
     "/exit (or Ctrl+C) leaves; the conversation is kept for make chat-continue."
@@ -309,11 +329,12 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
 
     It also proves the API answers and the key works before you type anything."""
     who = api.whoami()
-    title = "intake assistant" if mode == "intake" else "owner chat"
+    title = {"intake": "intake assistant", "prep": "interview prep"}.get(mode, "owner chat")
     print(paint(f"━━ ai-twin · {title} ━━", "bold"))
     print(paint(f'API {api.version()} at {api.base_url} · key "{who.get("name", "?")}"', "dim"))
     if conversation is None:
-        for line in INTAKE_INTRO if mode == "intake" else ASK_INTRO:
+        intro = {"intake": INTAKE_INTRO, "prep": PREP_INTRO}.get(mode, ASK_INTRO)
+        for line in intro:
             print(line)
     else:
         print(
@@ -338,6 +359,8 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
                 "dim",
             )
         )
+    if mode == "prep":
+        print(paint(PREP_COMMANDS, "dim"))
     print(paint(COMMANDS, "dim"))
 
 
@@ -385,6 +408,75 @@ def _show_answer_event(event: str, data: dict[str, Any]) -> None:
     elif event == "error":
         print()
         warn(f"{data.get('code')}: {data.get('message')}")
+
+
+@dataclass
+class PrepOptions:
+    kind: str | None = None
+    words: int | None = None
+    chars: int | None = None
+
+    def body(self) -> dict[str, Any]:
+        found = {"kind": self.kind, "words": self.words, "chars": self.chars}
+        return {k: v for k, v in found.items() if v is not None}
+
+
+def prep(
+    api: Api,
+    message: str,
+    conversation_id: str | None,
+    options: PrepOptions,
+    revise: str | None = None,
+) -> str | None:
+    """One prep answer: the text, then sources, removed details and checks."""
+    extra = options.body() | ({"revise": revise} if revise else {})
+    with _thinking(ASK_PHRASES) as thinking:
+        for event, data in api.chat(message, conversation_id, path="/prep", extra=extra):
+            conversation_id = data.get("conversationId", conversation_id)
+            if event in ("token", "sources", "done", "error"):
+                thinking.stop()
+            _show_prep_event(event, data)
+    return conversation_id
+
+
+def _show_prep_event(event: str, data: dict[str, Any]) -> None:
+    if event == "meta":
+        print(paint(f"  ({data.get('kind')})", "dim"))
+    elif event == "done":
+        for line in data.get("removed") or []:
+            print(paint(f"  internal detail removed: {line}", "yellow"))
+        for line in data.get("checks") or []:
+            print(paint(f"  check before sending: {line}", "yellow"))
+        print(_done_line(data))
+    else:
+        _show_answer_event(event, data)
+        if event == "token":
+            print()
+
+
+def prep_command(message: str, options: PrepOptions) -> tuple[bool, str | None]:
+    """(handled, revise) for a /command; revise is shorter, longer or variant."""
+    command, _, rest = message.partition(" ")
+    value = rest.strip()
+    if command in ("/shorter", "/longer", "/variant"):
+        return True, command[1:]
+    if command in ("/words", "/chars") and value.isdigit():
+        setattr(options, command[1:], int(value))
+        setattr(options, "chars" if command == "/words" else "words", None)
+        ok(f"Limit: {value} {command[1:]}")
+        return True, None
+    if command == "/limit" and value == "off":
+        options.words = options.chars = None
+        ok("No length limit")
+        return True, None
+    if command == "/mode" and value in (*PREP_KINDS, "auto"):
+        options.kind = None if value == "auto" else value
+        ok(f"Question type: {value}")
+        return True, None
+    if command in ("/words", "/chars", "/limit", "/mode"):
+        warn(PREP_COMMANDS)
+        return True, None
+    return False, None
 
 
 def print_draft(draft: dict[str, Any]) -> None:
@@ -483,7 +575,21 @@ def memory_command(api: Api, message: str) -> bool:
 
 
 def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
-    turn = tell if mode == "intake" else ask
+    options = PrepOptions()
+
+    def turn(api: Api, message: str, cid: str | None) -> str | None:
+        if mode == "intake":
+            return tell(api, message, cid)
+        if mode == "prep":
+            handled, revise = prep_command(message, options)
+            if handled and revise is None:
+                return cid
+            if revise and cid is None:
+                warn("Ask a question first; then /shorter, /longer or /variant rewrite it")
+                return cid
+            return prep(api, message, cid, options, revise)
+        return ask(api, message, cid)
+
     named = conversation_id is not None
     spoke = False
     while True:
@@ -530,6 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--limit", type=int, default=20)
     sub.add_parser("new", help="start a conversation")
     sub.add_parser("twin", help="add knowledge in plain language (intake assistant)")
+    sub.add_parser("prep", help="interview and application answers in your voice")
     resume = sub.add_parser("continue", help="continue a conversation")
     resume.add_argument("ref", help="name, unique name prefix, or id")
     rename = sub.add_parser("rename", help="rename a conversation")
@@ -558,9 +665,10 @@ def execute(args: argparse.Namespace, api: Api) -> int:
         updated = api.rename(found["id"], args.name, args.description)
         ok(f"Renamed to {updated.get('name')}")
         return 0
-    if command == "twin":
-        print_banner(api, "intake")
-        return chat_loop(api, None, "intake")
+    if command in ("twin", "prep"):
+        mode = "intake" if command == "twin" else "prep"
+        print_banner(api, mode)
+        return chat_loop(api, None, mode)
     print_banner(api, "ask")
     return chat_loop(api, None)
 
