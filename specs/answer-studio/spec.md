@@ -93,8 +93,20 @@ Instead, the owner chat pastes source snippets or replies "not in the vault":
    - A model on a cloud provider may never declare `max_tier` above private. The inventory
      refuses to load if one does.
 
+10. **Ingestion categories, tags and a local classifier.**
+    - **New categories:**
+      - private: `interview-questions`, `common-questions`, `question-bank`, `company-details`,
+        `mixed`, `other`
+      - confidential (employer-internal): `company-projects`
+    - **Auto-tags:** a document ingested without tags gets 3–6 from one short classifier-role call
+      at its own tier. Quarantined and restricted documents are never tagged.
+    - **Laya:** the open-source local alternative to Jev, as an optional install
+      (`FF_LAYA_ENABLED`). It runs on this machine, so it may classify up to confidential. The
+      classifier order is Laya, then Jev (public only), then the LLM classifier.
+
 ## Non-goals
-Public-agent changes, cloud models for confidential text, publishing `local_only` documents, storing any owner
+An LLM gateway that picks models by request complexity and capability (text, tools,
+reasoning); it is its own feature (`llm-gateway`). Public-agent changes, cloud models for confidential text, publishing `local_only` documents, storing any owner
 data in git.
 
 ## Acceptance criteria
@@ -117,4 +129,6 @@ data in git.
    receives a confidential step.
 9. A cloud-provider entry with `max_tier: confidential` fails inventory validation; paid entries
    are unavailable without their key.
-10. `make check` passes; a live macOS run is reported in the PR.
+10. New categories are accepted with their tiers; an untagged document gets cleaned model tags
+    and an owner's tags are kept; Laya answers first when enabled and falls through on failure.
+11. `make check` passes; a live macOS run is reported in the PR.
