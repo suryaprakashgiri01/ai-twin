@@ -79,14 +79,15 @@ flowchart TB
 | `app/core` | Settings (pydantic-settings), logging, telemetry, request-scoped context |
 | `app/api`, `app/middleware`, `app/exceptions` | Routes, request/trace ids, the single error envelope and its codes |
 | `app/auth` | API keys (hashed, scoped) and visitor identity (salted hash of the forwarded address) |
-| `app/agents` | The three graphs, the router decision schema and keyword fallback, token streaming with pre-first-token fallback, owner context blocks |
+| `app/agents` | The public, owner, intake and prep graphs, the router decision schema and keyword fallback, token streaming with pre-first-token fallback, owner context blocks, per-agent model choice (`models.py` over `config/agents.yaml`) |
+| `app/agents/prep` | The outward-safety filter applied to every prep answer before it is shown |
 | `app/agents/intake` | The intake assistant's action catalogue, draft grounding and validation, confirmation reply classifier, suggestions |
 | `app/guardrails` | Input guard, scope router, output guard, identifier recognisers, canary hashes |
-| `app/kb/ingestion` | Parsers, chunking, redaction, employer guard, labelling, job pool with restart recovery |
+| `app/kb/ingestion` | Parsers, chunking, redaction (owner names kept), employer guard, labelling, auto-tags, document cards, job pool with restart recovery |
 | `app/kb/retrieval` | Hybrid retriever, local cross-encoder rerank, budgeted context builder |
 | `app/kb/publishing.py` | Review actions; the only writer of `kb_public` |
 | `app/leads` | Opportunity capture (public graph nodes), lead storage, triage, email outbox, Turnstile |
-| `app/services` | Chat services (SSE), conversations, memory, profile facts, resume, rate limits, answer cache, audit |
+| `app/services` | Chat, prep and super-agent services (SSE), conversations, memory, profile facts, resume, rate limits, answer cache, audit |
 | `app/observability` | Langfuse facade, per-channel masking, metrics |
 | `app/security` | Security events and debounced email alerts |
 | `app/db`, `app/storage`, `app/vector`, `app/cache` | MongoDB documents, encrypted blob store, Qdrant client, Redis/Valkey |
@@ -105,7 +106,9 @@ flowchart LR
     mw -. "AppError, unhandled" .-> env["Error envelope<br/>code, message, request_id"]
 ```
 
-Graphs are built once with their dependencies (`PublicDeps`, `OwnerDeps`, `IntakeDeps`) as frozen dataclasses.
+Graphs are built once with their dependencies (`PublicDeps`, `OwnerDeps`, `IntakeDeps`, `PrepDeps`) as frozen dataclasses.
+The super agent (`SuperDeps`) is a plain async service that runs those graphs per step; see
+[`super-agent.md`](super-agent.md).
 Nodes are methods on a `*Nodes` class; routing between nodes is a pure function of state (`_after_*`) or a
 `Command(goto=...)` returned by the node.
 

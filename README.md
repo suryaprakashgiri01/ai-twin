@@ -53,6 +53,7 @@ git-ignored `vault/` and `.env`; tests and seeds use a fake persona only.
 | [`docs/components.md`](docs/components.md) | Module map, runtime wiring, what LangChain does and where custom code takes over |
 | [`docs/flows/public-flow.md`](docs/flows/public-flow.md) | Visitor chat graph, guards, opportunity capture |
 | [`docs/flows/owner-flow.md`](docs/flows/owner-flow.md) | Owner graph and the intake assistant with its confirmations |
+| [`docs/super-agent.md`](docs/super-agent.md) | The super agent: plan, delegate to intake/ask/prep, compose; per-agent models |
 | [`docs/rag-pipeline.md`](docs/rag-pipeline.md) | Ingestion, review and publish, hybrid retrieval, context building |
 | [`docs/threat-model.md`](docs/threat-model.md) | Tiers, trust boundaries, guards, id and error-envelope policy |
 | [`packages/llm-orchestrator/README.md`](packages/llm-orchestrator/README.md) | Model inventory, roles, tier policy, fallbacks, overrides, hooks |

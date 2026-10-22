@@ -37,11 +37,22 @@ flowchart TD
 | `generate` | `_plan` decides a fixed answer or a model call, then streams tokens through LangGraph's custom stream writer |
 | `finalize` | Stores both turns (user and assistant, with route, tier, model, tokens, citations, `incomplete`, `withheld`) |
 
+### Overviews and follow-ups (`retrieve`)
+
+- **Broad mode:** an overview question ("summary of my projects", "list all my achievements") searches document
+  cards first. It then adds the best chunks, takes up to 12 of each, and uses a 6,000-token budget.
+- **Vague follow-ups:** a follow-up that names no topic of its own ("give me the summary", "tell me more")
+  searches only the documents the previous answer cited.
+- **Prompt `owner-v3`:** asks for a synthesised answer in the model's own words, with one paragraph per
+  document for overviews. It never pastes the context back.
+- **Models:** the generator model comes from `config/agents.yaml` (`owner`) unless the request names one.
+
 ### Tier handling inside `generate`
 
 The tier of the model call is not the caller's `max_tier`; it is the highest tier actually present in the prompt:
-the floor (`private`, or lower if the caller capped it, or higher with `min_tier`), the visible history, and the
-context chunks included. If that tier is `confidential` and no model may serve it, the context is rebuilt with a
+the floor (`private`, or lower if the caller capped it, or higher with `min_tier`, or the conversation's own tier
+when a model may read it, so a follow-up to a confidential answer still sees that answer), the visible history,
+and the context chunks included. If that tier is `confidential` and no model may serve it, the context is rebuilt with a
 `private` ceiling and the withheld count is told to the owner. Fixed answers (records summary, write redirect,
 "not in your vault") need no model.
 
