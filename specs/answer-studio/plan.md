@@ -5,6 +5,7 @@
 make chat ─▶ owner graph: route ─▶ retrieve (narrow | broad: cards first) ─▶ generate (owner-v3, tier → ollama-qwen for confidential)
 make prep ─▶ prep graph: classify type ─▶ sub-queries ─▶ retrieve (cards + chunks) ─▶ compose (first person) ─▶ outward filter ─▶ answer + sources + checks
 ingestion ─▶ … redact (owner names kept) ─▶ guard ─▶ chunk ─▶ label ─▶ card (doc tier) ─▶ embed
+make super ─▶ super graph: plan (≤4 steps) ─▶ run steps: owner | prep | intake (auto-apply adds) ─▶ compose
 kb_sync ─▶ admin API (ingest / refresh / release local_only / delete) per manifest entry; state.json
 ```
 
@@ -18,6 +19,11 @@ kb_sync ─▶ admin API (ingest / refresh / release local_only / delete) per ma
 - **`local_only` is a document flag** checked by publish, so no path can publish it.
 - **The loader is committed code over git-ignored data.** It is reusable on the Windows laptop, and the repo
   holds no personal data.
+
+- **The super agent delegates; it doesn't duplicate.** It calls the same owner, prep and intake
+  graphs, so each agent's guards (tier policy, outward-safety filter, intake drafts) still apply.
+- **Models are agent configuration, not code.** `config/agents.yaml` chooses per agent; tier
+  policy always has the last word.
 
 ## Risks
 - 7B local speed on CPU: the local timeout and an 8k context; prep shows progress.

@@ -63,6 +63,36 @@ Instead, the owner chat pastes source snippets or replies "not in the vault":
    - URL and GitHub ingest accept `refresh=true`.
    - A GitHub repo's tier follows its visibility; private repos need `GITHUB_TOKEN`.
 
+7. **Super agent** (`POST /admin/v1/super`, SSE; `make super`): one local-only conversation that
+   plans each request and delegates to the other agents. You never have to switch agents.
+   - **Sub-agents:** owner chat (vault and records questions, all tiers), prep (interview and
+     application answers), intake (notes, records such as today's interviews, invites,
+     applications, ingestion, review actions).
+   - **Plan, run, compose:**
+     - A planner model splits the request into at most four steps, each for one sub-agent.
+     - The steps run in order; one step's output can feed the next ("add today's interview,
+       then prep me for it").
+     - A composer writes one answer from the step results.
+   - **Writes:** intake drafts that only add or update data are applied at once. Deleting,
+     publishing or unpublishing still waits for a yes.
+   - Everything runs on the owner's machine, at `max_tier` confidential. The tier rule decides
+     which models may read each step.
+8. **Per-agent models** in `config/agents.yaml`:
+   - Each agent has a `model` (`auto` or an inventory id) and a `confidential_model` (`auto` or
+     a local inventory id).
+   - **auto:** the role chain picks the model, with the agent's `prefer`.
+   - **Pinned:** a pinned id is used whenever its `max_tier` allows the step's tier. Otherwise
+     the agent falls back to auto, so confidential text still goes to local models only.
+   - **Per request:** the request's `model` overrides both.
+   - The super agent's confidential model is `ollama-qwen-14b` (`qwen2.5:14b`, ~9 GB; it fits
+     a 24 GB Mac next to the stack).
+9. **Paid models** can be added to the inventory:
+   - `anthropic` and `openai` providers; the `openai` provider also takes `base_url` for any
+     OpenAI-compatible service.
+   - Keyed by `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`; disabled until the owner enables them.
+   - A model on a cloud provider may never declare `max_tier` above private. The inventory
+     refuses to load if one does.
+
 ## Non-goals
 Public-agent changes, cloud models for confidential text, publishing `local_only` documents, storing any owner
 data in git.
@@ -80,4 +110,11 @@ data in git.
 6. The loader's dry run changes nothing; `--apply` is idempotent; a changed file replaces its document;
    `--reset` keeps keys, profile, records, leads and conversations; `refresh=true` replaces a URL source's
    documents; private repos are labelled private.
-7. `make check` passes; a live macOS run is reported in the PR.
+7. The super agent answers a mixed request ("I have an interview with Acme today at 3 pm for an AI
+   Engineer role; add it and give me a 60-second pitch for it") with one record added through
+   intake and one prep answer. A delete still waits for a yes. Confidential steps use local models.
+8. `config/agents.yaml` pins and auto mode resolve as described; a pinned cloud model never
+   receives a confidential step.
+9. A cloud-provider entry with `max_tier: confidential` fails inventory validation; paid entries
+   are unavailable without their key.
+10. `make check` passes; a live macOS run is reported in the PR.

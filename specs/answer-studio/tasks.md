@@ -10,4 +10,7 @@ Each task is one commit (a large task may carry several). Commit subjects refere
 | T4 | `local_only` release (API, intake `release`), publish refusal | 4 |
 | T5 | Prep agent: graph, route, CLI `make prep`, outward-safety filter | 5 |
 | T6 | `kb_sync` loader + `refresh=true` + GitHub tier by visibility | 6 |
-| T7 | Tests, live run, dev-notes, Postman | 1–7 |
+| T8 | Per-agent models (`config/agents.yaml`), `ollama-qwen-14b`, paid providers and the cloud tier cap | 8, 9 |
+| T9 | Super agent: planner, sub-agent steps, composer, route, `make super` | 7 |
+| T10 | `docs/super-agent.md` (HLD), docs index | 7–9 |
+| T7 | Tests, live run, dev-notes, Postman (last) | 1–10 |
