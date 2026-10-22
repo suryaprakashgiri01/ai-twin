@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     ollama_max_model: str = ""
     typesafe_api_key: SecretStr | None = None
     jev_model: str = "jev-1.13.0"
+    # Laya: the open-source local alternative to Jev (`uv add laya`); may read up to
+    # confidential text because it runs on this machine. "cpu", "mps" or "cuda".
+    ff_laya_enabled: bool = False
+    laya_device: str = "cpu"
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     # Local models (Ollama) on a CPU can take far longer to start answering a long prompt.
     llm_local_timeout_seconds: float = Field(default=120.0, gt=0, le=600)

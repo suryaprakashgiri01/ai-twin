@@ -52,6 +52,14 @@ CATEGORIES: tuple[str, ...] = (
     # Recruiter outreach: an HR or recruiter call's notes, an invite to apply from a platform.
     "hr-call",
     "invite",
+    # Interview preparation and research (answer-studio).
+    "interview-questions",
+    "common-questions",
+    "question-bank",
+    "company-details",
+    "company-projects",
+    "mixed",
+    "other",
 )
 
 
@@ -76,6 +84,16 @@ CATEGORY_RULES: dict[str, CategoryRule] = {
     "learning": CategoryRule(Tier.PRIVATE, "learning notes; suggest public after review"),
     "hr-call": CategoryRule(Tier.PRIVATE, "an HR or recruiter call names third parties"),
     "invite": CategoryRule(Tier.PRIVATE, "a recruiter's invite names third parties"),
+    "interview-questions": CategoryRule(Tier.PRIVATE, "questions asked in real interviews"),
+    "common-questions": CategoryRule(Tier.PRIVATE, "prepared answers to common questions"),
+    "question-bank": CategoryRule(Tier.PRIVATE, "a question bank for practice"),
+    "company-details": CategoryRule(Tier.PRIVATE, "research notes about a company"),
+    # Several projects done for an employer: employer-internal, so local models only.
+    "company-projects": CategoryRule(
+        Tier.CONFIDENTIAL, "employer projects may hold internal details"
+    ),
+    "mixed": CategoryRule(Tier.PRIVATE, "a document mixing several kinds of content"),
+    "other": CategoryRule(Tier.PRIVATE, "uncategorised: private until reviewed"),
     "blog": CategoryRule(Tier.PUBLIC, "published writing"),
     "profile-link": CategoryRule(Tier.PUBLIC, "a public profile"),
 }

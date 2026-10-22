@@ -14,7 +14,13 @@ from llm_orchestrator import (
     OverrideStore,
     ProviderSecrets,
 )
-from llm_orchestrator.classify import Classifier, FlaggedClassifier, JevClassifier, LLMClassifier
+from llm_orchestrator.classify import (
+    Classifier,
+    FlaggedClassifier,
+    JevClassifier,
+    LayaClassifier,
+    LLMClassifier,
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +80,11 @@ def build_llm(settings: Settings, overrides: OverrideStore | None = None) -> LLM
         else None
     )
     classifier = FlaggedClassifier(
-        LLMClassifier(orchestrator), jev, enabled=lambda: settings.ff_jev_enabled
+        LLMClassifier(orchestrator),
+        jev,
+        enabled=lambda: settings.ff_jev_enabled,
+        laya=LayaClassifier(device=settings.laya_device),
+        laya_enabled=lambda: settings.ff_laya_enabled,
     )
     agents = AgentModels.load(inventory, settings.agent_models_path)
     return LLMServices(

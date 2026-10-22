@@ -22,6 +22,7 @@ from app.kb.ingestion.jobs import IngestionService, WorkerPool
 from app.kb.ingestion.labelling import Labeller
 from app.kb.ingestion.pipeline import Pipeline
 from app.kb.ingestion.redaction import Redactor, default_detector
+from app.kb.ingestion.tagging import Tagger
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ def build_ingestion(settings: Settings, resources: Resources, llm: LLMServices) 
         guard=EmployerGuard(settings.denylist_path),
         labeller=Labeller(llm.orchestrator, llm.classifier),
         cards=CardWriter(llm.orchestrator),
+        tagger=Tagger(llm.orchestrator),
         embedder=FastEmbedder(settings.models_dir / "fastembed"),
         url_fetcher=UrlFetcher(
             max_bytes=ingest_max_bytes(settings),

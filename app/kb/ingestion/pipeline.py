@@ -33,6 +33,7 @@ from app.kb.ingestion.models import IngestError, IngestErrorCode, IngestItem, Pa
 from app.kb.ingestion.parsers import dispatch
 from app.kb.ingestion.parsers.image import OcrEngine
 from app.kb.ingestion.redaction import Redactor
+from app.kb.ingestion.tagging import Tagger
 from app.kb.store import DocumentView, KbStore, SourceView
 from app.kb.vectors import ALL_COLLECTIONS, VectorIndex, VectorPoint, collection_for, point_id
 from app.observability.metrics import INGESTION_JOBS
@@ -78,6 +79,8 @@ class Pipeline:
     events: SecurityEventWriter | None = None
     # Writes each indexed document's card; None indexes chunks only.
     cards: CardWriter | None = None
+    # Tags documents ingested without any; None leaves them untagged.
+    tagger: Tagger | None = None
 
     # --- job ------------------------------------------------------------------------------
 
@@ -159,6 +162,7 @@ class Pipeline:
         items = [self._guard(item) for item in items]
         await self.store.update_source(source.id, status="labelling")
         ready = [await self._chunk_and_label(i) if not i.quarantine_rules else i for i in items]
+        ready = [await self._tag(i) for i in ready]
         await self.store.update_source(source.id, status="embedding")
         ids = [await self._store_item(source, item) for item in ready]
         return ids, any(item.quarantine_rules for item in ready)
@@ -246,6 +250,13 @@ class Pipeline:
             item.markdown, title=item.title, target=self.chunk_target, overlap=self.chunk_overlap
         )
         return await self.labeller.label(item.model_copy(update={"chunks": chunks}))
+
+    async def _tag(self, item: IngestItem) -> IngestItem:
+        """Model-suggested tags when the owner gave none (never for quarantined text)."""
+        if self.tagger is None or item.tags or item.quarantine_rules or item.label is None:
+            return item
+        tags = await self.tagger.tags(item.title, item.markdown, Tier.parse(item.label.tier))
+        return item.model_copy(update={"tags": tags}) if tags else item
 
     # --- storage --------------------------------------------------------------------------
 
