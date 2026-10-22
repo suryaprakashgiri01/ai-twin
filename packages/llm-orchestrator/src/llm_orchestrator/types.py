@@ -60,6 +60,9 @@ class Provider(StrEnum):
 LOCAL_PROVIDERS = frozenset({Provider.OLLAMA, Provider.MOCK})
 
 
+# What a model can do beyond plain text. Every model has `text`.
+Capability = Literal["text", "tools", "reasoning"]
+
 Prefer = Literal["fast", "quality", "local", "local-quality", "local-max", "paid"]
 
 
@@ -99,6 +102,15 @@ class ModelSpec(BaseModel):
     # Ordering hints for `prefer`: "fast", "quality", "local".
     tags: frozenset[str] = frozenset()
     base_url: str | None = None
+    # Declared, not probed: what the model can do, and a rough strength rank (1 weakest, 5
+    # strongest) the gateway uses to fit a model to a request's complexity.
+    capabilities: frozenset[Capability] = frozenset({"text"})
+    quality: int = Field(default=3, ge=1, le=5)
+
+    @field_validator("capabilities", mode="after")
+    @classmethod
+    def _with_text(cls, value: frozenset[Capability]) -> frozenset[Capability]:
+        return value | {"text"}
 
     @field_validator("max_tier", mode="before")
     @classmethod

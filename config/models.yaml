@@ -1,4 +1,6 @@
-# Default model inventory for llm-orchestrator. Overrides (kb-storage, admin) may disable a model,
+# Default model inventory for llm-orchestrator. Each model declares `capabilities` (text, tools,
+# reasoning) and a `quality` rank (1-5) the gateway uses to fit models to a request's complexity.
+# Overrides (kb-storage, admin) may disable a model,
 # lower its max_tier or reorder a chain; they can never raise max_tier above the value here.
 #
 # Tiers: public < private < confidential < restricted. No model may serve restricted, and a model
@@ -18,6 +20,8 @@ models:
     context_window: 131072
     trains_on_inputs: false
     tags: [fast]
+    capabilities: [text, tools]
+    quality: 2
 
   - id: groq-gpt-oss-120b
     provider: groq
@@ -28,6 +32,8 @@ models:
     trains_on_inputs: false
     free_tier: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
     tags: [quality]
+    capabilities: [text, tools, reasoning]
+    quality: 5
 
   # Llama Prompt Guard 2 (22M): scores public visitor text for injection; replies with a number.
   - id: groq-prompt-guard-2
@@ -38,6 +44,8 @@ models:
     context_window: 512
     trains_on_inputs: false
     tags: [fast]
+    capabilities: [text]
+    quality: 1
 
   # --- Cerebras: inference inputs and outputs not retained; fallback ------------------------
   - id: cerebras-qwen-27b
@@ -49,6 +57,8 @@ models:
     trains_on_inputs: false
     free_tier: {rpm: 5, tpm: 30000, tpd: 1000000}
     tags: [fast]
+    capabilities: [text, tools]
+    quality: 3
 
   - id: cerebras-gpt-oss-120b
     provider: cerebras
@@ -59,6 +69,8 @@ models:
     trains_on_inputs: false
     free_tier: {rpm: 5, tpm: 30000, tpd: 1000000}
     tags: [quality]
+    capabilities: [text, tools, reasoning]
+    quality: 5
 
   # --- Gemini free tier: inputs used to improve Google's products, so public only ----------
   - id: gemini-flash-lite
@@ -69,6 +81,8 @@ models:
     context_window: 1048576
     trains_on_inputs: true
     tags: [fast]
+    capabilities: [text, tools]
+    quality: 2
 
   - id: gemini-flash
     provider: gemini
@@ -78,6 +92,8 @@ models:
     context_window: 1048576
     trains_on_inputs: true
     tags: [quality]
+    capabilities: [text, tools, reasoning]
+    quality: 4
 
   # --- OpenRouter :free: upstream providers may log or train, so public only ---------------
   - id: openrouter-gemma
@@ -89,6 +105,8 @@ models:
     trains_on_inputs: true
     free_tier: {rpm: 20, rpd: 50}
     base_url: https://openrouter.ai/api/v1
+    capabilities: [text]
+    quality: 3
 
   # --- Ollama (local): the only real model allowed confidential text -----------------------
   # OLLAMA_QUALITY_MODEL / OLLAMA_MODEL replace `model` when set, so any pulled tag can be used.
@@ -101,6 +119,8 @@ models:
     context_window: 32768
     trains_on_inputs: false
     tags: [local, local-quality]
+    capabilities: [text, tools]
+    quality: 3
 
   # The strongest local model, pinned by agents that need it (config/agents.yaml: the super
   # agent's confidential steps, via `prefer: local-max`). Last among the local models in the
@@ -114,6 +134,34 @@ models:
     context_window: 32768
     trains_on_inputs: false
     tags: [local, local-quality, local-max]
+    capabilities: [text, tools]
+    quality: 4
+
+  # Qwen3: tool calling and a thinking mode (its thinking is kept out of answers). Disabled until
+  # pulled: `make ollama ARGS="pull qwen3:8b"`, then set `enabled: true` (or use the overrides API).
+  - id: ollama-qwen3-8b
+    provider: ollama
+    model: qwen3:8b
+    roles: [generator, judge]
+    max_tier: confidential
+    context_window: 40960
+    trains_on_inputs: false
+    enabled: false
+    tags: [local, local-quality]
+    capabilities: [text, tools, reasoning]
+    quality: 4
+
+  - id: ollama-qwen3-14b
+    provider: ollama
+    model: qwen3:14b
+    roles: [generator, judge]
+    max_tier: confidential
+    context_window: 40960
+    trains_on_inputs: false
+    enabled: false
+    tags: [local, local-quality, local-max]
+    capabilities: [text, tools, reasoning]
+    quality: 5
 
   - id: ollama-local
     provider: ollama
@@ -123,6 +171,8 @@ models:
     context_window: 131072
     trains_on_inputs: false
     tags: [local]
+    capabilities: [text, tools]
+    quality: 1
 
   # --- paid APIs: public and private text only (validation refuses a higher max_tier) --------
   # Disabled until you set the key and flip `enabled` (or enable it in the model overrides).
@@ -137,6 +187,8 @@ models:
     cost: {input_per_mtok: 3.0, output_per_mtok: 15.0}
     enabled: false
     tags: [quality, paid]
+    capabilities: [text, tools, reasoning]
+    quality: 5
 
   - id: anthropic-opus
     provider: anthropic
@@ -148,6 +200,8 @@ models:
     cost: {input_per_mtok: 15.0, output_per_mtok: 75.0}
     enabled: false
     tags: [quality, paid]
+    capabilities: [text, tools, reasoning]
+    quality: 5
 
   # Any OpenAI-compatible API: set `model` and `base_url` (omit base_url for OpenAI itself).
   # - id: openai-compatible
@@ -170,11 +224,13 @@ models:
     context_window: 8192
     trains_on_inputs: false
     tags: [local]
+    capabilities: [text, tools, reasoning]
+    quality: 1
 
 roles:
   router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, ollama-qwen, mock]
   classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
-  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, anthropic-sonnet, anthropic-opus, mock]
-  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, anthropic-sonnet, anthropic-opus, mock]
+  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, ollama-qwen3-8b, ollama-qwen3-14b, anthropic-sonnet, anthropic-opus, mock]
+  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, ollama-qwen3-8b, ollama-qwen3-14b, anthropic-sonnet, anthropic-opus, mock]
   # No fallback: without the guard model the input guard keeps its rule layers and says so.
   guard: [groq-prompt-guard-2]

@@ -82,12 +82,13 @@ class Target:
 
 
 def inventory_models(path: Path = INVENTORY) -> dict[str, str]:
-    """Ollama entries of the inventory: id -> model name, in file order."""
+    """Enabled Ollama entries of the inventory: id -> model name, in file order. A disabled
+    entry (an optional model such as Qwen3) is not pulled or checked until it is enabled."""
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
     return {
         str(spec["id"]): str(spec["model"])
         for spec in data.get("models", [])
-        if spec.get("provider") == "ollama"
+        if spec.get("provider") == "ollama" and spec.get("enabled", True)
     }
 
 
