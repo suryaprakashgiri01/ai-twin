@@ -198,16 +198,23 @@ class PrepService:
             yield sse(event, data)
 
     async def answer(self, prepared: Prepared) -> PrepResponse:
-        state: dict[str, Any] = {}
+        """The non-streaming form: the `done` fields plus the answer and its sources."""
+        done: dict[str, Any] = {}
         last: dict[str, Any] = {}
+        parts: list[str] = []
+        sources: list[Any] = []
         async for event, data in self.events(prepared):
-            if event == "error":
+            if event == "token":
+                parts.append(str(data.get("text", "")))
+            elif event == "sources":
+                sources = list(data.get("sources", []))
+            elif event == "error":
                 last = data
-            if event == "done":
-                state = data
-        if last and not state:
+            elif event == "done":
+                done = data
+        if last and not done:
             raise AppError(ErrorCode(last["code"]), last["message"])
-        return PrepResponse.model_validate({**state, "answer": "", "sources": []})
+        return PrepResponse.model_validate({**done, "answer": "".join(parts), "sources": sources})
 
 
 def response(cid: str, state: dict[str, Any]) -> PrepResponse:

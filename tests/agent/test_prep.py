@@ -146,3 +146,15 @@ async def test_revise_rewrites_the_previous_answer() -> None:
     last = factory.models["cloud"].seen[-1]
     assert "Long answer." in "\n".join(str(m.content) for m in last)
     assert "shorter" in str(last[-1].content)
+
+
+async def test_non_streaming_response_carries_the_answer_and_sources() -> None:
+    from app.services.prep import PrepRequest, PrepService
+    from tests.agent.test_super_agent import FakeIndex
+
+    graph, _, conversations = agent([hit("p1", Tier.PRIVATE, PROJECT)], cloud=["I led it."])
+    service = PrepService(graph, conversations, FakeIndex())
+    prepared = await service.prepare(PrepRequest(message="Tell me about yourself"))
+    response = await service.answer(prepared)
+    assert response.answer == "I led it." and response.kind == "pitch"
+    assert [s.document_id for s in response.sources] == ["p1"]
