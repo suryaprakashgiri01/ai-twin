@@ -674,7 +674,7 @@ def owner_deps(
         generator=StreamingGenerator(
             llm.orchestrator, idle_timeout_seconds=settings.llm_timeout_seconds
         ),
-        models=llm.agents.choice("owner"),
+        models=llm.agents.live("owner"),
         profiler=llm.profiler,
         settings=OwnerSettings(
             top_k=settings.retrieval_top_k,

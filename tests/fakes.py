@@ -10,6 +10,7 @@ from typing import Any
 
 from qdrant_client import models
 
+from app.agents.models import AgentModel
 from app.auth.keys import KeyRecord
 from app.db.documents import Scope, utcnow
 from app.services.conversations import ConversationRef, StoredConversation, Turn
@@ -126,6 +127,22 @@ class MemoryApiKeyStore:
         for row in hits:
             row["revoked_at"] = at
         return len(hits)
+
+
+class MemoryAgentOverrideStore:
+    def __init__(self) -> None:
+        self.rows: dict[str, tuple[AgentModel, datetime]] = {}
+
+    async def list(self) -> list[tuple[str, AgentModel, datetime]]:
+        return [(name, settings, at) for name, (settings, at) in self.rows.items()]
+
+    async def put(self, name: str, settings: AgentModel) -> datetime:
+        at = utcnow()
+        self.rows[name] = (settings, at)
+        return at
+
+    async def delete(self, name: str) -> bool:
+        return self.rows.pop(name, None) is not None
 
 
 class MemoryOverrideStore:

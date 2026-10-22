@@ -34,7 +34,7 @@ from app.agents.graphs.owner import (
     turn_tier,
     visible_history,
 )
-from app.agents.models import AUTO_CHOICE, ModelChoice
+from app.agents.models import AUTO_CHOICE, Choice
 from app.agents.prep.filter import OutwardFilter
 from app.agents.prompts import prep as prompts
 from app.agents.prompts.prep import PrepType
@@ -182,7 +182,7 @@ class PrepDeps:
     generator: AnswerGenerator
     filter: OutwardFilter
     settings: PrepSettings = field(default_factory=PrepSettings)
-    models: ModelChoice = AUTO_CHOICE
+    models: Choice = AUTO_CHOICE
     profiler: Profiler | None = None
 
 
@@ -198,7 +198,7 @@ class PrepState(TypedDict, total=False):
     revise: Revise | None
     model: str | None
     prefer: Prefer | None
-    models: ModelChoice | None
+    models: Choice | None
     context: OwnerContext | None
     started: float
     # plan
@@ -353,7 +353,7 @@ class PrepNodes:
     ) -> tuple[str, ErrorInfo | None]:
         parts: list[str] = []
         model, prefer = choose(state, self.deps.models, tier)
-        models: ModelChoice = state.get("models") or self.deps.models
+        models: Choice = state.get("models") or self.deps.models
         need = await models.need_for(state["target"], tier, self.deps.profiler)
         try:
             async for text in self.deps.generator.stream(
@@ -506,7 +506,7 @@ def initial_state(
     model: str | None = None,
     prefer: Prefer | None = None,
     context: OwnerContext | None = None,
-    models: ModelChoice | None = None,
+    models: Choice | None = None,
 ) -> PrepState:
     return PrepState(
         conversation_id=conversation_id,

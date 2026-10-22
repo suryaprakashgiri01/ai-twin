@@ -266,7 +266,7 @@ def prep_deps(
         ),
         filter=OutwardFilter(denylist=EmployerGuard(settings.denylist_path).rules),
         settings=PrepSettings(),
-        models=llm.agents.choice("prep"),
+        models=llm.agents.live("prep"),
         profiler=llm.profiler,
     )
 

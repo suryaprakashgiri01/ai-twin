@@ -9,12 +9,16 @@ an optional `prefer` for auto mode. For one step at `tier`:
 
 Loading refuses a `confidential_model` that is not a local model, so a mistake in the file can
 never route confidential text to a cloud API.
+
+The owner may override an agent's settings from the console (`PUT /admin/v1/agents/{name}`):
+`apply` validates the override the same way and swaps it in; `LiveChoice` reads the current
+choice on every step, so the change applies to the next call with no restart.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -24,6 +28,8 @@ from llm_orchestrator.gateway import Complexity
 from llm_orchestrator.types import LOCAL_PROVIDERS
 
 AgentName = Literal["owner", "prep", "super", "intake"]
+AGENT_NAMES: tuple[AgentName, ...] = get_args(AgentName)
+SettingsSource = Literal["default", "yaml", "override"]
 AUTO = "auto"
 DEFAULT_AGENTS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
 
@@ -80,9 +86,28 @@ class ModelChoice(BaseModel):
 AUTO_CHOICE = ModelChoice(agent="default")
 
 
+class Choice(Protocol):
+    """What a graph needs from an agent's model choice (a `ModelChoice` or a `LiveChoice`)."""
+
+    async def need_for(self, text: str, tier: Tier, profiler: Profiler | None) -> Need | None: ...
+
+    def pick(
+        self, tier: Tier, requested: str | None = None, requested_prefer: Prefer | None = None
+    ) -> tuple[str | None, Prefer | None]: ...
+
+
 class AgentModels:
-    def __init__(self, choices: dict[str, ModelChoice] | None = None) -> None:
+    def __init__(
+        self,
+        choices: dict[str, ModelChoice] | None = None,
+        *,
+        configured: dict[str, AgentModel] | None = None,
+        inventory: Inventory | None = None,
+    ) -> None:
         self._choices = choices or {}
+        self._configured = configured or {}
+        self._overridden: dict[str, AgentModel] = {}
+        self._inventory = inventory
 
     @classmethod
     def empty(cls) -> AgentModels:
@@ -91,12 +116,13 @@ class AgentModels:
 
     @classmethod
     def build(cls, agents: dict[str, AgentModel], inventory: Inventory) -> AgentModels:
-        return cls({name: _resolve(name, a, inventory) for name, a in agents.items()})
+        choices = {name: _resolve(name, a, inventory) for name, a in agents.items()}
+        return cls(choices, configured=agents, inventory=inventory)
 
     @classmethod
     def load(cls, inventory: Inventory, path: Path = DEFAULT_AGENTS) -> AgentModels:
         if not path.exists():
-            return cls()
+            return cls(inventory=inventory)
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         raw = data.get("agents") or {}
         try:
@@ -107,6 +133,53 @@ class AgentModels:
 
     def choice(self, agent: AgentName) -> ModelChoice:
         return self._choices.get(agent, AUTO_CHOICE.model_copy(update={"agent": agent}))
+
+    def live(self, agent: AgentName) -> LiveChoice:
+        """The agent's choice as it is at each step, overrides included."""
+        return LiveChoice(self, agent)
+
+    def settings(self, agent: AgentName) -> tuple[AgentModel, SettingsSource]:
+        """The agent's effective settings and where they come from."""
+        if agent in self._overridden:
+            return self._overridden[agent], "override"
+        if agent in self._configured:
+            return self._configured[agent], "yaml"
+        return AgentModel(), "default"
+
+    def check(self, agent: AgentName, settings: AgentModel) -> None:
+        """Raise AgentModelError when the settings name an unknown or a cloud confidential model."""
+        if self._inventory is not None:
+            _resolve(agent, settings, self._inventory)
+
+    def apply(self, agent: AgentName, settings: AgentModel | None) -> None:
+        """Override the agent's settings (None resets it to config/agents.yaml)."""
+        if settings is None:
+            self._overridden.pop(agent, None)
+            base = self._configured.get(agent)
+        else:
+            self.check(agent, settings)
+            self._overridden[agent] = settings
+            base = settings
+        if base is None or self._inventory is None:
+            self._choices.pop(agent, None)
+        else:
+            self._choices[agent] = _resolve(agent, base, self._inventory)
+
+
+class LiveChoice:
+    """Reads the agent's current choice on every call, so an override applies at once."""
+
+    def __init__(self, models: AgentModels, agent: AgentName) -> None:
+        self._models = models
+        self.agent = agent
+
+    async def need_for(self, text: str, tier: Tier, profiler: Profiler | None) -> Need | None:
+        return await self._models.choice(self.agent).need_for(text, tier, profiler)
+
+    def pick(
+        self, tier: Tier, requested: str | None = None, requested_prefer: Prefer | None = None
+    ) -> tuple[str | None, Prefer | None]:
+        return self._models.choice(self.agent).pick(tier, requested, requested_prefer)
 
 
 def _resolve(name: str, agent: AgentModel, inventory: Inventory) -> ModelChoice:

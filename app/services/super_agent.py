@@ -44,7 +44,7 @@ from app.agents.graphs.owner import initial_state as owner_state
 from app.agents.graphs.prep import PrepGraph, build_prep_graph
 from app.agents.graphs.prep import initial_state as prep_state
 from app.agents.intake.confirm import classify_rules
-from app.agents.models import ModelChoice
+from app.agents.models import Choice
 from app.agents.prompts import super_agent as prompts
 from app.agents.routing import looks_like_write
 from app.agents.streaming import sse
@@ -205,7 +205,7 @@ class SuperDeps:
     owner_graph: OwnerGraph
     prep_graph: PrepGraph
     intake: IntakeService
-    models: ModelChoice
+    models: Choice
     context: ContextBuilder | None = None
     on_turn: TurnHook | None = None
     today: Callable[[], date] = field(default=lambda: utcnow().date())
@@ -577,7 +577,7 @@ def build_super(
     context: ContextBuilder | None = None,
     on_turn: TurnHook | None = None,
 ) -> SuperAgent:
-    models = llm.agents.choice("super")
+    models = llm.agents.live("super")
     return SuperAgent(
         SuperDeps(
             orchestrator=llm.orchestrator,

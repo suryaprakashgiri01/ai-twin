@@ -381,7 +381,7 @@ def build_intake(
         owner_graph=build_owner_graph(owner, checkpointer=False),
         conversations=resources.conversations,
         memory=memory,
-        models=llm.agents.choice("intake"),
+        models=llm.agents.live("intake"),
     )
     service = IntakeService(
         build_intake_graph(deps, saver),

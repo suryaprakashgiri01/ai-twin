@@ -534,6 +534,22 @@ class ModelOverride(Document):
         name = "model_overrides"
 
 
+class AgentModelOverride(Document):
+    """The owner's model settings for one agent (`_id` = agent name), layered over
+    config/agents.yaml. Deleting the row resets the agent to the file."""
+
+    id: str  # type: ignore[assignment]
+    model: str = "auto"
+    prefer: str | None = None
+    confidential_model: str = "auto"
+    confidential_prefer: str | None = None
+    need: str | None = None
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "agent_model_overrides"
+
+
 class AppliedMigration(Document):
     """Marker written once a data migration has run; its `_id` is the migration version."""
 
@@ -625,6 +641,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     SecurityEvent,
     AuditEntry,
     ModelOverride,
+    AgentModelOverride,
     AppliedMigration,
     CheckpointEntry,
     CheckpointWrite,

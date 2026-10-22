@@ -31,6 +31,7 @@ from app.middleware.security_headers import CONSOLE_PREFIX, SecurityHeadersMiddl
 from app.observability import metrics
 from app.observability.tracing import NOOP, Tracing, build_tracing, install
 from app.security.worker import build_alert_worker
+from app.services.agent_settings import AgentSettingsService
 from app.services.digest import ConversationDigester
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
@@ -135,6 +136,10 @@ async def _start_services(
     )
     # Ingestion workers and owner chat run in the vault only.
     if settings.deployment_profile == "vault":
+        app.state.agent_settings = AgentSettingsService(
+            app.state.llm.agents, resources.agent_overrides
+        )
+        await app.state.agent_settings.load()
         ingestion = build_ingestion(settings, resources, app.state.llm)
         app.state.ingestion = await stack.enter_async_context(run_ingestion(ingestion))
         # One embedder for indexing and search, so its models load once.
