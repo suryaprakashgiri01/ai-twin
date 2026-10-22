@@ -7,7 +7,7 @@ from typing import Annotated, get_args
 from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.api.envelope import Envelope, ok
+from app.api.envelope import Deleted, Envelope, ok
 from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.core.config import Settings
@@ -21,6 +21,7 @@ from app.services.owner_chat import (
     ChatResponse,
     ConversationDetail,
     ConversationSummary,
+    ListChannel,
     OwnerChatService,
     TitleUpdate,
 )
@@ -34,7 +35,7 @@ ConversationName = Annotated[str, Path(pattern=NAME_PATTERN, max_length=NAME_MAX
 CONVERSATIONS = ListSpec(
     sortable=("updatedAt", "createdAt", "name", "messageCount"),
     default_sort="updatedAt",
-    filters={"mode": get_args(ConversationMode)},
+    filters={"mode": get_args(ConversationMode), "channel": ("owner", "public")},
     search=("name", "description"),
 )
 ConversationQuery = Annotated[PageQuery, Depends(page_query(CONVERSATIONS))]
@@ -76,11 +77,18 @@ async def chat(
     return JSONResponse(ok(response).model_dump(mode="json", by_alias=True))
 
 
-@router.get("/conversations", summary="Owner conversations, newest first")
+@router.get("/conversations", summary="Conversations, newest first (owner, visitors' or both)")
 async def list_conversations(
-    _principal: AdminKey, request: Request, query: ConversationQuery
+    _principal: AdminKey,
+    request: Request,
+    query: ConversationQuery,
+    channel: Annotated[
+        ListChannel,
+        Query(description="owner (default), public (visitors' chats, read-only) or all"),
+    ] = "owner",
 ) -> Envelope[Page[ConversationSummary]]:
-    found = await _service(request).list_conversations(LIST_SCAN_MAX)
+    """Each item carries `channel` and `mode`. Soft-deleted conversations are never listed."""
+    found = await _service(request).list_conversations(LIST_SCAN_MAX, channel)
     return ok(paginate(found, query, CONVERSATIONS))
 
 
@@ -149,9 +157,28 @@ async def refresh_title(
     return ok(await digester.refresh_within(conversation_id, wait))
 
 
+@router.delete(
+    "/conversations/{conversation_id}",
+    summary="Soft delete an owner conversation (audited); visitors' chats are read-only",
+)
+async def delete_conversation(
+    conversation_id: ConversationId, principal: AdminKey, request: Request
+) -> Envelope[Deleted]:
+    """Hidden from every list and read, and never continued. The turns stay stored."""
+    await _service(request).delete(conversation_id)
+    audit: AuditLog = request.app.state.resources.audit
+    await audit.record(
+        actor=f"key:{principal.name}",
+        action="conversation.delete",
+        target=conversation_id,
+        details={},
+    )
+    return ok(Deleted(id=conversation_id), "Conversation deleted")
+
+
 @router.get(
     "/conversations/{conversation_id}",
-    summary="One owner conversation with its rolling summary and turns",
+    summary="One conversation (owner or a visitor's, read-only) with its summary and turns",
 )
 async def get_conversation(
     conversation_id: ConversationId,

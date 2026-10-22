@@ -36,7 +36,12 @@ from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.memory import build_memory
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
-from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
+from app.services.owner_chat import (
+    ConversationDirectory,
+    MongoConversationIndex,
+    build_owner_chat_from,
+    owner_deps,
+)
 from app.services.prep import build_prep
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
@@ -207,6 +212,10 @@ async def _start_services(
         app.state.resume,
         leads=app.state.leads,
         checkpointer=saver,
+    )
+    # Conversation browsing for the console, on both profiles (a public key sees its own).
+    app.state.conversation_directory = ConversationDirectory(
+        MongoConversationIndex(), resources.conversations
     )
 
 

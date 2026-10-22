@@ -95,6 +95,10 @@ class ConversationStore(Protocol):
 
     async def load(self, conversation_id: str, limit: int) -> StoredConversation | None: ...
 
+    async def soft_delete(self, conversation_id: str, at: datetime) -> bool:
+        """Mark it deleted; False when there is no such (undeleted) conversation."""
+        ...
+
 
 def hash_visitor(address: str, salt: str) -> str:
     """Keyed hash of a visitor address: stable per salt, not reversible without it."""
@@ -102,6 +106,12 @@ def hash_visitor(address: str, salt: str) -> str:
 
 
 class MongoConversationStore:
+    async def soft_delete(self, conversation_id: str, at: datetime) -> bool:
+        result = await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id, "deleted_at": None}, {"$set": {"deleted_at": at}}
+        )
+        return bool(result.modified_count)
+
     async def save_turn(
         self, conversation: ConversationRef, turn: Turn, expires_at: datetime | None
     ) -> None:
@@ -130,7 +140,7 @@ class MongoConversationStore:
 
     async def load(self, conversation_id: str, limit: int) -> StoredConversation | None:
         conversation = await Conversation.get(conversation_id)
-        if conversation is None:
+        if conversation is None or conversation.deleted_at is not None:
             return None
         messages = (
             await Message.find(Message.conversation_id == conversation_id)
@@ -213,6 +223,15 @@ class ConversationService:
             return [Turn.model_validate_json(raw) for raw in cached]
         stored = await self._warm(conversation_id)
         return stored.turns if stored else []
+
+    async def soft_delete(self, conversation_id: str) -> bool:
+        """Hide a conversation for good: it is marked in MongoDB and dropped from the cache, so
+        no later message can continue it."""
+        deleted = await self._store.soft_delete(conversation_id, self._clock())
+        await self._redis.delete(
+            conversation_key(conversation_id), conversation_seq_key(conversation_id)
+        )
+        return deleted
 
     async def drain(self) -> None:
         """Wait for in-flight writes (shutdown); whatever is left stays in Redis."""

@@ -48,6 +48,7 @@ class MemoryIndex:
             name=name,
             description=description,
             channel=meta["channel"],
+            visitor_hash=meta.get("visitor_hash"),
             created_at=min(stamps),
             updated_at=max(stamps),
             message_count=max(turns, default=0),
@@ -57,16 +58,28 @@ class MemoryIndex:
         )
 
     async def get(self, conversation_id: str) -> ConversationMeta | None:
-        if conversation_id not in self.store.conversations:
+        meta = self.store.conversations.get(conversation_id)
+        if meta is None or meta.get("deleted_at") is not None:
             return None
         return self._meta(conversation_id)
 
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
+        return await self.list_channel(limit, "owner")
+
+    async def list_channel(
+        self, limit: int, channel: str, visitor_hash: str | None = None
+    ) -> list[ConversationSummary]:
         metas = [
-            self._meta(c) for c, m in self.store.conversations.items() if m["channel"] == "owner"
+            self._meta(c)
+            for c, m in self.store.conversations.items()
+            if m.get("deleted_at") is None
+            and (channel == "all" or m["channel"] == channel)
+            and (visitor_hash is None or m.get("visitor_hash") == visitor_hash)
         ]
         metas.sort(key=lambda m: m.updated_at, reverse=True)
-        return [ConversationSummary(**m.model_dump(exclude={"channel"})) for m in metas[:limit]]
+        return [
+            ConversationSummary(**m.model_dump(exclude={"visitor_hash"})) for m in metas[:limit]
+        ]
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]

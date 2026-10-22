@@ -60,6 +60,11 @@ class MemoryIndex:
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
         return []
 
+    async def list_channel(
+        self, limit: int, channel: str, visitor_hash: str | None = None
+    ) -> list[ConversationSummary]:
+        return []
+
     async def by_name(self, name: str) -> ConversationMeta | None:
         return next((m for m in self.metas.values() if m.name == name), None)
 

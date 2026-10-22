@@ -396,6 +396,8 @@ class Conversation(Document):
     summary: str | None = None
     summarized_turns: int = 0
     summary_tier: Tier | None = None
+    # Soft delete: hidden from lists and reads, never continued; the turns stay stored.
+    deleted_at: datetime | None = None
 
     class Settings:
         name = "conversations"

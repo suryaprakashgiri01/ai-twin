@@ -35,10 +35,17 @@ class MemoryConversationStore:
 
     async def load(self, conversation_id: str, limit: int) -> StoredConversation | None:
         meta = self.conversations.get(conversation_id)
-        if meta is None:
+        if meta is None or meta.get("deleted_at") is not None:
             return None
         turns = [t for _, t in sorted(self.turns.get(conversation_id, {}).items())]
         return StoredConversation(channel=meta["channel"], turns=turns[-limit:])
+
+    async def soft_delete(self, conversation_id: str, at: datetime) -> bool:
+        meta = self.conversations.get(conversation_id)
+        if meta is None or meta.get("deleted_at") is not None:
+            return False
+        meta["deleted_at"] = at
+        return True
 
 
 class FailingStore(MemoryConversationStore):
