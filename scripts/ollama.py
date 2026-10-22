@@ -43,7 +43,11 @@ PID_FILE = ROOT / "vault" / "run" / "ollama.pid"
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 SMOKE_PROMPT = "Reply with the single word: ready"
 # Inventory id -> the .env key that replaces its model name.
-MODEL_ENV = {"ollama-local": "OLLAMA_MODEL", "ollama-qwen": "OLLAMA_QUALITY_MODEL"}
+MODEL_ENV = {
+    "ollama-local": "OLLAMA_MODEL",
+    "ollama-qwen": "OLLAMA_QUALITY_MODEL",
+    "ollama-qwen-14b": "OLLAMA_MAX_MODEL",
+}
 # Desktop / tray app log locations when we did not start the server ourselves.
 MAC_APP_LOG = Path.home() / ".ollama" / "logs" / "server.log"
 WIN_APP_LOG = Path(os.environ.get("LOCALAPPDATA", "")) / "Ollama" / "server.log"

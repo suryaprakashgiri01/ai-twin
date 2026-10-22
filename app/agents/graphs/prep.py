@@ -28,11 +28,13 @@ from app.agents.generation import AnswerGenerator, Generation, MidStreamError
 from app.agents.graphs.owner import (
     ErrorInfo,
     Searcher,
+    choose,
     floor_tier,
     history_messages,
     turn_tier,
     visible_history,
 )
+from app.agents.models import AUTO_CHOICE, ModelChoice
 from app.agents.prep.filter import OutwardFilter
 from app.agents.prompts import prep as prompts
 from app.agents.prompts.prep import PrepType
@@ -168,6 +170,7 @@ class PrepDeps:
     generator: AnswerGenerator
     filter: OutwardFilter
     settings: PrepSettings = field(default_factory=PrepSettings)
+    models: ModelChoice = AUTO_CHOICE
 
 
 class PrepState(TypedDict, total=False):
@@ -182,6 +185,7 @@ class PrepState(TypedDict, total=False):
     revise: Revise | None
     model: str | None
     prefer: Prefer | None
+    models: ModelChoice | None
     context: OwnerContext | None
     started: float
     # plan
@@ -333,9 +337,10 @@ class PrepNodes:
         self, state: PrepState, tier: Tier, messages: list[BaseMessage], gen: Generation
     ) -> tuple[str, ErrorInfo | None]:
         parts: list[str] = []
+        model, prefer = choose(state, self.deps.models, tier)
         try:
             async for text in self.deps.generator.stream(
-                tier, messages, gen, model=state.get("model"), prefer=state.get("prefer")
+                tier, messages, gen, model=model, prefer=prefer
             ):
                 parts.append(text)
         except MidStreamError as exc:
@@ -376,13 +381,10 @@ class PrepNodes:
         return floor
 
     async def _can_generate(self, tier: Tier, state: PrepState) -> bool:
+        model, prefer = choose(state, self.deps.models, tier)
         try:
             await self.deps.orchestrator.select(
-                Role.GENERATOR,
-                tier,
-                model=state.get("model"),
-                prefer=state.get("prefer"),
-                privileged=True,
+                Role.GENERATOR, tier, model=model, prefer=prefer, privileged=True
             )
         except NoEligibleModelError:
             return False
@@ -463,6 +465,7 @@ def initial_state(
     model: str | None = None,
     prefer: Prefer | None = None,
     context: OwnerContext | None = None,
+    models: ModelChoice | None = None,
 ) -> PrepState:
     return PrepState(
         conversation_id=conversation_id,
@@ -475,6 +478,7 @@ def initial_state(
         revise=revise,
         model=model,
         prefer=prefer,
+        models=models,
         context=context,
         started=time.perf_counter(),
     )

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from app.agents.models import AgentModels
 from app.core.config import Settings
 from llm_orchestrator import (
     InMemoryOverrideStore,
@@ -21,6 +22,8 @@ class LLMServices:
     orchestrator: Orchestrator
     classifier: Classifier
     overrides: OverrideStore
+    # Per-agent model choice from config/agents.yaml.
+    agents: AgentModels = field(default_factory=AgentModels.empty)
 
 
 def provider_secrets(settings: Settings) -> ProviderSecrets:
@@ -29,12 +32,15 @@ def provider_secrets(settings: Settings) -> ProviderSecrets:
         cerebras_api_key=settings.cerebras_api_key,
         gemini_api_key=settings.gemini_api_key,
         openrouter_api_key=settings.openrouter_api_key,
+        anthropic_api_key=settings.anthropic_api_key,
+        openai_api_key=settings.openai_api_key,
         ollama_base_url=settings.ollama_base_url or None,
         ollama_models={
             spec_id: model
             for spec_id, model in (
                 ("ollama-local", settings.ollama_model),
                 ("ollama-qwen", settings.ollama_quality_model),
+                ("ollama-qwen-14b", settings.ollama_max_model),
             )
             if model
         },
@@ -70,4 +76,7 @@ def build_llm(settings: Settings, overrides: OverrideStore | None = None) -> LLM
     classifier = FlaggedClassifier(
         LLMClassifier(orchestrator), jev, enabled=lambda: settings.ff_jev_enabled
     )
-    return LLMServices(orchestrator=orchestrator, classifier=classifier, overrides=overrides)
+    agents = AgentModels.load(inventory, settings.agent_models_path)
+    return LLMServices(
+        orchestrator=orchestrator, classifier=classifier, overrides=overrides, agents=agents
+    )

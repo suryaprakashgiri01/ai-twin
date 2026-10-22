@@ -98,7 +98,6 @@ class PrepService:
         known_models: frozenset[str] = frozenset(),
         context: ContextBuilder | None = None,
         on_turn: TurnHook | None = None,
-        prefer: Prefer | None = "quality",
     ) -> None:
         self._graph = graph
         self._conversations = conversations
@@ -106,7 +105,6 @@ class PrepService:
         self._known_models = known_models
         self._context = context
         self._on_turn = on_turn
-        self._prefer = prefer
 
     async def prepare(self, request: PrepRequest) -> Prepared:
         if request.model and self._known_models and request.model not in self._known_models:
@@ -156,7 +154,7 @@ class PrepService:
             chars=r.chars,
             revise=r.revise,
             model=r.model,
-            prefer=r.prefer or self._prefer,
+            prefer=r.prefer,
             context=prepared.context,
         )
 
@@ -269,6 +267,7 @@ def build_prep(
         ),
         filter=OutwardFilter(denylist=guard.rules),
         settings=PrepSettings(),
+        models=llm.agents.choice("prep"),
     )
     known = frozenset(llm.orchestrator.inventory.models)
     return PrepService(

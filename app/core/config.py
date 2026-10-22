@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
 DEFAULT_MODEL_INVENTORY = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
+DEFAULT_AGENT_MODELS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
 
 
 class Settings(BaseSettings):
@@ -48,10 +49,14 @@ class Settings(BaseSettings):
     cerebras_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
+    # Paid APIs (public and private text only); their inventory entries start disabled.
+    anthropic_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
     ollama_base_url: str = ""
     # Replace the inventory's Ollama model names when set: `ollama-local` and `ollama-qwen`.
     ollama_model: str = ""
     ollama_quality_model: str = ""
+    ollama_max_model: str = ""
     typesafe_api_key: SecretStr | None = None
     jev_model: str = "jev-1.13.0"
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
@@ -59,6 +64,8 @@ class Settings(BaseSettings):
     llm_local_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
     llm_max_attempts: int = Field(default=3, ge=1, le=10)
     model_inventory_path: Path = DEFAULT_MODEL_INVENTORY
+    # Which models each owner agent uses (auto, pins, prefer): see the file's header.
+    agent_models_path: Path = DEFAULT_AGENT_MODELS
     # Offline stand-in model for keyless local runs and tests.
     llm_mock_enabled: bool = False
     # --- storage -------------------------------------------------------------

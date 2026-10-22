@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from app.agents.context import OwnerContext
 from app.agents.generation import AnswerGenerator, Generation, MidStreamError
+from app.agents.models import AUTO_CHOICE, ModelChoice
 from app.agents.prompts import owner as prompts
 from app.agents.routing import (
     GuardResult,
@@ -167,6 +168,8 @@ class OwnerDeps:
     conversations: ConversationService
     generator: AnswerGenerator
     settings: OwnerSettings = field(default_factory=OwnerSettings)
+    # config/agents.yaml for this agent; a caller's state may pass another (the super agent).
+    models: ModelChoice = AUTO_CHOICE
     today: Callable[[], date] = field(default=lambda: utcnow().date())
 
 
@@ -187,6 +190,8 @@ class OwnerState(TypedDict, total=False):
     # Raises every model call to at least this tier (the intake assistant passes confidential,
     # so only local models answer there).
     min_tier: Tier | None
+    # Overrides the graph's own model choice (the super agent passes its own).
+    models: ModelChoice | None
     # The owner's active preferences and the conversation summary (never for visitors).
     context: OwnerContext | None
     started: float
@@ -269,6 +274,12 @@ def _label(tier: Tier) -> TierLabel:
 
 def _step(step: str, started: float, **fields: Any) -> None:
     logger.info("owner step", step=step, latency_ms=_ms(started), **fields)
+
+
+def choose(state: Any, default: ModelChoice, tier: Tier) -> tuple[str | None, Prefer | None]:
+    """The generator model and prefer for a step at `tier` (request > agent config > auto)."""
+    models: ModelChoice = state.get("models") or default
+    return models.pick(tier, state.get("model"), state.get("prefer"))
 
 
 class OwnerNodes:
@@ -507,8 +518,9 @@ class OwnerNodes:
         writer: Callable[[Any], None],
     ) -> ErrorInfo | None:
         try:
+            model, prefer = choose(state, self.deps.models, plan.tier)
             async for text in self.deps.generator.stream(
-                plan.tier, plan.messages, gen, model=state.get("model"), prefer=state.get("prefer")
+                plan.tier, plan.messages, gen, model=model, prefer=prefer
             ):
                 parts.append(text)
                 writer({"token": text})
@@ -591,13 +603,10 @@ class OwnerNodes:
         return floor
 
     async def _can_generate(self, tier: Tier, state: OwnerState) -> bool:
+        model, prefer = choose(state, self.deps.models, tier)
         try:
             await self.deps.orchestrator.select(
-                Role.GENERATOR,
-                tier,
-                model=state.get("model"),
-                prefer=state.get("prefer"),
-                privileged=True,
+                Role.GENERATOR, tier, model=model, prefer=prefer, privileged=True
             )
         except NoEligibleModelError:
             return False
@@ -717,6 +726,7 @@ def initial_state(
     prefer: Prefer | None = None,
     min_tier: Tier | None = None,
     context: OwnerContext | None = None,
+    models: ModelChoice | None = None,
 ) -> OwnerState:
     return OwnerState(
         conversation_id=conversation_id,
@@ -728,5 +738,6 @@ def initial_state(
         prefer=prefer,
         min_tier=min_tier,
         context=context,
+        models=models,
         started=time.perf_counter(),
     )

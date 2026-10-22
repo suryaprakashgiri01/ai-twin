@@ -102,6 +102,19 @@ models:
     trains_on_inputs: false
     tags: [local, local-quality]
 
+  # The strongest local model, pinned by agents that need it (config/agents.yaml: the super
+  # agent's confidential steps, via `prefer: local-max`). Last among the local models in the
+  # chains, so plain auto mode never waits on it.
+  # ~9 GB; fits a 24 GB Mac beside the stack. OLLAMA_MAX_MODEL replaces it.
+  - id: ollama-qwen-14b
+    provider: ollama
+    model: qwen2.5:14b
+    roles: [router, generator, judge]
+    max_tier: confidential
+    context_window: 32768
+    trains_on_inputs: false
+    tags: [local, local-quality, local-max]
+
   - id: ollama-local
     provider: ollama
     model: llama3.2:3b
@@ -110,6 +123,43 @@ models:
     context_window: 131072
     trains_on_inputs: false
     tags: [local]
+
+  # --- paid APIs: public and private text only (validation refuses a higher max_tier) --------
+  # Disabled until you set the key and flip `enabled` (or enable it in the model overrides).
+  # Anthropic needs the optional package: uv add --package llm-orchestrator langchain-anthropic
+  - id: anthropic-sonnet
+    provider: anthropic
+    model: claude-sonnet-5-5
+    roles: [router, generator, judge]
+    max_tier: private
+    context_window: 200000
+    trains_on_inputs: false
+    cost: {input_per_mtok: 3.0, output_per_mtok: 15.0}
+    enabled: false
+    tags: [quality, paid]
+
+  - id: anthropic-opus
+    provider: anthropic
+    model: claude-opus-5-5
+    roles: [generator, judge]
+    max_tier: private
+    context_window: 200000
+    trains_on_inputs: false
+    cost: {input_per_mtok: 15.0, output_per_mtok: 75.0}
+    enabled: false
+    tags: [quality, paid]
+
+  # Any OpenAI-compatible API: set `model` and `base_url` (omit base_url for OpenAI itself).
+  # - id: openai-compatible
+  #   provider: openai
+  #   model: <model name>
+  #   base_url: https://api.example.com/v1
+  #   roles: [generator, judge]
+  #   max_tier: private
+  #   context_window: 128000
+  #   trains_on_inputs: false
+  #   enabled: false
+  #   tags: [quality, paid]
 
   # --- mock: tests and keyless local runs; available only when LLM_MOCK_ENABLED is true ----
   - id: mock
@@ -124,7 +174,7 @@ models:
 roles:
   router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
   classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
-  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, mock]
-  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, mock]
+  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, anthropic-sonnet, anthropic-opus, mock]
+  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, anthropic-sonnet, anthropic-opus, mock]
   # No fallback: without the guard model the input guard keeps its rule layers and says so.
   guard: [groq-prompt-guard-2]
