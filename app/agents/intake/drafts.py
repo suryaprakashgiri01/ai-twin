@@ -39,6 +39,7 @@ ActionName = Literal[
     "show_review",
     "source_status",
     "approve",
+    "release",
     "publish",
     "unpublish",
     "relabel",

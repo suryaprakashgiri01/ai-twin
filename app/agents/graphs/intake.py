@@ -126,7 +126,7 @@ _REPORT = re.compile(
 _BARE_REPLY = 3
 # An imperative on a document: "publish the Lumenrail note", "please approve it".
 _DOC_COMMAND = re.compile(
-    r"^\s*(?:please\s+|can you\s+|could you\s+)?(publish|unpublish|approve)\b", re.I
+    r"^\s*(?:please\s+|can you\s+|could you\s+)?(publish|unpublish|approve|release)\b", re.I
 )
 # A remark that something already happened: nothing to do.
 _ALREADY = re.compile(r"\balready\b.*\b(done|published|approved|saved|added|there)\b", re.I)
@@ -442,6 +442,7 @@ def _bare_reply(message: str) -> bool:
 _DOC_VERBS = {
     "publish": "publish",
     "approve": "approve",
+    "release": "release",
     "unpublish": "unpublish",
     "delete_document": "delete",
     "relabel": "relabel",

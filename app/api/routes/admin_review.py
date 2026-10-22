@@ -22,6 +22,7 @@ from app.services.admin_ops import (
     DocumentOut,
     DocumentPatch,
     PublishResult,
+    ReleaseIn,
     ReviewList,
     key_actor,
 )
@@ -122,9 +123,12 @@ async def unpublish(
     "/documents/{document_id}/release", summary="Release a quarantined document for indexing"
 )
 async def release(
-    document_id: str, principal: AdminKey, request: Request
+    document_id: str, principal: AdminKey, request: Request, body: ReleaseIn | None = None
 ) -> Envelope[PublishResult]:
-    return ok(await _ops(request).release(document_id, key_actor(principal.name)), "Released")
+    """`localOnly` (default true) indexes it at confidential, readable by local models only,
+    and refuses publishing; false releases it at the tier its labels give."""
+    doc = await _ops(request).release(document_id, key_actor(principal.name), body)
+    return ok(doc, "Released for local use" if (body or ReleaseIn()).local_only else "Released")
 
 
 @router.delete(

@@ -165,9 +165,11 @@ async def test_published_document_relabelled_private_is_withdrawn(api: Api) -> N
 async def test_release_quarantined_document(api: Api) -> None:
     document_id = await ingest(api, "Fixed FAKEPROJ-12 today.", "experience")
     assert (await call(api, "POST", f"/documents/{document_id}/approve")).status_code == 409
-    released = await call(api, "POST", f"/documents/{document_id}/release")
+    body = {"localOnly": False}
+    released = await call(api, "POST", f"/documents/{document_id}/release", json=body)
     assert released.status_code == 200
     assert result(released)["document"]["reviewStatus"] == "pending"
+    assert result(released)["document"]["localOnly"] is False
     assert result(released)["chunks"] == 2
     assert (await counts(api, document_id))["kb_private"] == 2
     again = await call(api, "POST", f"/documents/{document_id}/release")
@@ -176,6 +178,20 @@ async def test_release_quarantined_document(api: Api) -> None:
         e["action"] == "document.release" and e["rules"] == ["ticket-keys"]
         for e in api.audit.entries
     )
+
+
+async def test_local_only_release_is_confidential_and_never_published(api: Api) -> None:
+    document_id = await ingest(api, "Fixed FAKEPROJ-12 today.", "blog")
+    released = await call(api, "POST", f"/documents/{document_id}/release")
+    assert result(released)["document"]["localOnly"] is True
+    assert result(released)["document"]["tier"] == "confidential"
+    assert (await counts(api, document_id))["kb_confidential"] >= 1
+    assert (await call(api, "POST", f"/documents/{document_id}/approve")).status_code == 200
+    public = await call(api, "PATCH", f"/documents/{document_id}", json={"tier": "public"})
+    assert public.status_code == 409
+    refused = await call(api, "POST", f"/documents/{document_id}/publish")
+    assert refused.status_code == 409 and "local use only" in refused.json()["message"]
+    assert any(e.get("local_only") is True for e in api.audit.entries)
 
 
 async def test_patch_validation_and_unknown_documents(api: Api) -> None:

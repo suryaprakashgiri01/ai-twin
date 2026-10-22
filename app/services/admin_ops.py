@@ -167,6 +167,8 @@ class DocumentOut(ApiModel):
     label: TierLabel | None
     review_status: ReviewStatus
     published: bool
+    # Released from quarantine for local use: confidential, never publishable.
+    local_only: bool = False
     quarantine_rules: list[str]
     redaction_report: dict[str, int]
     summary: str | None
@@ -188,6 +190,13 @@ class ReviewList(ApiModel):
 class PublishResult(ApiModel):
     document: DocumentOut
     chunks: int
+
+
+class ReleaseIn(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # True: indexed at confidential (local models only) and never publishable.
+    local_only: bool = True
 
 
 class CardBackfillIn(ApiModel):
@@ -249,6 +258,7 @@ def document_out(doc: DocumentView, *, preview: bool = False) -> DocumentOut:
         label=doc.label,
         review_status=doc.review_status,
         published=doc.published,
+        local_only=doc.local_only,
         quarantine_rules=doc.quarantine_rules,
         redaction_report=doc.redaction_report,
         summary=doc.summary,
@@ -584,15 +594,18 @@ class AdminOps:
         await self._audit(actor, "document.unpublish", document_id, {})
         return document_out(doc)
 
-    async def release(self, document_id: str, actor: str) -> PublishResult:
+    async def release(
+        self, document_id: str, actor: str, body: ReleaseIn | None = None
+    ) -> PublishResult:
+        local_only = (body or ReleaseIn()).local_only
         publisher = self._publisher()
         before = await publisher.get(await self._document_oid(document_id))
-        doc, chunks = await publisher.release(before.id)
+        doc, chunks = await publisher.release(before.id, local_only=local_only)
         await self._audit(
             actor,
             "document.release",
             document_id,
-            {"rules": before.quarantine_rules, "chunks": chunks},
+            {"rules": before.quarantine_rules, "chunks": chunks, "local_only": local_only},
         )
         return PublishResult(document=document_out(doc), chunks=chunks)
 

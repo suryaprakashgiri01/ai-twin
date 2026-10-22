@@ -189,6 +189,9 @@ class KbDocumentFields(BaseModel):
     review_status: ReviewStatus = "pending"
     # Default deny: nothing is public until the owner approves it.
     published: bool = False
+    # A quarantined document the owner released for their own use: indexed at confidential
+    # (local models only) and never publishable while set.
+    local_only: bool = False
     published_at: datetime | None = None
     approved_at: datetime | None = None
     occurred_at: datetime | None = None

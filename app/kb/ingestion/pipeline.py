@@ -365,8 +365,11 @@ class Pipeline:
         await self.store.update_document(doc.id, card=card)
         return True
 
-    async def relabel_and_index(self, doc: DocumentView) -> int:
-        """Chunk, label and index a stored document (used when a quarantine is released)."""
+    async def relabel_and_index(self, doc: DocumentView, *, min_tier: Tier | None = None) -> int:
+        """Chunk, label and index a stored document (used when a quarantine is released).
+
+        `min_tier` raises the label to at least that tier (a local-only release: confidential).
+        """
         item = IngestItem(
             source_id=str(doc.source_id),
             source_kind="text",
@@ -378,11 +381,14 @@ class Pipeline:
             redaction_report=doc.redaction_report,
         )
         labelled = await self._chunk_and_label(item)
-        assert labelled.label is not None
-        await self.store.update_document(
-            doc.id, tier=labelled.label.tier, label=labelled.label.model_dump()
-        )
-        fresh = doc.model_copy(update={"tier": labelled.label.tier})
-        if labelled.label.tier == "restricted":
+        label = labelled.label
+        assert label is not None
+        if min_tier is not None and Tier.parse(label.tier) < min_tier:
+            reason = f"{label.reason}; released for local use only"
+            label = label.model_copy(update={"tier": min_tier.label, "reason": reason})
+            labelled = labelled.model_copy(update={"label": label})
+        await self.store.update_document(doc.id, tier=label.tier, label=label.model_dump())
+        fresh = doc.model_copy(update={"tier": label.tier})
+        if label.tier == "restricted":
             return 0
         return await self.index(fresh, labelled)
