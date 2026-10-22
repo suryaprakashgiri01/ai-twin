@@ -52,6 +52,7 @@ function edit(record) {
     field("Notes", h("textarea", { name: "notes", rows: 3, text: v.notes || "" })),
     h("div", { class: "row" },
       h("button", { class: "btn btn-primary", type: "submit", text: record ? "Save" : "Add" }),
+      record ? null : h("button", { class: "btn", type: "button", text: "Add to batch", title: "Append this record to the batch below, to add several at once", on: { click: () => toBatch(form) } }),
       record ? h("button", { class: "btn btn-danger", type: "button", text: "Delete", on: { click: () => remove(record) } }) : null),
     slot);
   clear(editor, form, record ? null : batch());
@@ -73,16 +74,33 @@ async function remove(record) {
   if (r.ok) { view.reload(); edit(null); }
 }
 
+let batchText;
+let batchBox;
+
+// "Add to batch" appends the form as one JSON record; hand edits to the JSON are kept.
+function toBatch(form) {
+  if (!form.reportValidity()) return;
+  let records = [];
+  try { records = batchText.value.trim() ? JSON.parse(batchText.value) : []; } catch { toast("The batch JSON is not valid; fix it first"); return; }
+  records = Array.isArray(records) ? records : [records];
+  records.push(values(form));
+  batchText.value = JSON.stringify(records, null, 2);
+  batchBox.open = true;
+  toast(`${records.length} record(s) in the batch`);
+  form.reset();
+}
+
 function batch() {
-  const text = h("textarea", { rows: 5, placeholder: '[{"kind": "application", "company": "Acme", "role": "AI Engineer", "stage": "applied", "date": "2026-10-22"}]' });
+  batchText = h("textarea", { rows: 6, placeholder: '[{"kind": "application", "company": "Acme", "role": "AI Engineer", "stage": "applied", "date": "2026-10-22"}]' });
   const slot = h("div");
-  return h("details", { class: "batch" }, h("summary", { text: "Add a batch (JSON)" }),
-    h("form", { class: "form", on: { submit: async (e) => {
-      e.preventDefault();
-      let records;
-      try { records = JSON.parse(text.value); } catch { outcome(slot, { ok: false, status: 422, error: { code: "INVALID_JSON" }, message: "That is not valid JSON" }); return; }
-      const r = await api.post("/admin/v1/records/batch", { records: Array.isArray(records) ? records : [records] });
-      outcome(slot, r, r.ok ? `Added ${r.data.length}` : "");
-      if (r.ok) view.reload();
-    } } }, text, h("button", { class: "btn", type: "submit", text: "Add batch" }), slot));
+  const form = h("form", { class: "form", on: { submit: async (e) => {
+    e.preventDefault();
+    let records;
+    try { records = JSON.parse(batchText.value); } catch { outcome(slot, { ok: false, status: 422, error: { code: "INVALID_JSON" }, message: "That is not valid JSON" }); return; }
+    const r = await api.post("/admin/v1/records/batch", { records: Array.isArray(records) ? records : [records] });
+    outcome(slot, r, r.ok ? `Added ${r.data.length}` : "");
+    if (r.ok) { view.reload(); batchText.value = ""; }
+  } } }, batchText, h("button", { class: "btn", type: "submit", text: "Add batch" }), slot);
+  batchBox = h("details", { class: "batch" }, h("summary", { text: "Add a batch (JSON)" }), form);
+  return batchBox;
 }

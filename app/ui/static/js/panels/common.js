@@ -83,8 +83,8 @@ export function listView({ path, columns, filters = {}, defaults = {}, sort, onR
 }
 
 /** A labelled field. `input` is any control. */
-export function field(label, input, hint) {
-  const required = input?.required || input?.querySelector?.("[required]");
+export function field(label, input, hint, { required: marked = false } = {}) {
+  const required = marked || input?.required || input?.querySelector?.("[required]");
   return h("label", { class: "field" },
     h("span", {}, label, required ? h("span", { class: "req", "aria-hidden": "true", text: " *" }) : null),
     input, hint ? h("span", { class: "hint", text: hint }) : null);

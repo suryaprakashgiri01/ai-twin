@@ -1,7 +1,8 @@
 // Security: guard events on the public surface (no visitor text is ever stored) and alerting.
 
 import { api } from "../api.js";
-import { badge, busy, clear, errorLine, h, kv, time, toast } from "../dom.js";
+import { badge, clear, errorLine, h, iconButton, kv, time, toast } from "../dom.js";
+import { icon } from "../icons.js";
 import { head, listView } from "./common.js";
 
 const KINDS = ["canary_hit", "output_blocked", "input_blocked", "auth_failed", "lead_delivery_failed", "llm_unavailable",
@@ -31,12 +32,12 @@ async function loadAlerts() {
   const r = await api.get("/admin/v1/alerts/status");
   if (!r.ok) { clear(alerts, errorLine(r)); return; }
   const a = r.data;
-  const test = h("button", { class: "btn btn-sm", type: "button", text: "Send a test alert", disabled: !a.smtpConfigured });
-  test.addEventListener("click", () => busy(test, async () => {
+  const test = iconButton(icon("bell", { size: 14 }), a.smtpConfigured ? "Send one test alert email" : "Configure SMTP to send alerts", async () => {
     if (!window.confirm("Send one test alert email to your alert address?")) return;
     const sent = await api.post("/admin/v1/alerts/test");
     toast(sent.ok && sent.data.sent ? "Test alert sent" : `Not sent: ${sent.error?.code || "check SMTP"}`);
-  }));
+  }, { cls: "btn-sm", text: "Test alert", spin: true });
+  test.disabled = !a.smtpConfigured;
   clear(alerts,
     h("div", { class: "card-title" }, h("strong", { text: "Alerts" }), badge(a.smtpConfigured ? "SMTP configured" : "SMTP not configured", a.smtpConfigured ? "ok" : "warn"), h("span", { class: "spacer" }), test),
     kv([["Cooldown", `${a.cooldownMinutes} min`], ["Digest", `${a.digestHour}:00 ${a.timezone}`], ["Last digest", a.lastDigest ? time(a.lastDigest) : "—"],

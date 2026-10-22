@@ -2,6 +2,7 @@
 
 import { api } from "../api.js";
 import { badge, clear, h, kv, select, time, toast } from "../dom.js";
+import { icon } from "../icons.js";
 import { head, listView } from "./common.js";
 
 const STATUS = ["new", "reviewed", "replied", "archived"];
@@ -35,7 +36,8 @@ function open(l) {
     if (r.ok) view.reload();
   } } });
   clear(detail,
-    h("div", { class: "card-title" }, h("strong", { text: `${l.name} · ${l.company || "—"}` }), status),
+    h("div", { class: "card-title" }, h("strong", { text: `${l.name} · ${l.company || "—"}` }), status, h("span", { class: "spacer" }),
+      l.email ? h("a", { class: "btn btn-primary btn-sm icon-button", href: `mailto:${encodeURIComponent(l.email)}?subject=${encodeURIComponent(`Re: ${l.role || "your message"}`)}`, title: `Write to ${l.email} in your mail app` }, icon("mail", { size: 14 }), h("span", { text: "Contact" })) : null),
     kv([["Email", l.email], ["Role", l.role], ["Location", l.location], ["Type", l.employmentType], ["Link", l.link],
       ["Triage", l.triage ? `${l.triage} (${Math.round((l.triageConfidence || 0) * 100)}%)` : "—"], ["Fit", l.fitNote], ["Duplicates", l.duplicates],
       ["Emailed", l.emailedAt ? time(l.emailedAt) : "—"], ["Source", l.source]]),
