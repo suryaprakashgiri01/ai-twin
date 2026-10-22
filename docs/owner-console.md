@@ -106,6 +106,24 @@ model:
 `verify=true`, the Models tab's "Check providers", makes the same check as `make models-check`, which uses the
 same endpoint table. The chat model picker offers only active models.
 
+## Quick starts
+
+An empty chat shows quick starts for the agent. Clicking one fills the message box, so you can edit it before
+sending. The star in the message box saves its text as one of your own quick starts for that agent
+(`POST /admin/v1/starters`, stored in `chat_starters`, at most 50 per agent). The × on a saved one deletes it.
+Saves and deletes are audited.
+
+## Lists and sources
+
+- **Lists** (Review, Records, Memories, Leads, Security):
+  - search, filters with readable labels and defaults (Review opens on pending), sortable headers;
+  - 10, 20, 50 or 100 rows per page; first, previous, page, next and last;
+  - a refresh icon that spins while loading.
+  - In list-and-detail tabs, the first row is selected and highlighted.
+- **Sources** under an answer are grouped by kind: GitHub repositories, work projects, profile and resume,
+  notes, and other documents. Traces store each source's category and tier for this. Titles redacted to the
+  same text (for example `[PERSON]`) show their category and a short document id. The redaction itself stays.
+
 ## `make run` on Windows
 
 On Windows, `make` ends at Ctrl+C before the server has finished stopping. `scripts/run.py` therefore opens the
