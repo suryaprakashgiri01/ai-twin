@@ -116,3 +116,10 @@ async def test_agent_routes_list_put_reset_and_audit(api: Api) -> None:
     assert actions == [("agent_settings.put", "prep"), ("agent_settings.reset", "prep")]
     assert api.audit.entries[0]["after"]["model"] == "cloud"
     assert (await api.client.get("/admin/v1/agents")).status_code == 401
+
+
+async def test_model_list_for_the_picker_hides_provider_names(api: Api) -> None:
+    listed = result(await api.client.get("/admin/v1/models", headers=api.headers))
+    assert listed and {"id", "provider", "maxTier", "enabled", "local", "roles"} <= set(listed[0])
+    assert all("model" not in m for m in listed)
+    assert all(m["local"] == (m["provider"] in {"ollama", "mock"}) for m in listed)

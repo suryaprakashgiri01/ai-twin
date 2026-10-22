@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from app.auth.keys import issue_key
@@ -41,3 +44,29 @@ async def test_me_gives_every_key_its_role(scopes: list[str], role: str) -> None
         assert result(me) == {"name": "tester", "scopes": scopes, "role": role}
         assert (await client.get("/v1/me")).status_code == 401
         assert (await client.get("/v1/me", headers={"X-API-Key": "atw_nope"})).status_code == 401
+
+
+STATIC = Path(__file__).resolve().parents[1] / "app" / "ui" / "static"
+_IMPORT = re.compile(r"""(?:from|import)\s*\(?\s*["'](\.{1,2}/[^"']+)["']""")
+_UNSAFE = (
+    "innerHTML",
+    "outerHTML",
+    "insertAdjacentHTML",
+    "document.write",
+    "eval(",
+    "new Function",
+)
+
+
+def test_console_assets_are_csp_safe_and_every_import_resolves() -> None:
+    """No inline script or handler (CSP blocks them), no HTML strings, no missing module."""
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", page)
+    assert not re.search(r"\son[a-z]+=", page)
+    scripts = sorted(STATIC.rglob("*.js"))
+    assert scripts
+    for script in scripts:
+        text = script.read_text(encoding="utf-8")
+        assert not [u for u in _UNSAFE if u in text], script.name
+        for target in _IMPORT.findall(text):
+            assert (script.parent / target).resolve().is_file(), f"{script.name} imports {target}"
