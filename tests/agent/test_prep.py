@@ -158,3 +158,11 @@ async def test_non_streaming_response_carries_the_answer_and_sources() -> None:
     response = await service.answer(prepared)
     assert response.answer == "I led it." and response.kind == "pitch"
     assert [s.document_id for s in response.sources] == ["p1"]
+
+
+async def test_redaction_placeholders_in_an_answer_are_flagged() -> None:
+    graph, _, conversations = agent(
+        [hit("p1", Tier.PRIVATE, PROJECT)], cloud=["At [PERSON] I led the rewrite."]
+    )
+    state = await run(graph, conversations, question="Tell me about yourself")
+    assert any("[PERSON]" in c and "real names" in c for c in state["checks"])

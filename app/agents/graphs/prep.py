@@ -106,6 +106,11 @@ _TYPE_QUERIES: dict[PrepType, tuple[str, ...]] = {
     "project": ("architecture, technologies and results of my projects",),
 }
 _NUMBER = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)?\s?(?:%|x|ms|s|k|m|tb|gb|mb)?(?!\w)", re.I)
+# Redaction placeholders (app.kb.ingestion.redaction) that reached an answer.
+_PLACEHOLDER = re.compile(
+    r"\[(PERSON|EMAIL|PHONE|CARD|IBAN|IP|PAN|AADHAAR|UAN|IFSC|BANK_ACCOUNT|"
+    r"PASSPORT|ROLL_NUMBER|DOB)\]"
+)
 _LIST_MARKER = re.compile(r"(?m)^\s*\d+[.)]\s")
 
 
@@ -362,6 +367,13 @@ class PrepNodes:
         if missing:
             checks.append(
                 f"Fill {missing} {prompts.MISSING_METRIC} placeholder(s) with real figures"
+            )
+        redacted = sorted(set(_PLACEHOLDER.findall(answer)))
+        if redacted:
+            checks.append(
+                "Replace redacted placeholder(s) "
+                + ", ".join(f"[{p}]" for p in redacted)
+                + " with the real names before sending"
             )
         numbers = unsourced_numbers(answer, context)
         if numbers:
