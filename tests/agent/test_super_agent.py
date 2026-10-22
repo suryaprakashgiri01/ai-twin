@@ -60,6 +60,14 @@ class FakeIntake:
             yield "token", {"text": "Added the Acme interview (today 15:00)."}
             yield "done", {"action": self.action, "pending": False, "status": "done"}
             return
+        if self.action == "ask" and len(self.told) == 1:
+            yield "token", {"text": "To add a record, I still need:\n- stage"}
+            yield "done", {"action": "add_record", "pending": False, "status": "asked"}
+            return
+        if self.action == "ask":
+            yield "token", {"text": "Added the Acme interview (screen)."}
+            yield "done", {"action": "add_record", "pending": False, "status": "done"}
+            return
         if self.action == "none":
             yield "token", {"text": "I can add notes and records. What would you like to do?"}
             yield "done", {"action": None, "pending": False, "status": "chat"}
@@ -262,3 +270,22 @@ async def test_an_intake_step_that_wrote_nothing_says_so() -> None:
     answer = of(events, "token")[0]["text"]
     assert answer.startswith("**Not saved**\nNothing was saved")
     assert "**Saved**" not in answer
+
+
+async def test_intake_question_waits_and_the_answer_goes_back_to_intake() -> None:
+    intake = FakeIntake(action="ask")
+    agent, _, conversations = make(
+        planner=[plan(("intake", "I have an interview with Acme today at 3 pm"))],
+        cloud=["unused"],
+        local=["unused"],
+        hits=[],
+        intake=intake,
+    )
+    events, cid = await turn(agent, conversations, "I have an interview with Acme today at 3 pm")
+    assert of(events, "done")[0]["pending"] is True
+    assert "stage" in of(events, "token")[0]["text"]
+    events, _ = await turn(agent, conversations, "screen", cid)
+    assert of(events, "meta")[0]["plan_source"] == "reply"
+    assert intake.told == ["I have an interview with Acme today at 3 pm", "screen"]
+    assert of(events, "token")[0]["text"] == "Added the Acme interview (screen)."
+    assert of(events, "done")[0]["pending"] is False

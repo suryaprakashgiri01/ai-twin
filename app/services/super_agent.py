@@ -137,6 +137,9 @@ class SuperRequest(ApiModel):
     model: str | None = Field(default=None, max_length=100)
 
 
+Waiting = Literal["draft", "question"] | None
+
+
 @dataclass
 class Told:
     """What one message to the intake conversation produced."""
@@ -163,6 +166,7 @@ class StepResult:
     intake_conversation: str | None = None
     # An intake step that wrote something (not a draft waiting, not a chat reply).
     saved: bool = False
+    waiting: Waiting = None
 
     def summary(self) -> dict[str, Any]:
         status = "error" if self.error else "pending" if self.pending else "done"
@@ -198,12 +202,16 @@ class SuperDeps:
     today: Callable[[], date] = field(default=lambda: utcnow().date())
 
 
-def _linked(history: list[Turn]) -> tuple[str | None, bool]:
-    """The linked intake conversation and whether a draft there waits for the owner."""
+def _linked(history: list[Turn]) -> tuple[str | None, Waiting]:
+    """The linked intake conversation, and what waits there for the owner: a draft to confirm
+    or a question (a missing detail) to answer."""
     for turn in reversed(history):
         if turn.role == "assistant" and turn.guards.get("intake_conversation"):
-            return str(turn.guards["intake_conversation"]), bool(turn.guards.get("intake_pending"))
-    return None, False
+            waiting = turn.guards.get("intake_waiting")
+            if waiting is None and turn.guards.get("intake_pending"):
+                waiting = "draft"
+            return str(turn.guards["intake_conversation"]), cast(Waiting, waiting)
+    return None, None
 
 
 class SuperAgent:
@@ -265,8 +273,8 @@ class SuperAgent:
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         started = time.perf_counter()
         cid = prepared.conversation_id
-        intake_cid, pending = _linked(prepared.history)
-        plan, source = await self._choose_plan(prepared, pending)
+        intake_cid, waiting = _linked(prepared.history)
+        plan, source = await self._choose_plan(prepared, waiting)
         steps = [s.model_dump() for s in plan.steps]
         yield "meta", {"conversation_id": cid, "mode": MODE, "plan": steps, "plan_source": source}
         results: list[StepResult] = []
@@ -284,7 +292,7 @@ class SuperAgent:
         if self.d.on_turn is not None:
             self.d.on_turn(cid, seq)
         tier = max((r.tier for r in results), default=Tier.PRIVATE)
-        waiting = any(r.pending for r in results)
+        pending = any(r.pending for r in results)
         yield (
             "done",
             {
@@ -292,7 +300,7 @@ class SuperAgent:
                 "seq": seq,
                 "tier": tier.label,
                 "steps": len(results),
-                "pending": waiting,
+                "pending": pending,
                 "models": sorted({r.model for r in results if r.model}),
                 "latency_ms": round((time.perf_counter() - started) * 1000, 1),
             },
@@ -302,15 +310,16 @@ class SuperAgent:
             steps=[r.agent for r in results],
             plan_source=source,
             tier=tier.label,
-            pending=waiting,
+            pending=pending,
             errors=sum(1 for r in results if r.error),
         )
         output(answer)
 
-    async def _choose_plan(self, prepared: Prepared, pending: bool) -> tuple[SuperPlan, str]:
+    async def _choose_plan(self, prepared: Prepared, waiting: Waiting) -> tuple[SuperPlan, str]:
         message = prepared.request.message
-        if pending and classify_rules(message) is not None:
-            # "yes", "no" or an edit for the draft intake is waiting on: straight back to it.
+        # A yes, no or edit for a waiting draft, or the answer to intake's question (the stage,
+        # a date): straight back to intake, which holds the rest of the request.
+        if (waiting == "draft" and classify_rules(message) is not None) or waiting == "question":
             return SuperPlan(steps=[Step(agent="intake", instruction=message)]), "reply"
         return await self._plan(prepared)
 
@@ -318,7 +327,7 @@ class SuperAgent:
         history = visible_history(prepared.history, Tier.CONFIDENTIAL, PLAN_HISTORY)
         tier = max([Tier.PRIVATE, *(turn_tier(t) for t in history)])
         messages: list[BaseMessage] = [
-            SystemMessage(content=prompts.PLAN_V1.format(today=self.d.today().isoformat())),
+            SystemMessage(content=prompts.PLAN_V2.format(today=self.d.today().isoformat())),
             *history_messages(history, PLAN_TURN_CHARS),
             HumanMessage(content=f"Owner: {prepared.request.message}"),
         ]
@@ -410,8 +419,12 @@ class SuperAgent:
             told = await self._tell("yes", told.conversation_id, prepared)
             draft = told.draft
         text = told.text
+        waiting: Waiting = None
         if draft is not None:
             text = "\n\n".join(p for p in (text, str(draft.get("prompt") or "")) if p)
+            waiting = "draft"
+        elif told.status == "asked":
+            waiting = "question"  # intake needs a detail; the owner's next message answers it
         elif told.status != "done":
             # Intake answered without writing (it did not recognise a change): say so plainly.
             text = "\n\n".join(p for p in (NOT_SAVED, text) if p)
@@ -420,10 +433,11 @@ class SuperAgent:
             text=text,
             tier=Tier.CONFIDENTIAL,
             model="local",
-            pending=draft is not None,
+            pending=waiting is not None,
             action=told.action,
             intake_conversation=told.conversation_id,
-            saved=draft is None and told.status == "done",
+            saved=waiting is None and told.status == "done",
+            waiting=waiting,
         )
 
     async def _tell(self, message: str, intake_cid: str | None, prepared: Prepared) -> Told:
@@ -462,9 +476,11 @@ class SuperAgent:
         )
         guards: dict[str, Any] = {"agents": [r.agent for r in results]}
         if intake_cid:
+            waiting = next((r.waiting for r in results if r.waiting), None)
             guards |= {
                 "intake_conversation": intake_cid,
-                "intake_pending": any(r.pending for r in results),
+                "intake_pending": waiting is not None,
+                "intake_waiting": waiting,
             }
         stored = await self.d.conversations.append_turn(
             ref,
