@@ -141,10 +141,12 @@ def build_chat_model(spec: ModelSpec, secrets: ProviderSecrets, timeout: float) 
         case Provider.OLLAMA:
             from langchain_ollama import ChatOllama
 
+            # A reasoning model's thinking comes back separately, never in the content.
             return ChatOllama(
                 model=secrets.ollama_models.get(spec.id) or spec.model,
                 base_url=secrets.ollama_base_url,
                 client_kwargs={"timeout": timeout},
+                reasoning=True if "reasoning" in spec.capabilities else None,
             )
         case Provider.MOCK:
             return MockChatModel()

@@ -23,6 +23,7 @@ from tenacity.wait import wait_base
 
 from llm_orchestrator.hooks import AttemptEvent, notify_attempt
 from llm_orchestrator.providers import ModelFactory
+from llm_orchestrator.thinking import strip_thinking
 from llm_orchestrator.types import (
     Attempt,
     ModelSpec,
@@ -71,6 +72,17 @@ def usage_of(message: AIMessage) -> TokenUsage:
     if not meta:
         return TokenUsage()
     return TokenUsage(input_tokens=meta["input_tokens"], output_tokens=meta["output_tokens"])
+
+
+def without_thinking(message: AIMessage, spec: ModelSpec) -> AIMessage:
+    """The reply with any `<think>` text removed; only the amount removed is logged."""
+    if not isinstance(message.content, str):
+        return message
+    text, removed = strip_thinking(message.content)
+    if not removed:
+        return message
+    logger.info("thinking removed", model=spec.id, chars=removed)
+    return message.model_copy(update={"content": text})
 
 
 def limit_kwargs(spec: ModelSpec, max_tokens: int | None) -> dict[str, Any]:
@@ -182,7 +194,7 @@ class Executor:
             )
             raise
         self._record(spec, ctx, number, started, outcome="ok", usage=usage_of(message))
-        return message
+        return without_thinking(message, spec)
 
     def _record(
         self,

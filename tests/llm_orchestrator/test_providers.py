@@ -89,3 +89,13 @@ async def test_missing_key_models_are_skipped_not_errors() -> None:
 def test_mock_model_does_not_echo_input() -> None:
     reply = MockChatModel().invoke([HumanMessage(content="secret words")])
     assert "secret" not in str(reply.content)
+
+
+def test_ollama_reasoning_models_separate_their_thinking() -> None:
+    secrets = ProviderSecrets(ollama_base_url="http://127.0.0.1:11434")
+    plain = build_chat_model(_spec("ollama"), secrets, timeout=5)
+    thinker_spec = ModelSpec.model_validate(
+        {**spec("ollama-t", provider="ollama"), "capabilities": ["reasoning"]}
+    )
+    thinker = build_chat_model(thinker_spec, secrets, timeout=5)
+    assert plain.reasoning is None and thinker.reasoning is True  # type: ignore[attr-defined]

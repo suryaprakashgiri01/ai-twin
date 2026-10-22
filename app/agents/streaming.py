@@ -32,6 +32,7 @@ from llm_orchestrator import (
 )
 from llm_orchestrator.executor import CallContext, classify_error, log_attempt
 from llm_orchestrator.hooks import exhausted
+from llm_orchestrator.thinking import ThinkingFilter
 
 logger = structlog.get_logger(__name__)
 
@@ -71,22 +72,27 @@ class StreamingGenerator:
         for index, (spec, chat) in enumerate(candidates):
             started = time.perf_counter()
             streamed = False
+            thinking = ThinkingFilter()
             try:
                 async for chunk in self._chunks(chat, spec, messages, ctx):
                     self._count(out, chunk)
-                    text = chunk.text
+                    text = thinking.feed(chunk.text)
                     if not text:
                         continue
                     if not streamed:
                         streamed = True
                         out.model_id, out.fallback_used = spec.id, index > 0
                     yield text
+                if tail := thinking.flush():
+                    yield tail
             except Exception as exc:
                 self._failed(ctx, spec, started, exc)
                 if streamed:
                     raise MidStreamError(spec.id, type(exc).__name__) from exc
                 continue
             out.model_id, out.fallback_used = spec.id, index > 0
+            if thinking.removed:
+                logger.info("thinking removed", model=spec.id, chars=thinking.removed)
             usage = TokenUsage(input_tokens=out.input_tokens, output_tokens=out.output_tokens)
             log_attempt(ctx, spec, number=1, outcome="ok", latency_ms=_ms(started), usage=usage)
             return
