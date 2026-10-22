@@ -14,15 +14,17 @@ export function mount(root) {
     path: "/admin/v1/review",
     sort: ["createdAt", "desc"],
     filters: { reviewStatus: ["pending", "approved", "rejected", "quarantined"], tier: TIERS, category: CATEGORIES },
+    defaults: { reviewStatus: "pending" },
     columns: [
-      ["Title", (d) => d.title],
+      ["Title", (d) => d.title, "title"],
       ["Status", (d) => badge(d.reviewStatus, d.reviewStatus === "quarantined" ? "warn" : d.reviewStatus === "approved" ? "ok" : "")],
-      ["Tier", (d) => d.tier],
-      ["Category", (d) => d.category],
+      ["Tier", (d) => d.tier, "tier"],
+      ["Category", (d) => d.category, "category"],
       ["Published", (d) => (d.published ? "yes" : "—")],
-      ["Created", (d) => time(d.createdAt)],
+      ["Created", (d) => time(d.createdAt), "createdAt"],
     ],
     onRow: (d) => open(d.id),
+    autoSelect: true,
     emptyText: "The review queue is empty.",
   });
   const cards = h("button", { class: "btn", type: "button", text: "Write missing cards", title: "Overview summaries for documents that have none" });

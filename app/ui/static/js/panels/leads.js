@@ -14,9 +14,10 @@ export function mount(root) {
     path: "/admin/v1/leads",
     sort: ["createdAt", "desc"],
     filters: { status: STATUS },
-    columns: [["Received", (l) => time(l.createdAt)], ["Name", (l) => l.name], ["Company", (l) => l.company], ["Role", (l) => l.role],
-      ["Triage", (l) => l.triage || "—"], ["Status", (l) => badge(l.status, l.status === "new" ? "warn" : "")]],
+    columns: [["Received", (l) => time(l.createdAt), "createdAt"], ["Name", (l) => l.name, "name"], ["Company", (l) => l.company, "company"],
+      ["Role", (l) => l.role], ["Triage", (l) => l.triage || "—", "triage"], ["Status", (l) => badge(l.status, l.status === "new" ? "warn" : ""), "status"]],
     onRow: open,
+    autoSelect: true,
     emptyText: "No leads yet.",
   });
   root.append(head("Leads", "Opportunities visitors shared. Contact details stay here; nothing is sent from this tab."),

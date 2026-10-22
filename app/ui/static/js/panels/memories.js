@@ -17,10 +17,10 @@ export function mount(root) {
     filters: { status: ["pending", "active", "archived"], kind: KINDS, tier: ["private", "confidential"] },
     columns: [
       ["Memory", (m) => m.text],
-      ["Kind", (m) => m.kind],
-      ["Status", (m) => badge(m.status, m.status === "active" ? "ok" : m.status === "pending" ? "warn" : "")],
+      ["Kind", (m) => m.kind, "kind"],
+      ["Status", (m) => badge(m.status, m.status === "active" ? "ok" : m.status === "pending" ? "warn" : ""), "status"],
       ["Tier", (m) => m.tier],
-      ["Uses", (m) => m.uses],
+      ["Uses", (m) => m.uses, "uses"],
     ],
     onRow: (m) => edit(m),
   });

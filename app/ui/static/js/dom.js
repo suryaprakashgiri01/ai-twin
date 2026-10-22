@@ -89,14 +89,59 @@ export function errorLine(r) {
   return h("div", { class: "error-line", text: `${code}: ${r.message || "Request failed"}` });
 }
 
-/** Build a table from rows and [header, cell(row)] columns. */
-export function table(rows, columns, onRow) {
-  const head = h("tr", {}, columns.map(([title]) => h("th", { text: title })));
-  const body = h("tbody", {}, rows.map((row) => h("tr",
-    { class: onRow ? "clickable" : "", on: onRow ? { click: () => onRow(row) } : undefined },
-    columns.map(([, cell]) => {
-      const value = cell(row);
-      return h("td", {}, value instanceof Node ? value : String(value ?? "—"));
-    }))));
+/** Build a table from rows and [header, cell(row), sortKey?] columns. `opts.sort` is
+ * [column, order] and `opts.onSort(key)` makes headers with a sort key clickable;
+ * `opts.selected(row)` marks the selected row. */
+export function table(rows, columns, onRow, opts = {}) {
+  const [sortKey, sortOrder] = opts.sort || [];
+  const head = h("tr", {}, columns.map(([title, , key]) => {
+    if (!key || !opts.onSort) return h("th", { text: title });
+    const active = key === sortKey;
+    return h("th", { class: `sortable ${active ? "sorted" : ""}`, "aria-sort": active ? (sortOrder === "asc" ? "ascending" : "descending") : "none" },
+      h("button", { class: "th-sort", type: "button", on: { click: () => opts.onSort(key) } },
+        title, " ", sortIcon(active ? sortOrder : null)));
+  }));
+  const body = h("tbody", {}, rows.map((row) => {
+    const tr = h("tr", { class: onRow ? "clickable" : "" },
+      columns.map(([, cell]) => {
+        const value = cell(row);
+        return h("td", {}, value instanceof Node ? value : String(value ?? "—"));
+      }));
+    if (opts.selected?.(row)) tr.classList.add("selected");
+    if (onRow) tr.addEventListener("click", () => {
+      for (const other of tr.parentNode.children) other.classList.remove("selected");
+      tr.classList.add("selected");
+      onRow(row);
+    });
+    return tr;
+  }));
   return h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, head), body));
+}
+
+function sortIcon(order) {
+  return h("span", { class: `sort-mark ${order ? "on" : ""}`, text: order === "asc" ? "▲" : order === "desc" ? "▼" : "↕" });
+}
+
+/** "reviewStatus" → "Review status", "maxTier" → "Max tier". */
+export function humanize(key) {
+  const words = String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** A button that is an icon (with a tooltip and aria-label), optionally with text. It pops when
+ * clicked; `spin` keeps the icon turning while the returned promise of `onClick` runs. */
+export function iconButton(iconEl, label, onClick, { text, cls = "", spin = false, type = "button" } = {}) {
+  const button = h("button", { class: `btn icon-button ${cls}`.trim(), type, title: label, "aria-label": label }, iconEl, text ? h("span", { text }) : null);
+  if (onClick) {
+    button.addEventListener("click", async (event) => {
+      button.classList.remove("pop");
+      void button.offsetWidth; // restart the animation
+      button.classList.add("pop");
+      if (!spin) { onClick(event); return; }
+      button.classList.add("spinning");
+      button.disabled = true;
+      try { await onClick(event); } finally { button.classList.remove("spinning"); button.disabled = false; }
+    });
+  }
+  return button;
 }

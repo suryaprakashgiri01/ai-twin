@@ -17,8 +17,8 @@ export function mount(root) {
     path: "/admin/v1/records",
     sort: ["date", "desc"],
     filters: { kind: KINDS, workMode: WORK.slice(1), companyType: COMPANY.slice(1) },
-    columns: [["Date", (r) => r.date], ["Kind", (r) => r.kind], ["Company", (r) => r.company], ["Role", (r) => r.role],
-      ["Stage", (r) => r.stage], ["Platform", (r) => r.platform]],
+    columns: [["Date", (r) => (r.date || "").slice(0, 10), "date"], ["Kind", (r) => r.kind, "kind"], ["Company", (r) => r.company, "company"],
+      ["Role", (r) => r.role, "role"], ["Stage", (r) => r.stage, "stage"], ["Platform", (r) => r.platform]],
     onRow: (r) => edit(r),
   });
   root.append(head("Records", "Every application, call, interview and offer. Ask questions about them in Chat."),

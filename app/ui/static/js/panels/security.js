@@ -4,6 +4,8 @@ import { api } from "../api.js";
 import { badge, busy, clear, errorLine, h, kv, time, toast } from "../dom.js";
 import { head, listView } from "./common.js";
 
+const KINDS = ["canary_hit", "output_blocked", "input_blocked", "auth_failed", "lead_delivery_failed", "llm_unavailable",
+  "ingestion_failed", "meta_probe", "rate_limited", "lead_refused", "grounding_fail_open"];
 let view;
 let alerts;
 
@@ -12,9 +14,9 @@ export function mount(root) {
   view = listView({
     path: "/admin/v1/security/events",
     sort: ["createdAt", "desc"],
-    filters: { severity: ["low", "medium", "high", "critical"] },
-    columns: [["When", (e) => time(e.createdAt)], ["Kind", (e) => e.kind],
-      ["Severity", (e) => badge(e.severity, e.severity === "critical" || e.severity === "high" ? "err" : e.severity === "medium" ? "warn" : "")],
+    filters: { kind: KINDS, severity: ["low", "medium", "high", "critical"] },
+    columns: [["When", (e) => time(e.createdAt), "createdAt"], ["Kind", (e) => e.kind, "kind"],
+      ["Severity", (e) => badge(e.severity, e.severity === "critical" || e.severity === "high" ? "err" : e.severity === "medium" ? "warn" : ""), "severity"],
       ["Rules", (e) => e.rules.join(", ")], ["Surface", (e) => e.surface], ["Alerted", (e) => (e.alertedAt ? time(e.alertedAt) : "—")]],
     emptyText: "No security events.",
   });
