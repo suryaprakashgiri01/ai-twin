@@ -1,6 +1,7 @@
 """Build and refresh the knowledge base from a manifest: `python -m scripts.kb_sync [...]`.
 
-  (no flags)          dry run: each entry as new, changed or unchanged; nothing is written
+  (no flags)          dry run: each entry as new, changed or unchanged; nothing reaches the
+                      API (local_repo digests are refreshed under vault/kb/docs/generated/)
   --apply             ingest new entries; re-ingest changed ones (their old documents go)
   --only KEY[,KEY]    limit the run to these manifest keys
   cards [--apply]     write missing document cards (overview summaries) for indexed documents
@@ -28,6 +29,14 @@ run a no-op. Each entry has a `key` and exactly one of `file`, `text`, `url` or 
       - key: repos
         repos: [owner/one, owner/two]  # must be in GITHUB_SYNC_REPOS
         tags: [github]
+      - key: work-repo
+        local_repo: ~/code/some-repo   # a local clone; nothing is fetched or sent
+        author: me@work.example        # whose commits to summarise
+        category: company-projects     # confidential: local models only
+        release: local
+
+A `local_repo` entry is turned into a Markdown digest (README, docs, languages, layout and the
+author's own commits) under `vault/kb/docs/generated/` and ingested like a note.
 
 The script issues a temporary admin key in MongoDB and revokes it when done, like `seed`.
 """
@@ -48,6 +57,7 @@ import httpx
 import yaml
 
 from app.core.logging import setup_logging
+from scripts import repo_digest
 from scripts._common import ROOT, fail, info, ok, read_env, warn
 from scripts.seed import admin_client
 
@@ -55,7 +65,9 @@ KB_DIR = ROOT / "vault" / "kb"
 MANIFEST = KB_DIR / "manifest.yaml"
 STATE = KB_DIR / "state.json"
 TERMINAL = frozenset({"done", "quarantined", "failed"})
-KINDS = ("file", "text", "url", "repos")
+KINDS = ("file", "text", "url", "repos", "local_repo")
+# Built from a local git repository by scripts.repo_digest; git-ignored like the rest of vault/.
+GENERATED = "docs/generated"
 META_KEYS = ("category", "tags", "tier", "summary", "occurredAt")
 
 
@@ -71,14 +83,31 @@ class Entry:
     meta: dict[str, Any]
     title: str | None = None
     release: str | None = None
+    # local_repo: whose commits the digest summarises (an e-mail or a name).
+    author: str | None = None
 
     def path(self) -> Path:
+        if self.kind == "local_repo":
+            return KB_DIR / GENERATED / f"{self.key}.md"
         raw = Path(str(self.value)).expanduser()
         return raw if raw.is_absolute() else KB_DIR / raw
 
+    def build(self) -> None:
+        """Write a local_repo entry's digest; a new commit changes its checksum."""
+        if self.kind != "local_repo":
+            return
+        try:
+            text = repo_digest.digest(Path(str(self.value)), self.author or "", self.title)
+        except repo_digest.DigestError as exc:
+            raise SyncError(f"{self.key}: {exc}") from exc
+        target = self.path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
     def checksum(self) -> str:
         digest = hashlib.sha256(json.dumps(self.meta, sort_keys=True).encode())
-        if self.kind in ("file", "text"):
+        self.build()
+        if self.kind in ("file", "text", "local_repo"):
             path = self.path()
             if not path.is_file():
                 raise SyncError(f"{self.key}: {path} does not exist")
@@ -107,10 +136,20 @@ def parse_entries(data: Any) -> list[Entry]:
             raise SyncError(f"entry {key or raw!r}: needs a unique `key` and one of {KINDS}")
         if kinds[0] != "repos" and not raw.get("category"):
             raise SyncError(f"entry {key}: `category` is required")
+        if kinds[0] == "local_repo" and not raw.get("author"):
+            raise SyncError(f"entry {key}: `author` (your commit e-mail) is required")
         seen.add(key)
         meta = {k: raw[k] for k in META_KEYS if k in raw}
         entries.append(
-            Entry(key, kinds[0], raw[kinds[0]], meta, raw.get("title"), raw.get("release"))
+            Entry(
+                key,
+                kinds[0],
+                raw[kinds[0]],
+                meta,
+                raw.get("title"),
+                raw.get("release"),
+                raw.get("author"),
+            )
         )
     return entries
 
@@ -141,8 +180,9 @@ def plan(entries: list[Entry], state: dict[str, EntryState]) -> list[tuple[Entry
     out = []
     for entry in entries:
         known = state.get(entry.key)
+        checksum = entry.checksum()  # also builds a local_repo digest, new or not
         status = "new" if known is None else "unchanged"
-        if known is not None and known.checksum != entry.checksum():
+        if known is not None and known.checksum != checksum:
             status = "changed"
         out.append((entry, status))
     return out
@@ -172,8 +212,9 @@ def submit(client: httpx.Client, entry: Entry, refresh: bool) -> list[str]:
         body = {**meta, "urls": urls, "refresh": refresh}
         return [s["sourceId"] for s in result(client.post("/ingest/urls", json=body))["sources"]]
     path = entry.path()
-    if entry.kind == "text":
-        title = entry.title or path.stem.replace("-", " ").title()
+    if entry.kind in ("text", "local_repo"):
+        default = Path(str(entry.value)).name if entry.kind == "local_repo" else path.stem
+        title = entry.title or default.replace("-", " ").title()
         body = {**meta, "title": title, "body": path.read_text(encoding="utf-8")}
         return [result(client.post("/ingest/text", json=body))["sourceId"]]
     content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -211,7 +252,7 @@ def sync_entry(
     client: httpx.Client, entry: Entry, old: EntryState | None, timeout: float
 ) -> EntryState:
     refresh = old is not None
-    if old is not None and entry.kind in ("file", "text"):
+    if old is not None and entry.kind in ("file", "text", "local_repo"):
         # New bytes make a new source; the previous documents are removed first.
         for document_id in old.documents:
             client.delete(f"/documents/{document_id}")

@@ -127,3 +127,58 @@ def test_dry_run_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert kb_sync.main([]) == 0
     assert kb_sync.main(["--reset"]) == 0
     assert not (tmp_path / "state.json").exists()
+
+
+def _git(repo: Path, *args: str, email: str | None = None) -> None:
+    import subprocess
+
+    who = ["-c", f"user.email={email}", "-c", "user.name=x"] if email else []
+    subprocess.run(["git", "-C", str(repo), *who, *args], check=True, capture_output=True)
+
+
+def _repo(path: Path) -> Path:
+    path.mkdir()
+    _git(path, "init", "-q")
+    (path / "README.md").write_text("# Rate limiter\nToken bucket service.")
+    (path / "docs").mkdir()
+    (path / "docs" / "design.md").write_text("# Design\nRedis-backed buckets.")
+    (path / "src").mkdir()
+    (path / "src" / "app.py").write_text("print('hi')\n")
+    _git(path, "add", ".")
+    _git(path, "commit", "-qm", "feat: token bucket", email="kavya@work.test")
+    (path / "src" / "app.py").write_text("# chore\n")
+    _git(path, "commit", "-qam", "chore", email="other@work.test")
+    return path
+
+
+def test_local_repo_digest_is_built_ingested_and_tracks_new_commits(tmp_path: Path) -> None:
+    from scripts import repo_digest
+
+    repo = _repo(tmp_path / "rate-limiter")
+    text = repo_digest.digest(repo, "kavya@work.test")
+    assert text.startswith("# rate-limiter (repository I worked on)")
+    assert "Python (1)" in text and "Commits: 1" in text and "- feat: token bucket" in text
+    assert "- chore" not in text  # someone else's commit
+    assert "Token bucket service." in text and "### docs/design.md" in text
+    manifest = (
+        "entries:\n"
+        f"  - {{key: work, local_repo: '{repo}', author: kavya@work.test, "
+        "category: company-projects, release: local}\n"
+    )
+    entries = kb_sync.parse_entries(yaml.safe_load(manifest))
+    api = FakeApi()
+    client = httpx.Client(base_url="http://t/admin/v1", transport=httpx.MockTransport(api))
+    state: dict[str, kb_sync.EntryState] = {}
+    kb_sync.apply(client, entries, state, timeout=1)
+    [(_, path, body)] = [c for c in api.calls if c[1].startswith("/ingest/")]
+    assert path == "/ingest/text" and body["title"] == "Rate Limiter"
+    assert body["category"] == "company-projects" and "feat: token bucket" in body["body"]
+    assert (tmp_path / "docs" / "generated" / "work.md").exists()
+    assert [s for _, s in kb_sync.plan(entries, state)] == ["unchanged"]
+    (repo / "src" / "app.py").write_text("# more\n")
+    _git(repo, "commit", "-qam", "feat: burst limits", email="kavya@work.test")
+    assert [s for _, s in kb_sync.plan(entries, state)] == ["changed"]
+    with pytest.raises(kb_sync.SyncError, match="author"):
+        kb_sync.parse_entries(
+            {"entries": [{"key": "x", "local_repo": str(repo), "category": "other"}]}
+        )
