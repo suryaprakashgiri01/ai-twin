@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from app.agents.graphs.owner import OwnerSettings, is_broad, is_vague_follow_up
+from app.agents.graphs.owner import (
+    OwnerSettings,
+    is_broad,
+    is_employer_question,
+    is_vague_follow_up,
+)
 from app.agents.prompts.owner import GENERATE_KB_V3, PROMPT_VERSION
 from app.kb.retrieval.retriever import Hit
 from llm_orchestrator import Tier
@@ -21,9 +26,11 @@ def card(doc: str, tier: Tier, text: str) -> Hit:
 
 
 def test_prompt_asks_for_synthesis_not_quotes() -> None:
-    assert PROMPT_VERSION == "owner-v3"
+    assert PROMPT_VERSION == "owner-v4"
     assert "Never copy the context back" in GENERATE_KB_V3
-    assert "(document summary)" in GENERATE_KB_V3
+    assert "document summary" in GENERATE_KB_V3
+    assert "never list a project twice" in GENERATE_KB_V3
+    assert "never list personal" in GENERATE_KB_V3
 
 
 def test_overview_questions_are_broad() -> None:
@@ -55,7 +62,7 @@ async def test_overview_uses_cards_first_and_a_larger_budget() -> None:
     seen = prompt_text(agent.factory.models["cloud"].seen[0])
     # Both cards and the chunk fit: the broad budget replaces the 10-token one.
     assert "Rate limiter: token bucket" in seen and "Search service" in seen and PRIV_TEXT in seen
-    assert "(document summary)" in seen
+    assert "(notes, document summary)" in seen
     assert [s.document_id for s in state["sources"]] == ["p1", "p2"]
 
 
@@ -95,3 +102,39 @@ async def test_follow_up_to_a_confidential_answer_stays_local_and_sees_it() -> N
     assert nxt["model_id"] == "local" and nxt["tier"] is Tier.CONFIDENTIAL
     assert "Base pay" in prompt_text(agent.factory.models["local"].seen[-1])
     assert agent.factory.calls("cloud") == 0
+
+
+def test_employer_questions_are_recognised() -> None:
+    assert is_employer_question("summary of the projects I worked on at my current company")
+    assert is_employer_question("what did I do at work last quarter?")
+    assert is_employer_question("projects at my previous employer")
+    assert not is_employer_question("summary of all my projects")
+
+
+async def test_employer_question_leaves_personal_repositories_out() -> None:
+    q = "Give me the summary of the projects I worked on at my current company"
+    work = hit("w1", Tier.CONFIDENTIAL, "Built the evaluation service.").model_copy(
+        update={"category": "company-projects"}
+    )
+    repo = hit("r1", Tier.PUBLIC, "A calculator in Python.").model_copy(
+        update={"category": "project"}
+    )
+    agent = make_agent(
+        router=[route_json("kb_search", q)],
+        cloud=["unused"],
+        local=["The evaluation service [1]."],
+        hits=[repo, work],
+    )
+    state, _ = await agent.run(q)
+    assert [h.document_id for h in state["hits"]] == ["w1"]
+    seen = prompt_text(agent.factory.models["local"].seen[0])
+    assert "(company-projects)" in seen and "calculator" not in seen
+    # A general question still sees every project.
+    general = make_agent(
+        router=[route_json("kb_search", "summary of all my projects")],
+        cloud=["unused"],
+        local=["Both [1][2]."],
+        hits=[repo, work],
+    )
+    state, _ = await general.run("summary of all my projects")
+    assert {h.document_id for h in state["hits"]} == {"w1", "r1"}
