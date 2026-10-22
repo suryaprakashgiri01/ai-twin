@@ -1,6 +1,6 @@
 // Opportunity: the portfolio's contact form (POST /v1/opportunities), for a `leads` key or the owner.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { h } from "../dom.js";
 import { field, head, outcome, values } from "./common.js";
 
@@ -8,7 +8,7 @@ export function mount(root) {
   const slot = h("div");
   const form = h("form", { class: "card form", on: { submit: async (e) => {
     e.preventDefault();
-    const r = await request("POST", "/v1/opportunities", { body: values(form) });
+    const r = await api.post("/v1/opportunities", values(form));
     outcome(slot, r, "Shared. It shows up under Leads.");
     if (r.ok) form.reset();
   } } },

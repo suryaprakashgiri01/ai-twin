@@ -1,6 +1,6 @@
 // The login screen: any API key, checked with GET /v1/me. The role decides what the console shows.
 
-import { request, setKey, state } from "./api.js";
+import { api, request, setKey, state } from "./api.js";
 import { clear, h } from "./dom.js";
 
 const ROLE_LABEL = { owner: "owner", public: "public", leads: "leads" };
@@ -8,7 +8,7 @@ const ROLE_LABEL = { owner: "owner", public: "public", leads: "leads" };
 /** Resolves with the /v1/me answer once a key works; shows the login form until then. */
 export async function login(screen) {
   if (state.key) {
-    const r = await request("GET", "/v1/me");
+    const r = await api.get("/v1/me");
     if (r.ok) return remember(r.data);
     setKey("", false);
   }

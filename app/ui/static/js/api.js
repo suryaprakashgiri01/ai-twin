@@ -74,7 +74,7 @@ export function rows(r) {
 }
 
 /**
- * stream("/admin/v1/chat", body, (event, data) => …, signal)
+ * api.stream("/admin/v1/chat", body, (event, data) => …, signal)
  * POSTs and reads Server-Sent Events with fetch (EventSource cannot send the key header).
  * Resolves with { ok, status, error } once the stream ends; a JSON error before streaming
  * arrives as one "error" event with the envelope's code and message.
@@ -137,3 +137,14 @@ function dispatch(frame, onEvent) {
   try { parsed = JSON.parse(data.join("\n")); } catch { parsed = { text: data.join("\n") }; }
   onEvent(event, parsed);
 }
+
+/** The verbs every panel uses; each resolves like `request` and never throws. */
+export const api = {
+  get: (path, query) => request("GET", path, { query }),
+  post: (path, body) => request("POST", path, { body }),
+  put: (path, body) => request("PUT", path, { body }),
+  patch: (path, body) => request("PATCH", path, { body }),
+  del: (path) => request("DELETE", path),
+  upload: (path, form) => request("POST", path, { form }),
+  stream,
+};

@@ -1,7 +1,7 @@
 // Models & agents: each owner agent's model settings (pin or auto, applied at once), and the
 // model inventory with its overrides (enable or disable, lower a tier cap).
 
-import { request, rows } from "../api.js";
+import { api, rows } from "../api.js";
 import { badge, busy, clear, errorLine, h, select, table, toast } from "../dom.js";
 import { field, head } from "./common.js";
 
@@ -28,8 +28,8 @@ const LABEL = { "not pulled": "needs install", "no key": "inactive · no key" };
 
 async function load(verify = false) {
   const [models, agents] = await Promise.all([
-    request("GET", "/admin/v1/models", { query: verify ? { verify: true } : {} }),
-    request("GET", "/admin/v1/agents"),
+    api.get("/admin/v1/models", verify ? { verify: true } : {}),
+    api.get("/admin/v1/agents"),
   ]);
   inventory = rows(models);
   renderAgents(agents);
@@ -59,12 +59,12 @@ function agentRow(a) {
     if (prefer.value) body.prefer = prefer.value;
     if (confidentialPrefer.value) body.confidentialPrefer = confidentialPrefer.value;
     if (need.value) body.need = need.value;
-    const r = await request("PUT", `/admin/v1/agents/${a.name}`, { body });
+    const r = await api.put(`/admin/v1/agents/${a.name}`, body);
     toast(r.ok ? `${a.name}: saved, the next call uses it` : `${a.name}: ${r.error?.code} ${r.message}`);
     if (r.ok) load();
   }));
   reset.addEventListener("click", () => busy(reset, async () => {
-    const r = await request("DELETE", `/admin/v1/agents/${a.name}`);
+    const r = await api.del(`/admin/v1/agents/${a.name}`);
     toast(r.ok ? `${a.name}: back to config/agents.yaml` : `Reset failed: ${r.error?.code}`);
     if (r.ok) load();
   }));
@@ -97,7 +97,7 @@ function renderModels(r) {
 }
 
 async function override(m, body) {
-  const r = await request("PUT", `/admin/v1/models/overrides/${encodeURIComponent(m.id)}`, { body });
+  const r = await api.put(`/admin/v1/models/overrides/${encodeURIComponent(m.id)}`, body);
   toast(r.ok ? `${m.id}: override saved` : `${m.id}: ${r.error?.code} ${r.message}`);
   load();
 }

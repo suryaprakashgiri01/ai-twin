@@ -1,7 +1,7 @@
 // Review: pending and quarantined documents. Open one to read its redacted text, approve,
 // publish or unpublish, release a quarantined one, relabel it or delete it.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { badge, busy, clear, errorLine, h, kv, select, time, toast } from "../dom.js";
 import { CATEGORIES, TIERS, field, head, list, listView } from "./common.js";
 
@@ -27,7 +27,7 @@ export function mount(root) {
   });
   const cards = h("button", { class: "btn", type: "button", text: "Write missing cards", title: "Overview summaries for documents that have none" });
   cards.addEventListener("click", () => busy(cards, async () => {
-    const r = await request("POST", "/admin/v1/documents/cards", { body: { missingOnly: true, limit: 50 } });
+    const r = await api.post("/admin/v1/documents/cards", { missingOnly: true, limit: 50 });
     toast(r.ok ? `Cards: ${r.data.written} written, ${r.data.skipped} skipped of ${r.data.checked}` : `Cards failed: ${r.error?.code}`);
   }));
   root.append(head("Review", "Nothing reaches an answer, and nothing is public, before you approve it here.", cards), h("div", { class: "split" }, view.el, detail));
@@ -37,7 +37,7 @@ export function mount(root) {
 export function shown() { view?.reload(); }
 
 async function open(id) {
-  const r = await request("GET", `/admin/v1/documents/${id}`);
+  const r = await api.get(`/admin/v1/documents/${id}`);
   detail.hidden = false;
   if (!r.ok) { clear(detail, errorLine(r)); return; }
   render(r.data);
@@ -47,7 +47,7 @@ function render(d) {
   const act = (label, path, body, tone = "") => {
     const b = h("button", { class: `btn btn-sm ${tone}`, type: "button", text: label });
     b.addEventListener("click", () => busy(b, async () => {
-      const r = await request("POST", `/admin/v1/documents/${d.id}/${path}`, { body });
+      const r = await api.post(`/admin/v1/documents/${d.id}/${path}`, body);
       toast(r.ok ? r.message || label : `${label} failed: ${r.error?.code} ${r.message}`);
       if (r.ok) { render(r.data); view.reload(); }
     }));
@@ -81,7 +81,7 @@ function relabel(d) {
   const save = h("button", { class: "btn btn-sm", type: "submit", text: "Save labels" });
   return h("form", { class: "row relabel", on: { submit: async (e) => {
     e.preventDefault();
-    const r = await request("PATCH", `/admin/v1/documents/${d.id}`, { body: { title: title.value.trim(), category: category.value, tier: tier.value, tags: list(tags.value) } });
+    const r = await api.patch(`/admin/v1/documents/${d.id}`, { title: title.value.trim(), category: category.value, tier: tier.value, tags: list(tags.value) });
     toast(r.ok ? "Labels saved" : `Save failed: ${r.error?.code} ${r.message}`);
     if (r.ok) { render(r.data); view.reload(); }
   } } }, field("Title", title), field("Category", category), field("Tier", tier), field("Tags", tags), save);
@@ -89,7 +89,7 @@ function relabel(d) {
 
 async function remove(d) {
   if (!window.confirm(`Delete “${d.title}”? Its vectors are removed from every collection.`)) return;
-  const r = await request("DELETE", `/admin/v1/documents/${d.id}`);
+  const r = await api.del(`/admin/v1/documents/${d.id}`);
   toast(r.ok ? "Document deleted" : `Delete failed: ${r.error?.code}`);
   if (r.ok) { detail.hidden = true; view.reload(); }
 }

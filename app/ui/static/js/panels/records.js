@@ -1,7 +1,7 @@
 // Records: the job-search log (applications, calls, interviews, offers). List, add, add a
 // batch as JSON, edit and delete.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { clear, h, select, toast } from "../dom.js";
 import { field, head, listView, outcome, values } from "./common.js";
 
@@ -60,15 +60,15 @@ function edit(record) {
 async function save(record, form, slot) {
   const body = values(form);
   const r = record
-    ? await request("PATCH", `/admin/v1/records/${record.id}`, { body })
-    : await request("POST", "/admin/v1/records", { body });
+    ? await api.patch(`/admin/v1/records/${record.id}`, body)
+    : await api.post("/admin/v1/records", body);
   outcome(slot, r, record ? "Saved" : "Added");
   if (r.ok) { view.reload(); if (!record) form.reset(); }
 }
 
 async function remove(record) {
   if (!window.confirm(`Delete the ${record.kind} at ${record.company}?`)) return;
-  const r = await request("DELETE", `/admin/v1/records/${record.id}`);
+  const r = await api.del(`/admin/v1/records/${record.id}`);
   toast(r.ok ? "Record deleted" : `Delete failed: ${r.error?.code}`);
   if (r.ok) { view.reload(); edit(null); }
 }
@@ -81,7 +81,7 @@ function batch() {
       e.preventDefault();
       let records;
       try { records = JSON.parse(text.value); } catch { outcome(slot, { ok: false, status: 422, error: { code: "INVALID_JSON" }, message: "That is not valid JSON" }); return; }
-      const r = await request("POST", "/admin/v1/records/batch", { body: { records: Array.isArray(records) ? records : [records] } });
+      const r = await api.post("/admin/v1/records/batch", { records: Array.isArray(records) ? records : [records] });
       outcome(slot, r, r.ok ? `Added ${r.data.length}` : "");
       if (r.ok) view.reload();
     } } }, text, h("button", { class: "btn", type: "submit", text: "Add batch" }), slot));

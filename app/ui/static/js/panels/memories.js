@@ -1,7 +1,7 @@
 // Memories: instructions, preferences and aliases the owner agents keep in mind. Pending ones
 // were suggested from conversations; accept, edit, archive or forget them.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { badge, clear, h, select, toast } from "../dom.js";
 import { field, head, listView, outcome, values } from "./common.js";
 
@@ -39,8 +39,8 @@ function edit(memory) {
     e.preventDefault();
     const body = values(form);
     const r = memory
-      ? await request("PATCH", `/admin/v1/memories/${memory.id}`, { body })
-      : await request("POST", "/admin/v1/memories", { body });
+      ? await api.patch(`/admin/v1/memories/${memory.id}`, body)
+      : await api.post("/admin/v1/memories", body);
     outcome(slot, r, memory ? "Saved" : "Remembered");
     if (r.ok) { view.reload(); if (!memory) form.reset(); }
   } } },
@@ -62,7 +62,7 @@ function edit(memory) {
 
 function status(memory, value, label) {
   return h("button", { class: "btn", type: "button", text: label, on: { click: async () => {
-    const r = await request("PATCH", `/admin/v1/memories/${memory.id}`, { body: { status: value } });
+    const r = await api.patch(`/admin/v1/memories/${memory.id}`, { status: value });
     toast(r.ok ? `${label}d` : `${label} failed: ${r.error?.code}`);
     if (r.ok) { view.reload(); edit(r.data); }
   } } });
@@ -70,7 +70,7 @@ function status(memory, value, label) {
 
 async function forget(memory) {
   if (!window.confirm("Forget this memory for good?")) return;
-  const r = await request("DELETE", `/admin/v1/memories/${memory.id}`);
+  const r = await api.del(`/admin/v1/memories/${memory.id}`);
   toast(r.ok ? "Forgotten" : `Delete failed: ${r.error?.code}`);
   if (r.ok) { view.reload(); edit(null); }
 }

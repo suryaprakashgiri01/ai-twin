@@ -1,6 +1,6 @@
 // Shared pieces for the API tabs: a paged, searchable, filterable list and small form helpers.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { clear, empty, errorLine, h, select, table } from "../dom.js";
 
 /**
@@ -24,7 +24,7 @@ export function listView({ path, columns, filters = {}, sort, onRow, pageSize = 
   async function reload() {
     const filter = Object.entries(state.filter).filter(([, v]) => v).map(([k, v]) => `${k}:${v}`).join(",");
     const query = { page: state.page, pageSize, q: state.q, filter, ...(sort ? { sortColumn: sort[0], sortOrder: sort[1] } : {}) };
-    const r = await request("GET", path, { query });
+    const r = await api.get(path, query);
     if (!r.ok) { clear(body, errorLine(r)); clear(pager); return r; }
     const page = r.data;
     const items = page.listOfItems || [];

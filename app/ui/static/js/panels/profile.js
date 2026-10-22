@@ -1,6 +1,6 @@
 // Profile: availability, notice period, preferred roles, locations, reply time and the resume.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { clear, errorLine, h, kv, time } from "../dom.js";
 import { field, head, list, outcome, values } from "./common.js";
 
@@ -13,7 +13,7 @@ export function mount(root) {
 }
 
 async function load() {
-  const r = await request("GET", "/admin/v1/profile");
+  const r = await api.get("/admin/v1/profile");
   if (!r.ok && r.status !== 404) { clear(card, errorLine(r)); return; }
   const p = r.data || { availability: "", preferredRoles: [], locations: [] };
   const slot = h("div");
@@ -28,7 +28,7 @@ async function load() {
       replyTime: v.replyTime ?? null,
       resumeDocumentId: v.resumeDocumentId ?? null,
     };
-    const saved = await request("PUT", "/admin/v1/profile", { body });
+    const saved = await api.put("/admin/v1/profile", body);
     outcome(slot, saved, "Profile saved");
   } } },
   field("Availability", h("input", { name: "availability", value: p.availability || "", placeholder: "open to offers" })),

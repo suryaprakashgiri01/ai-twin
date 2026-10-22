@@ -1,6 +1,6 @@
 // Leads: opportunities shared through the portfolio, with their triage. Open one, set its status.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { badge, clear, h, kv, select, time, toast } from "../dom.js";
 import { head, listView } from "./common.js";
 
@@ -29,7 +29,7 @@ export function shown() { view?.reload(); }
 function open(l) {
   detail.hidden = false;
   const status = select(STATUS, l.status, { on: { change: async (e) => {
-    const r = await request("PATCH", `/admin/v1/leads/${l.id}`, { body: { status: e.target.value } });
+    const r = await api.patch(`/admin/v1/leads/${l.id}`, { status: e.target.value });
     toast(r.ok ? `Marked ${e.target.value}` : `Update failed: ${r.error?.code}`);
     if (r.ok) view.reload();
   } } });

@@ -1,7 +1,7 @@
 // Conversation history, grouped like a chat app: Today, Yesterday, Previous 7 days, Previous
 // 30 days, then by month. Open, rename (the title) and soft delete, plus search.
 
-import { isOwner, request, rows } from "./api.js";
+import { api, isOwner, rows } from "./api.js";
 import { clear, h, toast } from "./dom.js";
 
 const PAGE = 200;
@@ -40,7 +40,7 @@ export function setupSidebar(root, { open, fresh }) {
 export async function refresh() {
   const query = { pageSize: PAGE, sortColumn: "updatedAt", sortOrder: "desc" };
   if (isOwner()) query.channel = "all";
-  const r = await request("GET", base(), { query });
+  const r = await api.get(base(), query);
   if (!r.ok) {
     clear(listEl, h("div", { class: "muted small pad", text: `History unavailable (${r.error?.code})` }));
     return;
@@ -107,7 +107,7 @@ function rename(c, el, title) {
     done = true;
     const text = input.value.trim();
     if (save && text && text !== titleOf(c)) {
-      const r = await request("PATCH", `${base()}/${c.id}`, { body: { description: text } });
+      const r = await api.patch(`${base()}/${c.id}`, { description: text });
       if (r.ok) { c.description = text; toast("Renamed"); } else toast(`Rename failed: ${r.error?.code}`);
     }
     render();
@@ -121,7 +121,7 @@ function rename(c, el, title) {
 
 async function remove(c) {
   if (!window.confirm(`Delete “${titleOf(c)}”? It disappears from history and cannot be continued.`)) return;
-  const r = await request("DELETE", `${base()}/${c.id}`);
+  const r = await api.del(`${base()}/${c.id}`);
   if (!r.ok) { toast(`Delete failed: ${r.error?.code}`); return; }
   all = all.filter((x) => x.id !== c.id);
   render();

@@ -1,6 +1,6 @@
 // Security: guard events on the public surface (no visitor text is ever stored) and alerting.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { badge, busy, clear, errorLine, h, kv, time, toast } from "../dom.js";
 import { head, listView } from "./common.js";
 
@@ -26,13 +26,13 @@ export function mount(root) {
 export function shown() { view?.reload(); loadAlerts(); }
 
 async function loadAlerts() {
-  const r = await request("GET", "/admin/v1/alerts/status");
+  const r = await api.get("/admin/v1/alerts/status");
   if (!r.ok) { clear(alerts, errorLine(r)); return; }
   const a = r.data;
   const test = h("button", { class: "btn btn-sm", type: "button", text: "Send a test alert", disabled: !a.smtpConfigured });
   test.addEventListener("click", () => busy(test, async () => {
     if (!window.confirm("Send one test alert email to your alert address?")) return;
-    const sent = await request("POST", "/admin/v1/alerts/test");
+    const sent = await api.post("/admin/v1/alerts/test");
     toast(sent.ok && sent.data.sent ? "Test alert sent" : `Not sent: ${sent.error?.code || "check SMTP"}`);
   }));
   clear(alerts,

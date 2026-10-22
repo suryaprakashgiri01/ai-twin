@@ -1,7 +1,7 @@
 // Chat with every agent. Live turns stream plan, steps, thinking, answer and sources; an old
 // conversation replays each answer's stored trace (steps, models, sources and reasoning).
 
-import { isOwner, request, rows, stream } from "../api.js";
+import { api, isOwner, rows } from "../api.js";
 import { badge, clear, h, select, toast } from "../dom.js";
 import { markdown } from "../markdown.js";
 import { refresh, setActive, titleOf } from "../sidebar.js";
@@ -64,7 +64,7 @@ function available() {
 }
 
 async function loadModels() {
-  const r = await request("GET", "/admin/v1/models");
+  const r = await api.get("/admin/v1/models");
   models = rows(r).filter((m) => m.status !== "disabled" && m.roles.includes("generator"));
   // Only active models can be pinned; the rest show why (needs install, no key, unreachable).
   clear(els.modelPick, h("option", { value: "", text: "Auto (gateway picks)" }),
@@ -79,7 +79,7 @@ async function loadModels() {
 async function showSettings() {
   const name = AGENTS[chat.agent].settings;
   if (!isOwner() || !name) { els.settings.textContent = ""; return; }
-  const r = await request("GET", "/admin/v1/agents");
+  const r = await api.get("/admin/v1/agents");
   const a = rows(r).find((x) => x.name === name);
   if (!a) { els.settings.textContent = ""; return; }
   const parts = [`model ${a.model}`, a.prefer && `prefer ${a.prefer}`, `confidential ${a.confidentialModel}`, a.need && `need ${a.need}`];
@@ -121,7 +121,7 @@ function onKey(event) {
 export async function open(c) {
   chat.controller?.abort();
   const path = isOwner() ? `/admin/v1/conversations/${c.id}` : `/v1/conversations/${c.id}`;
-  const r = await request("GET", path, { query: { limit: 200 } });
+  const r = await api.get(path, { limit: 200 });
   if (!r.ok) { toast(`Could not open: ${r.error?.code}`); return; }
   const detail = r.data;
   chat.conversation = detail.id;
@@ -193,7 +193,7 @@ async function run(agent, body, view) {
   els.agentPick.disabled = true;
   let answer = "";
   const started = performance.now();
-  const outcome = await stream(agent.path, body, (event, data) => {
+  const outcome = await api.stream(agent.path, body, (event, data) => {
     if (data.conversationId && !chat.conversation) {
       chat.conversation = data.conversationId;
       setActive(chat.conversation);

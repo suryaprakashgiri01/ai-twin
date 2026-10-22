@@ -1,7 +1,7 @@
 // Ingest: a typed note, files, web pages, GitHub repositories or the LinkedIn export. Each
 // submitted source is polled until it is done, quarantined or failed.
 
-import { request } from "../api.js";
+import { api } from "../api.js";
 import { badge, clear, errorLine, h, select } from "../dom.js";
 import { CATEGORIES, TIERS, field, head, list, subtabs, values } from "./common.js";
 
@@ -49,7 +49,7 @@ function meta(v) {
 
 function note() {
   return submitForm([...common(true), field("Text", h("textarea", { name: "body", rows: 8, required: true }))],
-    (v) => request("POST", "/admin/v1/ingest/text", { body: { ...meta(v), title: v.title, body: v.body } }));
+    (v) => api.post("/admin/v1/ingest/text", { ...meta(v), title: v.title, body: v.body }));
 }
 
 function files() {
@@ -62,21 +62,21 @@ function files() {
       if (v.occurredAt) form.append("occurredAt", v.occurredAt);
       if (v.summary) form.append("summary", v.summary);
       if (v.tags) form.append("tags", v.tags);
-      return request("POST", "/admin/v1/ingest/files", { form });
+      return api.upload("/admin/v1/ingest/files", form);
     });
 }
 
 function urls() {
   return submitForm([field("URLs", h("textarea", { name: "urls", rows: 3, required: true, placeholder: "one per line" })), ...common(),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "refresh" }), h("span", { text: "Fetch again even if unchanged" }))],
-  (v) => request("POST", "/admin/v1/ingest/urls", { body: { ...meta(v), urls: v.urls.split(/\s+/).filter(Boolean), refresh: v.refresh } }));
+  (v) => api.post("/admin/v1/ingest/urls", { ...meta(v), urls: v.urls.split(/\s+/).filter(Boolean), refresh: v.refresh }));
 }
 
 function github() {
   return submitForm([field("Repositories", h("input", { name: "repos", required: true, placeholder: "owner/name, owner/other" }), "only allowlisted repositories are synced"),
     field("Tags", h("input", { name: "tags" })),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "refresh" }), h("span", { text: "Sync again even if unchanged" }))],
-  (v) => request("POST", "/admin/v1/ingest/github", { body: { repos: list(v.repos), tags: list(v.tags), refresh: v.refresh } }));
+  (v) => api.post("/admin/v1/ingest/github", { repos: list(v.repos), tags: list(v.tags), refresh: v.refresh }));
 }
 
 function linkedin() {
@@ -84,7 +84,7 @@ function linkedin() {
     (v) => {
       const form = new FormData();
       form.append("file", v.file[0]);
-      return request("POST", "/admin/v1/ingest/linkedin-export", { form });
+      return api.upload("/admin/v1/ingest/linkedin-export", form);
     });
 }
 
@@ -104,7 +104,7 @@ async function poll(id, line, first) {
     paint(line, id, status);
     if (FINAL.has(status.status)) return;
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    const r = await request("GET", `/admin/v1/sources/${id}`);
+    const r = await api.get(`/admin/v1/sources/${id}`);
     if (!r.ok) { clear(line, errorLine(r)); return; }
     status = r.data;
   }
