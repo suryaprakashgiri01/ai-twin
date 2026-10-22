@@ -339,7 +339,8 @@ async def _reset_stores() -> dict[str, int]:
 
 
 def _secret(value: Any) -> str | None:
-    return value.get_secret_value() if value is not None else None
+    """An empty key means none, as in app.vector.qdrant (a local Qdrant has no key)."""
+    return (value.get_secret_value() or None) if value is not None else None
 
 
 def stores_down() -> list[str]:
