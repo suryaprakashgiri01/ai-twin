@@ -68,6 +68,14 @@ class FakeIntake:
             yield "token", {"text": "Added the Acme interview (screen)."}
             yield "done", {"action": "add_record", "pending": False, "status": "done"}
             return
+        if self.action == "reworded" and ready.message.startswith("Add a new record"):
+            yield "token", {"text": "I can add notes and records. What would you like to do?"}
+            yield "done", {"action": None, "pending": False, "status": "chat"}
+            return
+        if self.action == "reworded":
+            yield "token", {"text": "Added the Acme interview."}
+            yield "done", {"action": "add_record", "pending": False, "status": "done"}
+            return
         if self.action == "none":
             yield "token", {"text": "I can add notes and records. What would you like to do?"}
             yield "done", {"action": None, "pending": False, "status": "chat"}
@@ -289,3 +297,18 @@ async def test_intake_question_waits_and_the_answer_goes_back_to_intake() -> Non
     assert intake.told == ["I have an interview with Acme today at 3 pm", "screen"]
     assert of(events, "token")[0]["text"] == "Added the Acme interview (screen)."
     assert of(events, "done")[0]["pending"] is False
+
+
+async def test_a_missed_rewording_is_retried_with_the_owners_message() -> None:
+    intake = FakeIntake(action="reworded")
+    agent, _, conversations = make(
+        planner=[plan(("intake", "Add a new record for an interview with Acme today"))],
+        cloud=["unused"],
+        local=["unused"],
+        hits=[],
+        intake=intake,
+    )
+    message = "I have an interview with Acme today at 3 pm"
+    events, _ = await turn(agent, conversations, message)
+    assert intake.told == ["Add a new record for an interview with Acme today", message]
+    assert of(events, "token")[0]["text"] == "Added the Acme interview."

@@ -410,6 +410,10 @@ class SuperAgent:
     async def _intake(self, step: Step, prepared: Prepared, intake_cid: str | None) -> StepResult:
         """Runs the step in the linked intake conversation, confirming additive drafts."""
         told = await self._tell(step.instruction, intake_cid, prepared)
+        original = prepared.request.message
+        if told.draft is None and told.status == "chat" and step.instruction != original:
+            # The planner's rewording missed: intake understands the owner's own sentence best.
+            told = await self._tell(original, told.conversation_id, prepared)
         draft = told.draft
         if (
             draft is not None
