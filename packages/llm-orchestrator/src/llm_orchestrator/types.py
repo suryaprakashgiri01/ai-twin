@@ -53,7 +53,7 @@ class Provider(StrEnum):
     MOCK = "mock"
 
 
-Prefer = Literal["fast", "quality", "local"]
+Prefer = Literal["fast", "quality", "local", "local-quality"]
 
 
 class FreeTierLimits(BaseModel):

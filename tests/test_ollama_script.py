@@ -44,7 +44,9 @@ def api_handler(state: dict[str, Any]) -> httpx.MockTransport:
 
 
 def target(url: str = "http://127.0.0.1:11434", model: str = "llama3.2:1b") -> ollama.Target:
-    return ollama.target({"OLLAMA_BASE_URL": url, "OLLAMA_MODEL": model})
+    # One model for both entries keeps the scripted server's state to a single pull.
+    env = {"OLLAMA_BASE_URL": url, "OLLAMA_MODEL": model, "OLLAMA_QUALITY_MODEL": model}
+    return ollama.target(env)
 
 
 def test_target_and_model_defaults() -> None:
@@ -56,6 +58,11 @@ def test_target_and_model_defaults() -> None:
         True,
     )
     assert t.model == ollama.inventory_model() == "llama3.2:3b"
+    assert t.all_models == ("llama3.2:3b", "qwen2.5:7b")
+    assert ollama.target({"OLLAMA_QUALITY_MODEL": "qwen2.5:3b"}).all_models == (
+        "llama3.2:3b",
+        "qwen2.5:3b",
+    )
     assert ollama.target({"OLLAMA_BASE_URL": "http://localhost:9999/"}).port == 9999
     with pytest.raises(ollama.OllamaError):
         ollama.target({"OLLAMA_BASE_URL": "not a url"})
@@ -216,6 +223,7 @@ def test_doctor_reports_ollama() -> None:
     remote = doctor.check_ollama({"OLLAMA_BASE_URL": "http://10.0.0.5:11434", "OLLAMA_MODEL": "m"})
     assert remote[0].level == "fail"
     env = {"OLLAMA_BASE_URL": "http://127.0.0.1:11434", "OLLAMA_MODEL": "llama3.2:1b"}
+    env["OLLAMA_QUALITY_MODEL"] = "qwen2.5:7b"
     state: dict[str, Any] = {"up": False, "pulled": []}
     api = ollama.Api(ollama.target(env), api_handler(state))
     down = doctor.check_ollama(env, api)[0]
@@ -224,4 +232,7 @@ def test_doctor_reports_ollama() -> None:
     missing = doctor.check_ollama(env, api)[0]
     assert missing.level == "warn" and "pull" in missing.message
     state["pulled"].append("llama3.2:1b")
+    only_qwen = doctor.check_ollama(env, api)
+    assert len(only_qwen) == 1 and "qwen2.5:7b" in only_qwen[0].message
+    state["pulled"].append("qwen2.5:7b")
     assert doctor.check_ollama(env, api)[0].level == "ok"

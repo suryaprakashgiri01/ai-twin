@@ -91,7 +91,17 @@ models:
     base_url: https://openrouter.ai/api/v1
 
   # --- Ollama (local): the only real model allowed confidential text -----------------------
-  # OLLAMA_MODEL replaces `model` when set, so any locally pulled tag can be used.
+  # OLLAMA_QUALITY_MODEL / OLLAMA_MODEL replace `model` when set, so any pulled tag can be used.
+  # The 7B model writes the answers over confidential context; the 3B one routes and classifies.
+  - id: ollama-qwen
+    provider: ollama
+    model: qwen2.5:7b
+    roles: [generator, judge]
+    max_tier: confidential
+    context_window: 32768
+    trains_on_inputs: false
+    tags: [local, local-quality]
+
   - id: ollama-local
     provider: ollama
     model: llama3.2:3b
@@ -114,7 +124,7 @@ models:
 roles:
   router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
   classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
-  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-local, mock]
-  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-local, mock]
+  generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, mock]
+  judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, mock]
   # No fallback: without the guard model the input guard keeps its rule layers and says so.
   guard: [groq-prompt-guard-2]

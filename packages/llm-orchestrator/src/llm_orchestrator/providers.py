@@ -6,8 +6,8 @@ transient errors from permanent ones and fall back across providers.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -33,8 +33,8 @@ class ProviderSecrets:
     gemini_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     ollama_base_url: str | None = None
-    # Replaces the spec's model name for Ollama, so any locally pulled tag can be used.
-    ollama_model: str | None = None
+    # Ollama spec id -> model name that replaces the spec's, so any locally pulled tag can be used.
+    ollama_models: Mapping[str, str] = field(default_factory=dict)
     mock_enabled: bool = False
 
 
@@ -129,7 +129,7 @@ def build_chat_model(spec: ModelSpec, secrets: ProviderSecrets, timeout: float) 
             from langchain_ollama import ChatOllama
 
             return ChatOllama(
-                model=secrets.ollama_model or spec.model,
+                model=secrets.ollama_models.get(spec.id) or spec.model,
                 base_url=secrets.ollama_base_url,
                 client_kwargs={"timeout": timeout},
             )

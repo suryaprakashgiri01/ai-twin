@@ -49,8 +49,9 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     ollama_base_url: str = ""
-    # Replaces the inventory's Ollama model name when set.
+    # Replace the inventory's Ollama model names when set: `ollama-local` and `ollama-qwen`.
     ollama_model: str = ""
+    ollama_quality_model: str = ""
     typesafe_api_key: SecretStr | None = None
     jev_model: str = "jev-1.13.0"
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)

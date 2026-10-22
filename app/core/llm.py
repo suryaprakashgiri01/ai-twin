@@ -30,7 +30,14 @@ def provider_secrets(settings: Settings) -> ProviderSecrets:
         gemini_api_key=settings.gemini_api_key,
         openrouter_api_key=settings.openrouter_api_key,
         ollama_base_url=settings.ollama_base_url or None,
-        ollama_model=settings.ollama_model or None,
+        ollama_models={
+            spec_id: model
+            for spec_id, model in (
+                ("ollama-local", settings.ollama_model),
+                ("ollama-qwen", settings.ollama_quality_model),
+            )
+            if model
+        },
         mock_enabled=settings.llm_mock_enabled,
     )
 
