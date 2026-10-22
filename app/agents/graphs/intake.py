@@ -436,6 +436,28 @@ def _chat_reply(reply: str) -> str:
     return reply if reply and not _CLAIMS.search(reply) else CHAT_DEFAULT
 
 
+_ANSWER_LEAD = re.compile(r"^\s*(?:it(?:'s| is| was)|this is|that's|the)\s+(?:an?\s+)?", re.I)
+_ANSWER_WORDS = 8
+
+
+def _fill_asked(spec: ActionSpec, payload: dict[str, Any], state: IntakeState) -> dict[str, Any]:
+    """A short reply to the one free-text field intake asked for is that field's value.
+
+    "screen" or "It is a technical screen." after "I still need: stage" sets the stage; the
+    model alone often leaves a bare answer unmapped."""
+    asked = state.get("missing") or []
+    if len(asked) != 1:
+        return payload
+    name = asked[0]
+    if name in spec.date_fields or name in spec.list_fields or payload.get(name):
+        return payload
+    message = state["message"].strip()
+    if _bare_reply(message) or len(message.split()) > _ANSWER_WORDS:
+        return payload
+    value = _ANSWER_LEAD.sub("", message).strip(" .!")
+    return {**payload, name: value} if value else payload
+
+
 def _bare_reply(message: str) -> bool:
     """A lone yes or no ("yes", "ok", "nope"), with no request in it ("publish it" is one)."""
     words = re.sub(r"[^\w\s']", " ", message.casefold()).split()
@@ -639,6 +661,8 @@ class IntakeNodes:
             )
             # Labels win again over regex fallbacks when both spoke.
             payload = merge_labelled(merge_labelled(payload, labelled), pasted)
+        if not switched:
+            payload = _fill_asked(spec, payload, state)
         return await self._settle(spec, payload, state, started, model_id, switched, dropped)
 
     async def _settle_batch(
