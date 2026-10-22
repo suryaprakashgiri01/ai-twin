@@ -238,3 +238,23 @@ def test_doctor_reports_ollama() -> None:
     assert len(only_qwen) == 1 and "qwen2.5:7b" in only_qwen[0].message
     state["pulled"].append("qwen2.5:7b")
     assert doctor.check_ollama(env, api)[0].level == "ok"
+
+
+def test_optional_local_max_model_is_not_a_warning_and_not_pulled_by_default() -> None:
+    from scripts import doctor
+
+    env = {"OLLAMA_BASE_URL": "http://127.0.0.1:11434"}
+    t = ollama.target(env)
+    assert t.optional == ("qwen2.5:14b",)
+    assert "qwen2.5:14b" not in t.required_models
+    state: dict[str, Any] = {"up": True, "pulled": ["llama3.2:3b", "qwen2.5:7b"]}
+    api = ollama.Api(t, api_handler(state))
+    findings = doctor.check_ollama(env, api)
+    assert all(f.level == "ok" for f in findings)
+    assert any("optional" in f.message and "qwen2.5:14b" in f.message for f in findings)
+    assert ollama.cmd_status(t, api) == 0
+    state["pulled"] = []
+    assert ollama.cmd_pull(t, api, None) == 0
+    assert state["pulled"] == ["llama3.2:3b", "qwen2.5:7b"]  # the optional one is skipped
+    assert ollama.cmd_pull(t, api, "qwen2.5:14b") == 0
+    assert state["pulled"][-1] == "qwen2.5:14b"

@@ -160,13 +160,20 @@ def check_ollama(env: dict[str, str], api: ollama.Api | None = None) -> list[Fin
             Finding("warn", f"Ollama not answering at {target.url}; run: {ollama.hint('start')}")
         ]
     pulled = api.models()
-    missing = [m for m in target.all_models if not ollama.has_model(pulled, m)]
+    missing = [m for m in target.required_models if not ollama.has_model(pulled, m)]
     if missing:
         return [
             Finding("warn", f"Ollama model {m} not pulled; run: {ollama.hint('pull ' + m)}")
             for m in missing
         ]
-    return [Finding("ok", f"Ollama {version} with {', '.join(target.all_models)}")]
+    have = [m for m in target.all_models if ollama.has_model(pulled, m)]
+    findings = [Finding("ok", f"Ollama {version} with {', '.join(have)}")]
+    findings += [
+        Finding("ok", f"optional Ollama model {m} not pulled (agents fall back to smaller ones)")
+        for m in target.optional
+        if not ollama.has_model(pulled, m)
+    ]
+    return findings
 
 
 def check_cloud_models() -> list[Finding]:
