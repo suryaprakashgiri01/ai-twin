@@ -6,12 +6,14 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.agents.context import ContextBuilder
-from app.api.routes import health, public
+from app.api.routes import console, health, public
 from app.api.routes.admin import build_admin_router
 from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
@@ -25,6 +27,7 @@ from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.leads.outbox import build_outbox
 from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.security_headers import CONSOLE_PREFIX, SecurityHeadersMiddleware
 from app.observability import metrics
 from app.observability.tracing import NOOP, Tracing, build_tracing, install
 from app.security.worker import build_alert_worker
@@ -41,6 +44,9 @@ from app.services.security_events import recording_exhausted_chains
 from app.services.super_agent import build_super
 
 logger = structlog.get_logger(__name__)
+
+# The web console: plain HTML, CSS and ES modules, no build step.
+CONSOLE_DIR = Path(__file__).resolve().parents[1] / "ui" / "static"
 
 SHUTDOWN_FLUSH_SECONDS = 5.0
 
@@ -101,13 +107,17 @@ def create_app(
     app.state.llm = llm or build_llm(settings, OrchestratorOverrides(lambda: _overrides(app)))
 
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(metrics.router)
     app.include_router(public.router)
+    app.include_router(console.router)
     # The public deployment has no admin surface at all, not merely a locked one.
     if settings.deployment_profile == "vault":
         app.include_router(build_admin_router())
+    # Last, so no API route is ever shadowed by a file. Every data call carries its key.
+    app.mount(CONSOLE_PREFIX, StaticFiles(directory=CONSOLE_DIR, html=True), name="console")
     return app
 
 

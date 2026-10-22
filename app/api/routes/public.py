@@ -48,6 +48,23 @@ PublicKey = Annotated[Principal, Depends(public_key)]
 LeadKey = Annotated[Principal, Depends(lead_key)]
 
 
+Role = Literal["owner", "public", "leads"]
+AnyKey = Annotated[Principal, Depends(require_scopes())]
+
+
+class Me(ApiModel):
+    name: str
+    scopes: list[str]
+    # What the console shows and unlocks: owner (admin), public (public:read), leads (leads:write).
+    role: Role
+
+
+def role_of(principal: Principal) -> Role:
+    if "admin" in principal.scopes:
+        return "owner"
+    return "public" if "public:read" in principal.scopes else "leads"
+
+
 def limits(settings: Settings) -> Limits:
     return Limits(
         per_minute=settings.public_messages_per_minute,
@@ -93,6 +110,13 @@ def _chat(request: Request) -> PublicChat:
     if service is None:
         raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Public chat is not running")
     return service
+
+
+@router.get("/me", summary="Who this key is: name, scopes and console role")
+async def me(principal: AnyKey) -> Envelope[Me]:
+    """Any valid key. `role` is `owner` for an admin key, `public` for `public:read`, `leads` for
+    `leads:write` only. Works on both profiles, so the console can log in anywhere."""
+    return ok(Me(name=principal.name, scopes=list(principal.scopes), role=role_of(principal)))
 
 
 @router.post(

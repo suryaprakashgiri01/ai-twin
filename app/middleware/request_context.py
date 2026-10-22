@@ -22,6 +22,7 @@ from app.core.context import set_request_id, set_session_id, set_user_id
 from app.core.telemetry import TRACE_ID_HEADER, current_trace_id, tracer
 from app.exceptions.handlers import render_unhandled
 from app.middleware.routing import route_template
+from app.middleware.security_headers import is_console
 from app.observability.metrics import observe_request
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -50,7 +51,8 @@ class RequestContextMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] != "http" or is_console(scope["path"]):
+            # Console files are static: no span, no request id, no access log line.
             await self.app(scope, receive, send)
             return
 
