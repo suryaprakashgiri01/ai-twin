@@ -14,6 +14,7 @@ from app.core.config import Settings, ingest_max_bytes, split_list
 from app.core.llm import LLMServices
 from app.core.resources import Resources
 from app.kb.embedding import FastEmbedder
+from app.kb.ingestion.cards import CardWriter
 from app.kb.ingestion.fetch.github import GitHubFetcher, parse_allowlist
 from app.kb.ingestion.fetch.url import UrlFetcher
 from app.kb.ingestion.guard import EmployerGuard
@@ -43,6 +44,7 @@ def build_ingestion(settings: Settings, resources: Resources, llm: LLMServices) 
         ),
         guard=EmployerGuard(settings.denylist_path),
         labeller=Labeller(llm.orchestrator, llm.classifier),
+        cards=CardWriter(llm.orchestrator),
         embedder=FastEmbedder(settings.models_dir / "fastembed"),
         url_fetcher=UrlFetcher(
             max_bytes=ingest_max_bytes(settings),

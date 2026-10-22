@@ -170,6 +170,8 @@ class DocumentOut(ApiModel):
     quarantine_rules: list[str]
     redaction_report: dict[str, int]
     summary: str | None
+    # The model-written summary indexed as the document's card, once one exists.
+    card: str | None = None
     occurred_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -186,6 +188,20 @@ class ReviewList(ApiModel):
 class PublishResult(ApiModel):
     document: DocumentOut
     chunks: int
+
+
+class CardBackfillIn(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    missing_only: bool = True
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class CardBackfillOut(ApiModel):
+    checked: int
+    written: int
+    # No model may read the document's tier, or the model call failed.
+    skipped: int
 
 
 class DocumentPatch(ApiModel):
@@ -236,6 +252,7 @@ def document_out(doc: DocumentView, *, preview: bool = False) -> DocumentOut:
         quarantine_rules=doc.quarantine_rules,
         redaction_report=doc.redaction_report,
         summary=doc.summary,
+        card=doc.card,
         occurred_at=doc.occurred_at,
         created_at=doc.created_at,
         updated_at=doc.updated_at,
@@ -578,6 +595,17 @@ class AdminOps:
             {"rules": before.quarantine_rules, "chunks": chunks},
         )
         return PublishResult(document=document_out(doc), chunks=chunks)
+
+    async def backfill_cards(self, body: CardBackfillIn, actor: str) -> CardBackfillOut:
+        """Write the card of indexed documents that have none (or all, with missingOnly false)."""
+        pipeline = self._publisher().pipeline
+        docs = await self._d.kb.card_candidates(body.limit, missing_only=body.missing_only)
+        written = 0
+        for doc in docs:
+            written += await pipeline.index_card(doc, doc.text or "")
+        result = CardBackfillOut(checked=len(docs), written=written, skipped=len(docs) - written)
+        await self._audit(actor, "document.cards", "documents", result.model_dump())
+        return result
 
     async def delete_document(self, document_id: str, actor: str) -> None:
         publisher = self._publisher()

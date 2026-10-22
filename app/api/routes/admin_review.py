@@ -17,6 +17,8 @@ from app.kb.ingestion.labelling import CATEGORIES
 from app.kb.store import REVIEW_STATUSES
 from app.services.admin_ops import (
     AdminOps,
+    CardBackfillIn,
+    CardBackfillOut,
     DocumentOut,
     DocumentPatch,
     PublishResult,
@@ -24,7 +26,15 @@ from app.services.admin_ops import (
     key_actor,
 )
 
-__all__ = ["DocumentOut", "DocumentPatch", "PublishResult", "ReviewList", "router"]
+__all__ = [
+    "CardBackfillIn",
+    "CardBackfillOut",
+    "DocumentOut",
+    "DocumentPatch",
+    "PublishResult",
+    "ReviewList",
+    "router",
+]
 
 router = APIRouter(tags=["admin: review"])
 
@@ -55,6 +65,17 @@ async def review_queue(
 ) -> Envelope[Page[DocumentOut]]:
     queue = await _ops(request).review_queue(LIST_SCAN_MAX)
     return ok(paginate(queue.items, query, REVIEW))
+
+
+@router.post("/documents/cards", summary="Write missing document cards (overview summaries)")
+async def backfill_cards(
+    body: CardBackfillIn, principal: AdminKey, request: Request
+) -> Envelope[CardBackfillOut]:
+    """Each card is written by a model allowed at the document's tier (local for confidential)
+    and indexed beside the document's chunks. Documents ingested before cards existed need this
+    once."""
+    result = await _ops(request).backfill_cards(body, key_actor(principal.name))
+    return ok(result, f"{result.written} card(s) written")
 
 
 @router.get("/documents/{document_id}", summary="One document with its redacted text")

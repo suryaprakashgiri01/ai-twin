@@ -22,6 +22,7 @@ from app.core.telemetry import tracer
 from app.db.documents import TERMINAL_STATUSES, ChunkFields, KbDocumentFields, TierLabel
 from app.kb import canaries
 from app.kb.embedding import Embedder
+from app.kb.ingestion.cards import CARD_ORDINAL, CardWriter, card_text
 from app.kb.ingestion.chunking import chunk_markdown
 from app.kb.ingestion.fetch import linkedin
 from app.kb.ingestion.fetch.github import GitHubFetcher
@@ -38,6 +39,7 @@ from app.observability.metrics import INGESTION_JOBS
 from app.observability.tracing import tracing
 from app.services.security_events import SecurityEventWriter
 from app.storage.blobs import BlobStore
+from llm_orchestrator import Tier
 
 logger = structlog.get_logger(__name__)
 
@@ -68,6 +70,8 @@ class Pipeline:
     chunk_overlap: int = 60
     # Failed jobs become `ingestion_failed` ops events (code and kind only).
     events: SecurityEventWriter | None = None
+    # Writes each indexed document's card; None indexes chunks only.
+    cards: CardWriter | None = None
 
     # --- job ------------------------------------------------------------------------------
 
@@ -327,7 +331,39 @@ class Pipeline:
                 for c, p in zip(chunks, points, strict=True)
             ]
         )
+        await self.index_card(doc, item.markdown)
         return len(points)
+
+    async def index_card(self, doc: DocumentView, markdown: str) -> bool:
+        """Write and index the document's card; False when no card could be written."""
+        if self.cards is None or doc.tier == "restricted":
+            return False
+        card = await self.cards.write(doc.title, markdown, Tier.parse(doc.tier))
+        if card is None:
+            return False
+        # The title is embedded with the card so "the rate limiter project" finds it.
+        embedding = (await self.embedder.embed([card_text(doc.title, card)]))[0]
+        document_id = str(doc.id)
+        point = VectorPoint(
+            id=point_id(document_id, CARD_ORDINAL),
+            dense=embedding.dense,
+            sparse_indices=embedding.sparse_indices,
+            sparse_values=embedding.sparse_values,
+            payload={
+                "document_id": document_id,
+                "tier": doc.tier,
+                "category": doc.category,
+                "published": False,
+                "canary": False,
+                "card": True,
+                "ordinal": CARD_ORDINAL,
+                "title": doc.title,
+                "text": card,
+            },
+        )
+        await self.vectors.upsert(collection_for(doc.tier), [point])
+        await self.store.update_document(doc.id, card=card)
+        return True
 
     async def relabel_and_index(self, doc: DocumentView) -> int:
         """Chunk, label and index a stored document (used when a quarantine is released)."""

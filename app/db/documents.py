@@ -196,6 +196,8 @@ class KbDocumentFields(BaseModel):
     # Redacted Markdown, shown in review. None for restricted documents (metadata only).
     text: str | None = None
     summary: str | None = None
+    # A short model-written summary, indexed as the document's card point (see kb.ingestion.cards).
+    card: str | None = None
     # Denylist rule names that matched (never the matched text).
     quarantine_rules: list[str] = Field(default_factory=list)
     # Placeholder type -> count; values are never stored.

@@ -144,3 +144,15 @@ async def test_category_filter_and_document_filters() -> None:
 
 def test_collection_map_covers_every_tier_below_restricted() -> None:
     assert sorted(COLLECTION_TIERS.values()) == [Tier.PUBLIC, Tier.PRIVATE, Tier.CONFIDENTIAL]
+
+
+async def test_cards_only_and_document_scope() -> None:
+    retriever, spy, _, _ = await harness()
+    card = chunk_point("priv", 1_000_000, tier="private", text="card", dense=axis(0), sparse={7: 1})
+    card.payload["card"] = True
+    await seed(spy._client, card)
+    cards = await retriever.search(QUESTION, max_tier=Tier.CONFIDENTIAL, cards_only=True)
+    assert [(h.document_id, h.card) for h in cards] == [("priv", True)]
+    scoped = await retriever.search(QUESTION, max_tier=Tier.CONFIDENTIAL, document_ids=["conf"])
+    assert {h.document_id for h in scoped} == {"conf"}
+    assert await retriever.search(QUESTION, max_tier=Tier.CONFIDENTIAL, document_ids=[]) == []

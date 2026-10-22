@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, cast
@@ -97,10 +97,28 @@ class FakeSearcher:
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     async def search(
-        self, query: str, *, max_tier: Tier, filters: SearchFilters | None, limit: int
+        self,
+        query: str,
+        *,
+        max_tier: Tier,
+        filters: SearchFilters | None,
+        limit: int,
+        cards_only: bool = False,
+        document_ids: Sequence[str] | None = None,
     ) -> list[Hit]:
-        self.calls.append({"query": query, "max_tier": max_tier, "filters": filters})
-        return [h for h in self.hits if h.tier <= max_tier]
+        self.calls.append(
+            {
+                "query": query,
+                "max_tier": max_tier,
+                "filters": filters,
+                "cards_only": cards_only,
+                "document_ids": document_ids,
+            }
+        )
+        found = [h for h in self.hits if h.tier <= max_tier and h.card == cards_only]
+        if document_ids is not None:
+            found = [h for h in found if h.document_id in document_ids]
+        return found
 
 
 @dataclass
