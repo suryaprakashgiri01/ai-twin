@@ -4,6 +4,7 @@
   new                                      ask the vault questions (the default)
   twin                                     add knowledge in plain language (intake assistant)
   prep                                     interview and application answers in your voice
+  super                                    one agent for everything: saves, answers, prepares
   continue <name|id>                       recap the last turns, then keep going in that mode
                                            (an intake conversation resumes at its pending draft)
   rename <name|id> <new-name> [--description TEXT]
@@ -304,6 +305,15 @@ PREP_INTRO = (
     'Try: "Tell us about the most challenging technical project you led" · /words 150 then a '
     "form question",
 )
+SUPER_INTRO = (
+    "Your super agent: say anything and it plans the steps and hands each to the right agent "
+    "(intake saves notes and records, ask answers from your vault, prep writes interview and "
+    "application answers). Runs on this machine; confidential steps use local models only.",
+    "It saves additions and updates straight away; deletes, publishing and tier changes wait "
+    "for your yes.",
+    'Try: "I have an interview with Acme today at 3 pm for an AI Engineer role. Add it and give '
+    'me a 60-second pitch for it."',
+)
 PREP_COMMANDS = (
     "Prep commands: /shorter · /longer · /variant (rewrite the last answer) · /words N · "
     "/chars N · /limit off · /mode behavioural|scenario|application|pitch|project|auto"
@@ -329,11 +339,15 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
 
     It also proves the API answers and the key works before you type anything."""
     who = api.whoami()
-    title = {"intake": "intake assistant", "prep": "interview prep"}.get(mode, "owner chat")
+    title = {"intake": "intake assistant", "prep": "interview prep", "super": "super agent"}.get(
+        mode, "owner chat"
+    )
     print(paint(f"━━ ai-twin · {title} ━━", "bold"))
     print(paint(f'API {api.version()} at {api.base_url} · key "{who.get("name", "?")}"', "dim"))
     if conversation is None:
-        intro = {"intake": INTAKE_INTRO, "prep": PREP_INTRO}.get(mode, ASK_INTRO)
+        intro = {"intake": INTAKE_INTRO, "prep": PREP_INTRO, "super": SUPER_INTRO}.get(
+            mode, ASK_INTRO
+        )
         for line in intro:
             print(line)
     else:
@@ -449,6 +463,41 @@ def _show_prep_event(event: str, data: dict[str, Any]) -> None:
             print(paint(f"  check before sending: {line}", "yellow"))
         print(_done_line(data))
     else:
+        _show_answer_event(event, data)
+        if event == "token":
+            print()
+
+
+def orchestrate(api: Api, message: str, conversation_id: str | None) -> str | None:
+    """One super-agent turn: the plan, each step, then the composed answer."""
+    with _thinking(ASK_PHRASES) as thinking:
+        for event, data in api.chat(message, conversation_id, path="/super"):
+            conversation_id = data.get("conversationId", conversation_id)
+            if event in ("token", "error"):
+                thinking.stop()
+            _show_super_event(event, data)
+    return conversation_id
+
+
+def _show_super_event(event: str, data: dict[str, Any]) -> None:
+    if event == "meta":
+        steps = " → ".join(str(s.get("agent")) for s in data.get("plan", []))
+        print(paint(f"  plan: {steps}  ({data.get('planSource')})", "dim"))
+    elif event == "step" and data.get("status") != "running":
+        parts = [f"{data.get('agent')} {data.get('status')}", str(data.get("model") or "-")]
+        if data.get("action"):
+            parts.append(str(data["action"]))
+        print(paint("  step: " + " · ".join(parts), "dim"))
+    elif event == "done":
+        models = ", ".join(data.get("models") or []) or "-"
+        print(
+            paint(
+                f"  tier {data.get('tier')} · models {models} · {data.get('steps')} step(s)", "dim"
+            )
+        )
+        if data.get("pending"):
+            print(paint("  waiting for your answer (yes / no / an edit)", "yellow"))
+    elif event in ("token", "sources", "error"):
         _show_answer_event(event, data)
         if event == "token":
             print()
@@ -580,6 +629,8 @@ def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
     def turn(api: Api, message: str, cid: str | None) -> str | None:
         if mode == "intake":
             return tell(api, message, cid)
+        if mode == "super":
+            return orchestrate(api, message, cid)
         if mode == "prep":
             handled, revise = prep_command(message, options)
             if handled and revise is None:
@@ -637,6 +688,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("new", help="start a conversation")
     sub.add_parser("twin", help="add knowledge in plain language (intake assistant)")
     sub.add_parser("prep", help="interview and application answers in your voice")
+    sub.add_parser("super", help="one agent for everything: it plans and delegates")
     resume = sub.add_parser("continue", help="continue a conversation")
     resume.add_argument("ref", help="name, unique name prefix, or id")
     rename = sub.add_parser("rename", help="rename a conversation")
@@ -665,8 +717,8 @@ def execute(args: argparse.Namespace, api: Api) -> int:
         updated = api.rename(found["id"], args.name, args.description)
         ok(f"Renamed to {updated.get('name')}")
         return 0
-    if command in ("twin", "prep"):
-        mode = "intake" if command == "twin" else "prep"
+    if command in ("twin", "prep", "super"):
+        mode = {"twin": "intake"}.get(command, command)
         print_banner(api, mode)
         return chat_loop(api, None, mode)
     print_banner(api, "ask")

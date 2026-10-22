@@ -15,6 +15,7 @@ import structlog
 from pydantic import ConfigDict, Field
 
 from app.agents.context import ContextBuilder, OwnerContext
+from app.agents.graphs.owner import OwnerDeps
 from app.agents.graphs.prep import (
     PrepDeps,
     PrepGraph,
@@ -34,14 +35,13 @@ from app.core.llm import LLMServices
 from app.core.resources import Resources
 from app.db.documents import ConversationMode
 from app.exceptions import AppError, ErrorCode
-from app.kb.embedding import Embedder
 from app.kb.ingestion.guard import EmployerGuard
 from app.kb.retrieval.context import Source
 from app.observability.tracing import tracing
 from app.services.conversations import ConversationService, Turn
 from app.services.intake import IntakeIndex
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import TurnHook, owner_deps
+from app.services.owner_chat import TurnHook
 from llm_orchestrator import Prefer, Tier
 
 logger = structlog.get_logger(__name__)
@@ -245,19 +245,11 @@ def _error(cid: str, code: ErrorCode, message: str) -> dict[str, Any]:
     return {"code": code.value, "message": message, "conversation_id": cid, "incomplete": True}
 
 
-def build_prep(
-    settings: Settings,
-    resources: Resources,
-    llm: LLMServices,
-    embedder: Embedder,
-    *,
-    index: IntakeIndex,
-    context: ContextBuilder | None = None,
-    on_turn: TurnHook | None = None,
-) -> PrepService:
-    owner = owner_deps(settings, resources, llm, embedder)
-    guard = EmployerGuard(settings.denylist_path)
-    deps = PrepDeps(
+def prep_deps(
+    settings: Settings, resources: Resources, llm: LLMServices, owner: OwnerDeps
+) -> PrepDeps:
+    """Shares the owner graph's retriever and reranker, so their models load once."""
+    return PrepDeps(
         orchestrator=llm.orchestrator,
         retriever=owner.retriever,
         reranker=owner.reranker,
@@ -265,16 +257,27 @@ def build_prep(
         generator=StreamingGenerator(
             llm.orchestrator, idle_timeout_seconds=settings.llm_local_timeout_seconds
         ),
-        filter=OutwardFilter(denylist=guard.rules),
+        filter=OutwardFilter(denylist=EmployerGuard(settings.denylist_path).rules),
         settings=PrepSettings(),
         models=llm.agents.choice("prep"),
     )
-    known = frozenset(llm.orchestrator.inventory.models)
+
+
+def build_prep(
+    settings: Settings,
+    resources: Resources,
+    llm: LLMServices,
+    owner: OwnerDeps,
+    *,
+    index: IntakeIndex,
+    context: ContextBuilder | None = None,
+    on_turn: TurnHook | None = None,
+) -> PrepService:
     return PrepService(
-        build_prep_graph(deps),
+        build_prep_graph(prep_deps(settings, resources, llm, owner)),
         resources.conversations,
         index,
-        known_models=known,
+        known_models=frozenset(llm.orchestrator.inventory.models),
         context=context,
         on_turn=on_turn,
     )

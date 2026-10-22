@@ -13,6 +13,7 @@
 #   ./scripts/dev.ps1 memory                  (memory list --pending | memory add "text" | memory accept <id> | memory forget <id>)
 #   ./scripts/dev.ps1 twin                    (intake assistant: add notes, records, files in plain language)
 #   ./scripts/dev.ps1 prep                    (interview and application answers in your voice)
+#   ./scripts/dev.ps1 super                   (super agent: saves, answers and prepares in one place)
 param(
     [Parameter(Position = 0)][string]$Command = "help",
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
@@ -24,7 +25,7 @@ $scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "log
 
 switch ($Command) {
     "help" {
-        Write-Host "Commands: $($scripts -join ', '), run, test, twin, prep, graph-update/query/explain/path via: graph <subcommand>"
+        Write-Host "Commands: $($scripts -join ', '), run, test, twin, prep, super, graph-update/query/explain/path via: graph <subcommand>"
     }
     "run" {
         uv run python -m app.main --reload
@@ -37,6 +38,9 @@ switch ($Command) {
     }
     "prep" {
         uv run python -m scripts.chat prep @Rest
+    }
+    "super" {
+        uv run python -m scripts.chat super @Rest
     }
     default {
         if ($scripts -notcontains $Command) {

@@ -17,6 +17,7 @@ from app.api.routes import (
     admin_records,
     admin_review,
     admin_security,
+    admin_super,
 )
 
 ADMIN_PREFIX = "/admin/v1"
@@ -34,6 +35,7 @@ def build_admin_router() -> APIRouter:
     router.include_router(admin_chat.router)
     router.include_router(admin_assistant.router)
     router.include_router(admin_prep.router)
+    router.include_router(admin_super.router)
     router.include_router(admin_memory.router)
     router.include_router(admin_security.router)
     return router

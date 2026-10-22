@@ -683,9 +683,12 @@ def _after_retrieve(state: OwnerState) -> str:
 OwnerGraph = CompiledStateGraph[OwnerState, None, OwnerState, OwnerState]
 
 
-def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> OwnerGraph:
+def build_owner_graph(
+    deps: OwnerDeps, *, checkpointer: Checkpointer = None, persist: bool = True
+) -> OwnerGraph:
     """`checkpointer=False` when another graph runs this one inside a node: it then keeps no
-    checkpoints of its own instead of inheriting the caller's."""
+    checkpoints of its own instead of inheriting the caller's. `persist=False` ends after
+    `generate`, storing no turns (the super agent stores its own)."""
     nodes = OwnerNodes(deps)
     graph = StateGraph(OwnerState)
     graph.add_node("route", nodes.route)
@@ -693,7 +696,8 @@ def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> 
     graph.add_node("records", nodes.records)
     graph.add_node("profile", nodes.profile)
     graph.add_node("generate", nodes.generate)
-    graph.add_node("finalize", nodes.finalize)
+    if persist:
+        graph.add_node("finalize", nodes.finalize)
     graph.add_edge(START, "route")
     graph.add_conditional_edges(
         "route",
@@ -710,8 +714,11 @@ def build_owner_graph(deps: OwnerDeps, *, checkpointer: Checkpointer = None) -> 
     )
     graph.add_edge("records", "generate")
     graph.add_edge("profile", "generate")
-    graph.add_edge("generate", "finalize")
-    graph.add_edge("finalize", END)
+    if persist:
+        graph.add_edge("generate", "finalize")
+        graph.add_edge("finalize", END)
+    else:
+        graph.add_edge("generate", END)
     return graph.compile(checkpointer=checkpointer)
 
 

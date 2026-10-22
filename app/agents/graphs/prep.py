@@ -437,18 +437,22 @@ def _over(text: str, words: int | None, chars: int | None) -> bool:
 PrepGraph = CompiledStateGraph[PrepState, None, PrepState, PrepState]
 
 
-def build_prep_graph(deps: PrepDeps) -> PrepGraph:
+def build_prep_graph(deps: PrepDeps, *, persist: bool = True) -> PrepGraph:
+    """`persist=False` ends after `compose`, storing no turns (the super agent stores its own)."""
     nodes = PrepNodes(deps)
     graph = StateGraph(PrepState)
     graph.add_node("plan", nodes.plan)
     graph.add_node("retrieve", nodes.retrieve)
     graph.add_node("compose", nodes.compose)
-    graph.add_node("finalize", nodes.finalize)
     graph.add_edge(START, "plan")
     graph.add_edge("plan", "retrieve")
     graph.add_edge("retrieve", "compose")
-    graph.add_edge("compose", "finalize")
-    graph.add_edge("finalize", END)
+    if persist:
+        graph.add_node("finalize", nodes.finalize)
+        graph.add_edge("compose", "finalize")
+        graph.add_edge("finalize", END)
+    else:
+        graph.add_edge("compose", END)
     return graph.compile()
 
 

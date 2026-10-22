@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync chat chat-list chat-continue twin prep memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -71,6 +71,9 @@ chat: ## Chat with the vault in the terminal (new conversation; ARGS="rename X n
 
 twin: ## Add knowledge in plain language (intake assistant; confirms before every write)
 	$(PY) scripts.chat twin $(ARGS)
+
+super: ## The super agent: one conversation that saves, answers and prepares (local only)
+	$(PY) scripts.chat super $(ARGS)
 
 prep: ## Interview and application answers in your voice (first person, from your vault)
 	$(PY) scripts.chat prep $(ARGS)
