@@ -37,7 +37,11 @@ Model choice today is a fixed chain per role, reordered only by an agent's `pref
 4. **Reasoning output handled.**
    - Ollama models with `reasoning` run with thinking separated (`reasoning=True`).
    - For every provider, any remaining `<think>…</think>` is removed from the text before it reaches a graph.
-   - Thinking text is never logged, traced as output, or returned; only its token count is logged.
+   - Thinking is never part of an answer, never logged (only its size) and never stored with a
+     conversation.
+   - Owner channels (owner chat, prep, the super agent) stream it as a separate `thinking` event. The CLI
+     shows it dimmed above the answer (`/thinking` toggles it), and an owner-mode UI can use the same event.
+     The public channel never forwards it.
 5. **Model-id drift.**
    - `make models-check` (and a `doctor` line) compares each enabled cloud model id with the provider's live
      model list (OpenAI-compatible `/models`, Anthropic and Gemini lists) and reports ids that no longer
@@ -61,7 +65,8 @@ Building tool-using agents (the capability is declared for later); sending confi
    adequate one. A need for `reasoning` tries models with it first; models without it stay only as
    fallbacks, so an unreachable provider never leaves a request without a model. Pins and `prefer`
    still win. Confidential needs still get local models only.
-4. A scripted reasoning model's `<think>` text never appears in an answer, a log line or a trace output.
+4. A scripted reasoning model's `<think>` text never appears in an answer, a stored turn or a log line. The
+   owner chat emits it as a `thinking` event; the public channel does not.
 5. `models-check` reports a retired id from a recorded provider list. After a 404 "model not found", the
    model is skipped on the next selection and tried again after the cool-off.
 6. `make check` passes; a live run (Mac or laptop) is reported in the PR.
