@@ -58,8 +58,9 @@ Building tool-using agents (the capability is declared for later); sending confi
    complex with reasoning, and "thanks" simple. With Laya enabled and scripted, Laya's label is used; when
    Laya fails, the rules' label is used.
 3. For the same role and tier, a complex need tries a quality-5 model first and a simple need a cheaper
-   adequate one. A need for `reasoning` excludes models without it. Pins and `prefer` still win. Confidential
-   needs still get local models only.
+   adequate one. A need for `reasoning` tries models with it first; models without it stay only as
+   fallbacks, so an unreachable provider never leaves a request without a model. Pins and `prefer`
+   still win. Confidential needs still get local models only.
 4. A scripted reasoning model's `<think>` text never appears in an answer, a log line or a trace output.
 5. `models-check` reports a retired id from a recorded provider list. After a 404 "model not found", the
    model is skipped on the next selection and tried again after the cool-off.
