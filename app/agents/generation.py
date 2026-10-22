@@ -13,7 +13,7 @@ from typing import Protocol
 
 from langchain_core.messages import BaseMessage
 
-from llm_orchestrator import Orchestrator, Prefer, Role, Tier
+from llm_orchestrator import Need, Orchestrator, Prefer, Role, Tier
 
 
 @dataclass
@@ -42,6 +42,7 @@ class AnswerGenerator(Protocol):
         *,
         model: str | None = None,
         prefer: Prefer | None = None,
+        need: Need | None = None,
     ) -> AsyncIterator[str]: ...
 
 
@@ -59,9 +60,10 @@ class ChatGenerator:
         *,
         model: str | None = None,
         prefer: Prefer | None = None,
+        need: Need | None = None,
     ) -> AsyncIterator[str]:
         result = await self._orchestrator.chat(
-            Role.GENERATOR, tier, messages, model=model, prefer=prefer, privileged=True
+            Role.GENERATOR, tier, messages, model=model, prefer=prefer, privileged=True, need=need
         )
         out.model_id = result.model_id
         out.input_tokens = result.usage.input_tokens

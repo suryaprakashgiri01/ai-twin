@@ -23,6 +23,7 @@ from app.api.envelope import camel_keys
 from llm_orchestrator import (
     Attempt,
     ModelSpec,
+    Need,
     Orchestrator,
     Prefer,
     Role,
@@ -61,9 +62,10 @@ class StreamingGenerator:
         *,
         model: str | None = None,
         prefer: Prefer | None = None,
+        need: Need | None = None,
     ) -> AsyncIterator[str]:
         candidates = await self._orchestrator.chat_models(
-            Role.GENERATOR, tier, model=model, prefer=prefer, privileged=True
+            Role.GENERATOR, tier, model=model, prefer=prefer, privileged=True, need=need
         )
         ctx = CallContext(role=Role.GENERATOR, tier=tier)
         for index, (spec, chat) in enumerate(candidates):

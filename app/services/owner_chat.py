@@ -598,6 +598,7 @@ def owner_deps(
             llm.orchestrator, idle_timeout_seconds=settings.llm_timeout_seconds
         ),
         models=llm.agents.choice("owner"),
+        profiler=llm.profiler,
         settings=OwnerSettings(
             top_k=settings.retrieval_top_k,
             context_tokens=settings.owner_context_tokens,

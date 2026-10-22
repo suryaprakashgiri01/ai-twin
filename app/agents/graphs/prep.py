@@ -49,6 +49,7 @@ from llm_orchestrator import (
     OrchestratorError,
     OverrideRejectedError,
     Prefer,
+    Profiler,
     Rejection,
     Role,
     Tier,
@@ -176,6 +177,7 @@ class PrepDeps:
     filter: OutwardFilter
     settings: PrepSettings = field(default_factory=PrepSettings)
     models: ModelChoice = AUTO_CHOICE
+    profiler: Profiler | None = None
 
 
 class PrepState(TypedDict, total=False):
@@ -343,9 +345,11 @@ class PrepNodes:
     ) -> tuple[str, ErrorInfo | None]:
         parts: list[str] = []
         model, prefer = choose(state, self.deps.models, tier)
+        models: ModelChoice = state.get("models") or self.deps.models
+        need = await models.need_for(state["target"], tier, self.deps.profiler)
         try:
             async for text in self.deps.generator.stream(
-                tier, messages, gen, model=model, prefer=prefer
+                tier, messages, gen, model=model, prefer=prefer, need=need
             ):
                 parts.append(text)
         except MidStreamError as exc:

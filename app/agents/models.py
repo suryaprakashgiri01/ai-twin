@@ -19,7 +19,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from llm_orchestrator import Inventory, ModelSpec, Prefer, Tier
+from llm_orchestrator import Inventory, ModelSpec, Need, Prefer, Profiler, Tier
+from llm_orchestrator.gateway import Complexity
 from llm_orchestrator.types import LOCAL_PROVIDERS
 
 AgentName = Literal["owner", "prep", "super", "intake"]
@@ -38,6 +39,8 @@ class AgentModel(BaseModel):
     prefer: Prefer | None = None
     confidential_model: str = AUTO
     confidential_prefer: Prefer | None = None
+    # The gateway's complexity for this agent's steps; unset means profile each request.
+    need: Complexity | None = None
 
 
 class ModelChoice(BaseModel):
@@ -51,6 +54,15 @@ class ModelChoice(BaseModel):
     prefer: Prefer | None = None
     confidential_model: str | None = None
     confidential_prefer: Prefer | None = None
+    need: Complexity | None = None
+
+    async def need_for(self, text: str, tier: Tier, profiler: Profiler | None) -> Need | None:
+        """The configured need, else the profiler's reading of `text`, else none (chain order)."""
+        if self.need is not None:
+            return Need(complexity=self.need, reasoning=self.need == "complex", source="caller")
+        if profiler is None:
+            return None
+        return await profiler.profile(text, tier)
 
     def pick(
         self, tier: Tier, requested: str | None = None, requested_prefer: Prefer | None = None
@@ -115,6 +127,7 @@ def _resolve(name: str, agent: AgentModel, inventory: Inventory) -> ModelChoice:
         prefer=agent.prefer,
         confidential_model=confidential,
         confidential_prefer=agent.confidential_prefer,
+        need=agent.need,
     )
 
 

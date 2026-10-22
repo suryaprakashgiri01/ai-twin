@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 from tenacity.wait import wait_base
 
 from llm_orchestrator.executor import CallContext, Executor, usage_of
+from llm_orchestrator.gateway import Need
 from llm_orchestrator.hooks import exhausted
 from llm_orchestrator.inventory import Inventory
 from llm_orchestrator.overrides import OverrideStore
@@ -103,6 +104,7 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
     ) -> Selection:
         effective = await self._inventory.effective(self._store)
         return select(
@@ -113,6 +115,7 @@ class Orchestrator:
             model=model,
             prefer=prefer,
             privileged=privileged,
+            need=need,
         )
 
     async def chat(
@@ -124,10 +127,13 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
         callbacks: Callbacks = None,
         max_tokens: int | None = None,
     ) -> CallResult:
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         ctx = CallContext(role=role, tier=tier, callbacks=callbacks, max_tokens=max_tokens)
         for index, spec in enumerate(selection.models):
             try:
@@ -153,11 +159,14 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
         callbacks: Callbacks = None,
         max_tokens: int | None = None,
     ) -> StructuredResult[T]:
         """Validated `schema` instance. One repair per model on invalid output, then next model."""
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         ctx = CallContext(role=role, tier=tier, callbacks=callbacks, max_tokens=max_tokens)
         prompt = [SystemMessage(content=_schema_instruction(schema)), *messages]
         for index, spec in enumerate(selection.models):
@@ -178,6 +187,7 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
         callbacks: Callbacks = None,
         max_tokens: int | None = None,
     ) -> T:
@@ -191,6 +201,7 @@ class Orchestrator:
             privileged=privileged,
             callbacks=callbacks,
             max_tokens=max_tokens,
+            need=need,
         )
         return result.value
 
@@ -236,12 +247,15 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
     ) -> tuple[ModelSpec, BaseChatModel]:
         """The first eligible model as a LangChain chat model, for LangGraph nodes.
 
         The caller owns retries and fallbacks for a model used this way.
         """
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         spec = selection.models[0]
         return spec, self._executor.model_for(spec)
 
@@ -253,9 +267,12 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
     ) -> list[tuple[ModelSpec, BaseChatModel]]:
         """Every eligible model, best first, for callers that stream and own their fallbacks."""
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         return [(spec, self._executor.model_for(spec)) for spec in selection.models]
 
     async def model_counts(self) -> dict[str, int]:

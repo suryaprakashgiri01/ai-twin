@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from llm_orchestrator.classify.base import Classifier
 from llm_orchestrator.types import ModelSpec, Tier
+
+if TYPE_CHECKING:
+    # Type-only: the classify package imports the orchestrator, which imports this module.
+    from llm_orchestrator.classify.base import Classifier
 
 logger = structlog.get_logger(__name__)
 
@@ -113,22 +116,23 @@ def capable(spec: ModelSpec, need: Need) -> bool:
 
 
 def fit_order(models: Sequence[ModelSpec], need: Need) -> list[ModelSpec]:
-    """Eligible models best-fit first.
+    """Eligible models best-fit first; every model stays as a fallback.
 
-    Models without a capability the need requires (tools, reasoning) are dropped, unless none
-    has it: then every model stays, so a request is never refused for a capability. Among the
-    rest: for a complex need the strongest first; otherwise the closest quality at or above the
-    target first, cheaper before dearer. The chain's own order breaks ties (sorting is stable).
+    Models with every capability the need asks for (tools, reasoning) come first; the rest
+    stay at the end, so an unreachable provider never leaves a request without a model. Within
+    each group: for a complex need the strongest first; otherwise the closest quality at or
+    above the target first, cheaper before dearer. The chain's own order breaks ties (sorting
+    is stable).
     """
-    pool = [m for m in models if capable(m, need)] or list(models)
     target = TARGET_QUALITY[need.complexity]
 
-    def key(spec: ModelSpec) -> tuple[int, float]:
+    def key(spec: ModelSpec) -> tuple[int, int, float]:
+        group = 0 if capable(spec, need) else 1
         cost = spec.cost.input_per_mtok + spec.cost.output_per_mtok
         if need.complexity == "complex":
-            return (-spec.quality, cost)
+            return (group, -spec.quality, cost)
         shortfall = max(0, target - spec.quality)
         excess = max(0, spec.quality - target)
-        return (shortfall * 10 + excess, cost)
+        return (group, shortfall * 10 + excess, cost)
 
-    return sorted(pool, key=key)
+    return sorted(models, key=key)

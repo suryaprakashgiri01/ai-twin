@@ -50,11 +50,13 @@ from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import Hit, SearchFilters
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from llm_orchestrator import (
+    Need,
     NoEligibleModelError,
     Orchestrator,
     OrchestratorError,
     OverrideRejectedError,
     Prefer,
+    Profiler,
     Rejection,
     Role,
     Tier,
@@ -193,6 +195,8 @@ class OwnerDeps:
     settings: OwnerSettings = field(default_factory=OwnerSettings)
     # config/agents.yaml for this agent; a caller's state may pass another (the super agent).
     models: ModelChoice = AUTO_CHOICE
+    # Reads each request's complexity for the gateway; None keeps the chain order.
+    profiler: Profiler | None = None
     today: Callable[[], date] = field(default=lambda: utcnow().date())
 
 
@@ -544,8 +548,9 @@ class OwnerNodes:
     ) -> ErrorInfo | None:
         try:
             model, prefer = choose(state, self.deps.models, plan.tier)
+            need = await self._need(state, plan.tier)
             async for text in self.deps.generator.stream(
-                plan.tier, plan.messages, gen, model=model, prefer=prefer
+                plan.tier, plan.messages, gen, model=model, prefer=prefer, need=need
             ):
                 parts.append(text)
                 writer({"token": text})
@@ -616,6 +621,12 @@ class OwnerNodes:
         plan = self._with_messages(state, tier, system, f"Context:\n{context.render()}")
         plan.sources, plan.withheld = context.sources, context.withheld
         return plan
+
+    async def _need(self, state: OwnerState, tier: Tier) -> Need | None:
+        models: ModelChoice = state.get("models") or self.deps.models
+        return await models.need_for(
+            state.get("query") or state["question"], tier, self.deps.profiler
+        )
 
     async def _conversation_floor(self, state: OwnerState) -> Tier:
         """The request floor, raised to the conversation's highest visible turn when a model

@@ -93,11 +93,62 @@ def test_fit_order_matches_strength_to_complexity() -> None:
     assert ids(fit_order(chain, Need(complexity="moderate"))) == ["mid", "big", "small"]
     assert ids(fit_order(chain, Need(complexity="simple")))[0] == "mid"  # 3 is nearest above 2
     assert ids(fit_order([small, big], Need(complexity="simple"))) == ["big", "small"]
-    # A reasoning need drops models that cannot reason...
-    assert ids(fit_order(chain, Need(complexity="moderate", reasoning=True))) == ["big"]
-    # ...unless none can: then nothing is refused.
+    # A reasoning need puts models that can reason first; the rest stay as fallbacks.
+    assert ids(fit_order(chain, Need(complexity="moderate", reasoning=True))) == [
+        "big",
+        "mid",
+        "small",
+    ]
     assert ids(fit_order([mid, small], Need(reasoning=True))) == ["mid", "small"]
     # Equal fit: cheaper first, then chain order.
     twin = model("twin", 3, ("tools",), cost=0.5)
     assert ids(fit_order([twin, mid], Need(complexity="moderate"))) == ["mid", "twin"]
     assert Need(complexity="complex", reasoning=True).summary() == "complex+reasoning"
+
+
+async def test_selection_fits_the_need_but_prefer_pins_and_tiers_win() -> None:
+    from llm_orchestrator import Role
+    from tests.llm_orchestrator.fakes import Factory, inventory, orchestrator
+
+    def entry(model_id: str, quality: int, max_tier: str, tags: tuple[str, ...] = ()) -> Any:
+        return {
+            **spec(model_id, roles=["generator"], max_tier=max_tier, tags=tags),
+            "quality": quality,
+            "capabilities": ["tools", "reasoning"] if quality == 5 else ["tools"],
+        }
+
+    inv = inventory(
+        entry("small", 2, "private", ("fast",)),
+        entry("big", 5, "private"),
+        entry("local", 3, "confidential", ("local",)),
+    )
+    orch = orchestrator(inv, Factory({}))
+
+    async def order(tier: Tier, **kw: Any) -> list[str]:
+        return [
+            m.id for m in (await orch.select(Role.GENERATOR, tier, privileged=True, **kw)).models
+        ]
+
+    assert await order(Tier.PRIVATE) == ["small", "big", "local"]  # chain order without a need
+    assert (await order(Tier.PRIVATE, need=Need(complexity="complex")))[0] == "big"
+    assert (await order(Tier.PRIVATE, need=Need(complexity="simple")))[0] == "small"
+    # prefer still wins over the fit.
+    complex_fast = await order(Tier.PRIVATE, need=Need(complexity="complex"), prefer="fast")
+    assert complex_fast[0] == "small"
+    # A pin is a pin.
+    assert await order(Tier.PRIVATE, model="local", need=Need(complexity="complex")) == ["local"]
+    # Confidential: the cloud models are never eligible, whatever the need.
+    assert await order(Tier.CONFIDENTIAL, need=Need(complexity="complex", reasoning=True)) == [
+        "local"
+    ]
+
+
+async def test_agent_need_from_config_or_profiler() -> None:
+    from app.agents.models import AUTO_CHOICE
+
+    prep = AUTO_CHOICE.model_copy(update={"need": "complex"})
+    need = await prep.need_for("thanks", Tier.PRIVATE, Profiler())
+    assert need is not None and (need.complexity, need.source) == ("complex", "caller")
+    profiled = await AUTO_CHOICE.need_for(DIAGNOSE, Tier.PRIVATE, Profiler())
+    assert profiled is not None and profiled.source == "rules" and profiled.reasoning
+    assert await AUTO_CHOICE.need_for("thanks", Tier.PRIVATE, None) is None
