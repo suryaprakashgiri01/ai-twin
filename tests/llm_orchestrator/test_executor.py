@@ -234,3 +234,21 @@ async def test_no_log_line_contains_prompt_or_completion(
     assert any(line["event"] == "llm attempt" for line in lines)
     rendered = output.out + output.err + caplog.text
     assert "CANARY" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("ollama", {"options": {"num_predict": 300}}),
+        ("gemini", {"max_output_tokens": 300}),
+        ("groq", {"max_tokens": 300}),
+        ("mock", {}),
+    ],
+)
+def test_token_limit_uses_each_providers_parameter(provider: str, expected: dict[str, Any]) -> None:
+    from llm_orchestrator.executor import limit_kwargs
+    from llm_orchestrator.types import ModelSpec
+
+    model = ModelSpec.model_validate(spec("m", provider=provider, max_tier="public"))
+    assert limit_kwargs(model, 300) == expected
+    assert limit_kwargs(model, None) == {}

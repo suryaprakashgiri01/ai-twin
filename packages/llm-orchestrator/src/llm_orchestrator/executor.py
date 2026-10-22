@@ -23,7 +23,15 @@ from tenacity.wait import wait_base
 
 from llm_orchestrator.hooks import AttemptEvent, notify_attempt
 from llm_orchestrator.providers import ModelFactory
-from llm_orchestrator.types import Attempt, ModelSpec, ProviderError, Role, Tier, TokenUsage
+from llm_orchestrator.types import (
+    Attempt,
+    ModelSpec,
+    Provider,
+    ProviderError,
+    Role,
+    Tier,
+    TokenUsage,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -63,6 +71,25 @@ def usage_of(message: AIMessage) -> TokenUsage:
     if not meta:
         return TokenUsage()
     return TokenUsage(input_tokens=meta["input_tokens"], output_tokens=meta["output_tokens"])
+
+
+def limit_kwargs(spec: ModelSpec, max_tokens: int | None) -> dict[str, Any]:
+    """The output-token limit as each provider's chat model takes it at call time.
+
+    Ollama's client rejects `max_tokens` and wants `options.num_predict`; Gemini names it
+    `max_output_tokens`; the offline mock takes none.
+    """
+    if max_tokens is None:
+        return {}
+    match spec.provider:
+        case Provider.OLLAMA:
+            return {"options": {"num_predict": max_tokens}}
+        case Provider.GEMINI:
+            return {"max_output_tokens": max_tokens}
+        case Provider.MOCK:
+            return {}
+        case _:
+            return {"max_tokens": max_tokens}
 
 
 @dataclass
@@ -136,7 +163,7 @@ class Executor:
                 "ls_model_name": spec.model,
             },
         }
-        kwargs: dict[str, Any] = {} if ctx.max_tokens is None else {"max_tokens": ctx.max_tokens}
+        kwargs = limit_kwargs(spec, ctx.max_tokens)
         started = time.perf_counter()
         try:
             seconds = self._timeout_for(spec) if self._timeout_for else self._timeout
