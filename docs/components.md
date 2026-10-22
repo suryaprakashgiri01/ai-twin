@@ -91,7 +91,7 @@ flowchart TB
 | `app/observability` | Langfuse facade, per-channel masking, metrics |
 | `app/security` | Security events and debounced email alerts |
 | `app/db`, `app/storage`, `app/vector`, `app/cache` | MongoDB documents, encrypted blob store, Qdrant client, Redis/Valkey |
-| `packages/llm-orchestrator` | Provider-neutral model inventory and tier-safe calling; see its [README](../packages/llm-orchestrator/README.md) |
+| `packages/llm-orchestrator` | Provider-neutral model inventory, tier-safe calling and the gateway (need-fitted model order, thinking split, 404 cool-off); see its [README](../packages/llm-orchestrator/README.md) and [`llm-gateway.md`](llm-gateway.md) |
 
 ## Runtime wiring
 
