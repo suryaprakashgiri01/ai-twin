@@ -99,18 +99,10 @@ upgrade: ## Apply pending MongoDB migrations (the API also does this at every st
 downgrade: ## Roll back migrations newer than a version (dry run): ARGS="0003 --apply"
 	$(PY) scripts.migrate downgrade $(ARGS)
 
-# On Windows, Ctrl+C ends `make` before the server has finished stopping, so PowerShell prints
-# its prompt above the last shutdown lines and the cursor looks stuck: press Enter. Running the
-# server through scripts/dev.ps1 (no make in between) avoids it.
-ifeq ($(OS),Windows_NT)
-RUN_HINT = @echo "Windows: Ctrl+C stops the server quietly under make (no lines after the prompt); ./scripts/dev.ps1 run shows the full shutdown."
-else
-RUN_HINT = @true
-endif
-
-run: ## Run the API locally (reload)
-	$(RUN_HINT)
-	$(PY) app.main --reload
+# On Windows the server opens in its own PowerShell window (Ctrl+C there shows the full
+# shutdown, then a clean prompt); ARGS="--here" keeps it in this terminal. See scripts/run.py.
+run: ## Run the API locally (reload); Windows: in its own window
+	$(PY) scripts.run $(ARGS)
 
 test: ## Tests only (no coverage gate)
 	uv run pytest $(ARGS)
