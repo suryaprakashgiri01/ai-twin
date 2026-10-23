@@ -16,8 +16,9 @@ RUN useradd --create-home --uid 1000 app
 WORKDIR /app
 
 # Dependencies first, so code changes reuse this layer.
-COPY pyproject.toml uv.lock ./
-COPY packages/llm-orchestrator/pyproject.toml packages/llm-orchestrator/pyproject.toml
+# The README files are package metadata (pyproject `readme`): the build needs them.
+COPY pyproject.toml uv.lock README.md ./
+COPY packages/llm-orchestrator/pyproject.toml packages/llm-orchestrator/README.md packages/llm-orchestrator/
 COPY packages/llm-orchestrator/src packages/llm-orchestrator/src
 RUN uv sync --frozen --no-dev --no-install-project
 
@@ -41,7 +42,7 @@ RUN chown -R app:app /app/models
 USER app
 ENV DEPLOYMENT_PROFILE=public \
     HOST=0.0.0.0 \
-    APP_ENV=production \
+    APP_ENV=prod \
     LOG_FORMAT=json \
     PORT=7860
 EXPOSE 7860
