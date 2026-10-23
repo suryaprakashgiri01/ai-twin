@@ -66,9 +66,18 @@ flowchart LR
   about 200 ms). Note its URL (`https://<id>.<region>.cloud.qdrant.io:6333`) and an API key. Free clusters are
   suspended after a week without use.
 
-Keep the values in a password manager. In the vault's `.env` they live under their own names
-(`ATLAS_MONGODB_URI`, `UPSTASH_REDIS_URL`, …) so they never collide with the local stack's variables. Only
-`PUBLISH_QDRANT_URL` and `PUBLISH_QDRANT_API_KEY` are read by the vault (by `make publish`).
+### Where the cloud values live in the vault's `.env`
+
+The local stack owns `MONGODB_URI`, `REDIS_URL`, `QDRANT_URL` and `QDRANT_API_KEY`. A cloud value under one of
+those names would point the vault at the cloud and send private data there, so cloud values get their own
+names (`.env.example` lists them):
+
+| Name | What | Read by |
+|---|---|---|
+| `PUBLISH_QDRANT_URL`, `PUBLISH_QDRANT_API_KEY` | the Qdrant Cloud cluster (`https://…:6333`) | `make publish` |
+| `ATLAS_MONGODB_URI` (+ `ATLAS_MONGO_USERNAME`, `ATLAS_MONGO_PASSWORD`) | the Atlas app user's URI | the deploy steps, the portfolio key |
+| `UPSTASH_REDIS_URL` | the Upstash TCP URL (`rediss://…:6379`) | the deploy steps |
+| `UPSTASH_TOKEN`, `UPSTASH_READONLY_TOKEN` | Upstash REST tokens | nothing (kept for reference) |
 
 ### 2. Google Cloud
 Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install). Then, with your project:
@@ -79,15 +88,19 @@ gcloud config set run/region asia-south1
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com storage.googleapis.com
 ```
 
-**Secrets.** Each value goes in from standard input, so it never appears in the shell history:
+**Secrets.** Each value is piped from `.env` by name into Secret Manager, so it never appears on screen or in
+the shell history:
 
 ```bash
-printf '%s' "<atlas app-user URI>" | gcloud secrets create ai-twin-mongodb-uri --data-file=-
-printf '%s' "<upstash rediss URL>" | gcloud secrets create ai-twin-redis-url --data-file=-
-printf '%s' "<qdrant api key>"     | gcloud secrets create ai-twin-qdrant-api-key --data-file=-
-openssl rand -hex 32 | tr -d '\n'  | gcloud secrets create ai-twin-visitor-salt --data-file=-
-printf '%s' "<gemini key>"         | gcloud secrets create ai-twin-gemini-api-key --data-file=-
+envval() { grep "^$1=" .env | head -1 | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/' | tr -d '\n'; }
+envval ATLAS_MONGODB_URI      | gcloud secrets create ai-twin-mongodb-uri --data-file=-
+envval UPSTASH_REDIS_URL      | gcloud secrets create ai-twin-redis-url --data-file=-
+envval PUBLISH_QDRANT_API_KEY | gcloud secrets create ai-twin-qdrant-api-key --data-file=-
+envval GEMINI_API_KEY         | gcloud secrets create ai-twin-gemini-api-key --data-file=-
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create ai-twin-visitor-salt --data-file=-
 ```
+
+To change one later: `envval NAME | gcloud secrets versions add <secret> --data-file=-`.
 
 Add any other public-tier provider keys, `TURNSTILE_SECRET_KEY` and the SMTP password the same way.
 
@@ -124,7 +137,7 @@ the machine.
 gcloud run deploy ai-twin-public --source . --region asia-south1 \
   --allow-unauthenticated --execution-environment gen2 \
   --memory 2Gi --cpu 1 --min-instances 0 --max-instances 2 --concurrency 20 --timeout 300 \
-  --set-env-vars "MONGODB_DATABASE=ai_twin,QDRANT_URL=https://<id>.<region>.cloud.qdrant.io:6333,PUBLIC_OWNER_NAME=<your name>,PUBLIC_CANARY_HASHES_PATH=/publish/canary-hashes.json,PUBLIC_RESUME_PATH=/publish/<resume file>" \
+  --set-env-vars "MONGODB_DATABASE=ai_twin,QDRANT_URL=$(envval PUBLISH_QDRANT_URL),PUBLIC_OWNER_NAME=<your name>,PUBLIC_CANARY_HASHES_PATH=/publish/canary-hashes.json,PUBLIC_RESUME_PATH=/publish/<resume file>" \
   --set-secrets "MONGODB_URI=ai-twin-mongodb-uri:latest,REDIS_URL=ai-twin-redis-url:latest,QDRANT_API_KEY=ai-twin-qdrant-api-key:latest,VISITOR_HASH_SALT=ai-twin-visitor-salt:latest,GEMINI_API_KEY=ai-twin-gemini-api-key:latest" \
   --add-volume name=publish,type=cloud-storage,bucket=<BUCKET>,readonly=true \
   --add-volume-mount volume=publish,mount-path=/publish
