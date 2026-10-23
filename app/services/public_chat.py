@@ -52,7 +52,7 @@ from app.guardrails.scope import ProfileTemplates, ScopeRouter
 from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
-from app.kb.retrieval.retriever import Hit, MongoDocumentFilter
+from app.kb.retrieval.retriever import Hit, MongoDocumentFilter, PublishedFilter
 from app.leads.capture import OPPORTUNITY as OPPORTUNITY_INTENT
 from app.leads.capture import CaptureDeps, CaptureSettings
 from app.leads.service import LeadService
@@ -490,9 +490,11 @@ def build_public_chat(
         second_opinion=classifier,
         second_opinion_enabled=lambda: _jev_on(classifier),
     )
+    system_prompt = prompts.generate_prompt(settings.public_owner_name)
     output_guard = OutputGuard(
         canaries=canary_source(settings),
-        system_prompts=[prompts.GENERATE_V1],
+        # The prompt in use is the one a leak would echo.
+        system_prompts=[system_prompt],
         allowlist=split_list(settings.public_contact_allowlist),
         judge=SwitchedJudge(
             default=OrchestratorJudge(orchestrator),
@@ -507,7 +509,8 @@ def build_public_chat(
         retriever=public_retriever(
             resources.qdrant,
             embedder,
-            MongoDocumentFilter(),
+            # The public deployment has no vault document records: kb_public is the truth there.
+            PublishedFilter() if settings.deployment_profile == "public" else MongoDocumentFilter(),
             prefetch=settings.retrieval_prefetch,
         ),
         reranker=CrossEncoderReranker(
@@ -517,6 +520,7 @@ def build_public_chat(
         output_guard=output_guard,
         events=resources.security_events,
         settings=PublicSettings(
+            system_prompt=system_prompt,
             top_k=settings.retrieval_top_k,
             context_tokens=settings.public_context_tokens,
             history_turns=settings.public_history_turns,

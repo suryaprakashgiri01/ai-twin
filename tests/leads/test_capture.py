@@ -317,3 +317,17 @@ async def test_an_employment_type_counts_only_when_the_visitor_said_it() -> None
         drafts.append((await cap.public.service._graph.aget_state(config)).values["lead"]["draft"])
     assert "employment_type" not in drafts[0]
     assert drafts[1]["employment_type"] == "contract"
+
+
+async def test_a_phone_number_is_taken_from_the_visitors_words_and_masked_in_the_summary() -> None:
+    assert capture.pattern_values("call me on +91 98765 43210 or mail ravi@example.com") == {
+        "email": "ravi@example.com",
+        "phone": "+91 98765 43210",
+    }
+    # Salary ranges, years and short numbers are not phone numbers.
+    assert "phone" not in capture.pattern_values("budget 1500000 for 2026, team of 12")
+    assert "phone" not in capture.pattern_values("see https://example.com/jobs/1234567890123")
+    c = make_capture(happy_script())
+    await fill(c)
+    confirm = await c.say("my number is +91 98765 43210")
+    assert "• Phone: +91 98765 43210" in confirm

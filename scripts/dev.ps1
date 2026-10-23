@@ -21,7 +21,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "kb-sync", "models-check", "chat", "migrate", "memory", "graph")
+$scripts = @("setup", "doctor", "models", "ollama", "up", "down", "status", "logs", "cleanup", "check", "keys", "export", "import", "seed", "kb-sync", "models-check", "eval", "publish", "chat", "migrate", "memory", "graph")
 
 switch ($Command) {
     "help" {

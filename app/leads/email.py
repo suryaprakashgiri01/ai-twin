@@ -153,6 +153,7 @@ def _rows(lead: StoredLead) -> list[tuple[str, str]]:
     rows = [
         ("Name", lead.name),
         ("Email", lead.email),
+        ("Phone", lead.details.phone or ""),
         ("Company", lead.company or ""),
         ("Role", lead.role or ""),
         ("Type", lead.details.employment_type or ""),

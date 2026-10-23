@@ -84,6 +84,8 @@ class PublicSettings:
     candidates: int = 20
     context_tokens: int = 1500
     history_turns: int = 4
+    # The generation prompt (`prompts.generate_prompt(owner name)`); v1 when unset.
+    system_prompt: str = prompts.GENERATE_V1
 
 
 @dataclass(frozen=True)
@@ -226,7 +228,7 @@ class PublicNodes:
             return {"answer": prompts.NO_CONTEXT, "sources": [], "context": "", "generated": False}
         rendered = context.render()
         messages: list[BaseMessage] = [
-            SystemMessage(content=prompts.GENERATE_V1),
+            SystemMessage(content=self.settings.system_prompt),
             *history_messages(state.get("history", []), self.settings.history_turns),
             HumanMessage(content=f"Context:\n{rendered}\n\nQuestion: {state['text']}"),
         ]

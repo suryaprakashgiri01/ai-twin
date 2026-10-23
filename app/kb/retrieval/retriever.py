@@ -90,6 +90,18 @@ def _object_ids(ids: Sequence[str]) -> list[PydanticObjectId]:
     return found
 
 
+class PublishedFilter:
+    """The public deployment's filter: `kb_public` holds only published chunks (publishing writes
+    them, unpublishing and deleting remove them, `make publish` mirrors that), so every hit is
+    live. The vault's document records never leave the vault. Visitors cannot send filters."""
+
+    async def live(self, document_ids: Sequence[str]) -> set[str]:
+        return set(document_ids)
+
+    async def matching(self, filters: SearchFilters) -> list[str]:
+        return []
+
+
 class MongoDocumentFilter:
     async def live(self, document_ids: Sequence[str]) -> set[str]:
         if not document_ids:

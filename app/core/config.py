@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6380/0"
     qdrant_url: str = "http://localhost:6334"
     qdrant_api_key: SecretStr = SecretStr("")
+    # `make publish` mirrors kb_public here (the public deployment's Qdrant). Vault only.
+    publish_qdrant_url: str = ""
+    publish_qdrant_api_key: SecretStr = SecretStr("")
     # Startup gives MongoDB this long to answer before failing fast.
     mongodb_timeout_ms: int = Field(default=5000, gt=0)
     # Each readiness check gets this long before it counts as unavailable.

@@ -12,16 +12,17 @@ version: 1
 
 models:
   # --- Groq: inputs not retained for training; primary for every role ---------------------
-  - id: groq-llama-8b
+  # Groq retired llama-3.1-8b-instant on 2026-08-16; gpt-oss-20b is its named replacement.
+  - id: groq-gpt-oss-20b
     provider: groq
-    model: llama-3.1-8b-instant
+    model: openai/gpt-oss-20b
     roles: [router, classifier]
     max_tier: private
     context_window: 131072
     trains_on_inputs: false
     tags: [fast]
-    capabilities: [text, tools]
-    quality: 2
+    capabilities: [text, tools, reasoning]
+    quality: 3
 
   - id: groq-gpt-oss-120b
     provider: groq
@@ -228,8 +229,8 @@ models:
     quality: 1
 
 roles:
-  router: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, ollama-qwen, mock]
-  classifier: [groq-llama-8b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
+  router: [groq-gpt-oss-20b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, ollama-qwen, mock]
+  classifier: [groq-gpt-oss-20b, cerebras-qwen-27b, gemini-flash-lite, openrouter-gemma, ollama-local, mock]
   generator: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, ollama-qwen3-8b, ollama-qwen3-14b, anthropic-sonnet, anthropic-opus, mock]
   judge: [groq-gpt-oss-120b, cerebras-gpt-oss-120b, gemini-flash, openrouter-gemma, ollama-qwen, ollama-local, ollama-qwen-14b, ollama-qwen3-8b, ollama-qwen3-14b, anthropic-sonnet, anthropic-opus, mock]
   # No fallback: without the guard model the input guard keeps its rule layers and says so.

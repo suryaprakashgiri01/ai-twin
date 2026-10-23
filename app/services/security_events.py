@@ -21,6 +21,7 @@ import structlog
 from redis.asyncio import Redis
 
 from app.cache.redis import security_burst_key
+from app.core.telemetry import current_trace_id
 from app.db.documents import SecurityEvent
 from app.observability.metrics import SECURITY_EVENTS
 from llm_orchestrator import Attempt, Role, Tier
@@ -79,6 +80,7 @@ class MongoSecurityEvents:
                 details=body,
                 visitor_hash=visitor_hash,
                 surface=surface,
+                trace_id=current_trace_id(),
             ).insert()
         except Exception as exc:
             logger.warning("security event not stored", kind=kind, error_type=type(exc).__name__)

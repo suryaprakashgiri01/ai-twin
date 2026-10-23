@@ -318,6 +318,8 @@ class LeadDetails(BaseModel):
     employment_type: str | None = None
     # Stored as text: never fetched, never rendered as a link.
     link: str | None = None
+    # Optional: a visitor who would rather talk gives a number with their email.
+    phone: str | None = None
 
 
 class LeadFields(BaseModel):
@@ -491,6 +493,8 @@ class SecurityEvent(Document):
     visitor_hash: str | None = None
     # Where an auth failure happened: `admin` or `public`; None for other kinds.
     surface: Literal["admin", "public"] | None = None
+    # The request's trace (also its Langfuse trace id when tracing is on).
+    trace_id: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     # Set by the alert worker once the event went out in an alert email, or in a daily digest.
     alerted_at: datetime | None = None
