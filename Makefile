@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync models-check eval chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync models-check eval publish chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -56,6 +56,9 @@ seed: ## Fake-persona demo data via the API: dry run; ARGS="--apply" | "--remove
 
 models-check: ## Are the cloud model ids in config/models.yaml still served? (ids only; keys never printed)
 	$(PY) scripts.models_check $(ARGS)
+
+publish: ## Mirror kb_public to the public Qdrant + export canary hashes and resume (dry run; ARGS="--apply")
+	$(PY) scripts.publish $(ARGS)
 
 eval: ## Evaluate the public assistant with real models (red-team + golden set); ARGS="--limit 5"
 	$(PY) scripts.eval $(ARGS)
