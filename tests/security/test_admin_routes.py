@@ -76,7 +76,7 @@ async def test_events_are_listed_newest_first_without_text(api: Api) -> None:
     assert [e["kind"] for e in everything] == ["auth_failed", "canary_hit", "meta_probe"]
     assert set(everything[0]) == {
         "id", "kind", "severity", "rules", "visitor", "surface",
-        "createdAt", "alertedAt", "digestedAt",
+        "createdAt", "alertedAt", "digestedAt", "traceId",
     }  # fmt: skip
     assert everything[0]["surface"] == "admin"
     assert probes[0]["visitor"] == "aaaaaaaa"
@@ -125,3 +125,22 @@ async def test_routes_need_the_admin_scope(api: Api) -> None:
     async for c in client(api, scopes=["public:read"]):
         assert (await c.get("/admin/v1/security/events")).status_code == 403
         assert (await c.post("/admin/v1/alerts/test")).status_code == 403
+
+
+class LinkedTracing:
+    enabled = True
+
+    async def trace_url(self, trace_id: str) -> str | None:
+        return f"https://langfuse.example/project/p1/traces/{trace_id}"
+
+
+async def test_trace_link_is_resolved_or_404_when_tracing_is_off(api: Api) -> None:
+    trace = "a" * 32
+    async for c in client(api):
+        off = await c.get(f"/admin/v1/observability/traces/{trace}")
+        assert off.status_code == 404  # no Langfuse in tests
+        assert (await c.get("/admin/v1/observability/traces/not-a-trace")).status_code == 422
+        c._transport.app.state.tracing = LinkedTracing()  # type: ignore[attr-defined]
+        on = await c.get(f"/admin/v1/observability/traces/{trace}")
+        assert on.status_code == 200
+        assert on.json()["result"]["url"].endswith(f"/traces/{trace}")

@@ -16,6 +16,7 @@ exporter included, see `app.core.logging`) log at most once a minute.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -107,6 +108,10 @@ class Tracing(Protocol):
 
     def shutdown(self) -> None: ...
 
+    async def trace_url(self, trace_id: str) -> str | None:
+        """The Langfuse page for a trace, or None when tracing is off or Langfuse is unreachable."""
+        ...
+
 
 class NoopTracing:
     enabled = False
@@ -124,6 +129,9 @@ class NoopTracing:
         return NOOP_RUN
 
     def shutdown(self) -> None:
+        return None
+
+    async def trace_url(self, trace_id: str) -> str | None:
         return None
 
 
@@ -344,6 +352,15 @@ class LangfuseTracing:
             self.client.shutdown()
         except Exception as exc:
             self.warn("shutdown", exc)
+
+    async def trace_url(self, trace_id: str) -> str | None:
+        # The SDK looks the project id up once (a network call), then builds the link.
+        try:
+            url = await asyncio.to_thread(self.client.get_trace_url, trace_id=trace_id)
+        except Exception as exc:
+            self.warn("trace_url", exc)
+            return None
+        return str(url) if url else None
 
 
 NOOP = NoopTracing()

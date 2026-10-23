@@ -101,6 +101,7 @@ class StoredEvent:
     digested_at: datetime | None = None
     # The public id the admin API shows; `id` stays internal (alert and digest marks).
     uid: str = ""
+    trace_id: str | None = None
 
 
 class EventStore(Protocol):
@@ -139,6 +140,7 @@ def _stored(doc: SecurityEvent) -> StoredEvent:
         alerted_at=doc.alerted_at,
         digested_at=doc.digested_at,
         uid=doc.uid,
+        trace_id=doc.trace_id,
     )
 
 

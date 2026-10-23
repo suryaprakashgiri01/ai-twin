@@ -6,12 +6,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, get_args
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from app.api.envelope import ApiModel, Envelope, ok
 from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
+from app.observability.tracing import NOOP, Tracing
 from app.security.alerts import VISITOR_PREFIX, StoredEvent, safe_rule
 from app.security.worker import AlertWorker
 from app.services.admin_ops import key_actor
@@ -45,6 +46,8 @@ class SecurityEventOut(ApiModel):
     created_at: datetime
     alerted_at: datetime | None
     digested_at: datetime | None
+    # The request's trace id: open it with GET /admin/v1/observability/traces/{traceId}.
+    trace_id: str | None = None
 
     @classmethod
     def of(cls, event: StoredEvent) -> SecurityEventOut:
@@ -58,6 +61,7 @@ class SecurityEventOut(ApiModel):
             created_at=event.created_at,
             alerted_at=event.alerted_at,
             digested_at=event.digested_at,
+            trace_id=event.trace_id,
         )
 
 
@@ -152,3 +156,25 @@ async def test_alert(principal: AdminKey, request: Request) -> Envelope[AlertTes
         details={"sent": sent},
     )
     return ok(AlertTestResult(sent=sent), "Test alert sent" if sent else "Test alert failed")
+
+
+class TraceLink(ApiModel):
+    trace_id: str
+    url: str
+
+
+@router.get(
+    "/observability/traces/{trace_id}",
+    summary="The Langfuse link for a trace (404 when tracing is off)",
+)
+async def trace_link(
+    trace_id: Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")],
+    _principal: AdminKey,
+    request: Request,
+) -> Envelope[TraceLink]:
+    """Security events, chat turns and every response's `X-Trace-ID` carry this id."""
+    tracing: Tracing = getattr(request.app.state, "tracing", NOOP)
+    url = await tracing.trace_url(trace_id)
+    if url is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Tracing is off, or Langfuse did not answer")
+    return ok(TraceLink(trace_id=trace_id, url=url))
