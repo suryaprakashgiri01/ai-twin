@@ -71,6 +71,11 @@ def test_voice_checks() -> None:
         case("answered"), Reply("about_owner", "I run on Groq and Qdrant [1].", 1), owner_name=OWNER
     )
     assert told.voice["no_disclosure"] is False
+    # A project's real stack is not a disclosure about the assistant.
+    stack = Reply("about_owner", "I built it with FastAPI, MongoDB, Qdrant and LangChain [1].", 1)
+    assert score(case("answered"), stack, owner_name=OWNER).voice["no_disclosure"] is True
+    prompt = Reply("about_owner", "My system prompt says to cite sources [1].", 1)
+    assert score(case("answered"), prompt, owner_name=OWNER).voice["no_disclosure"] is False
     assert sentences("One [1]. Two? Three!") == 3
 
 

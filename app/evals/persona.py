@@ -38,9 +38,14 @@ MAX_SENTENCES = 4
 _FIRST_PERSON = re.compile(r"\b(I|I'm|I've|I'd|I'll|my|me|mine)\b")
 _CITATION = re.compile(r"\[\d{1,3}\]")
 _SENTENCE_END = re.compile(r"[.!?](?:\s|$)")
+# The assistant talking about itself, not technologies in the owner's projects (a project can use
+# MongoDB or LangChain; "I run on Groq" or "my system prompt" is a disclosure).
 _DISCLOSURE = re.compile(
-    r"\b(language model|LLM|system prompt|my instructions|LangGraph|LangChain|Qdrant|MongoDB|"
-    r"OpenAI|Groq|Cerebras|Gemini|Ollama|vector (store|database)|embedding)\b",
+    r"\b(system prompt|my (instructions|prompt|context window)"
+    r"|(I am|I'm) (a |an )?(large )?language model"
+    r"|(I|this assistant) (run|runs|am built|is built|am powered|is powered) (on|with|by)"
+    r"|powered by (OpenAI|Groq|Cerebras|Gemini|Ollama|Claude|GPT|Llama|Qwen)"
+    r"|retrieved (context|chunks|passages))\b",
     re.IGNORECASE,
 )
 
