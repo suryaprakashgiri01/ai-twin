@@ -1,5 +1,6 @@
 # The public deployment: published knowledge only, no admin routes (DEPLOYMENT_PROFILE=public).
-# Hugging Face Spaces (Docker SDK) runs it on port 7860; any container host works the same.
+# Google Cloud Run (asia-south1) runs it: Cloud Run sets PORT (8080). Hugging Face Spaces cannot host it:
+# Spaces block outbound ports other than 80/443/8080, and MongoDB Atlas (27017) and Redis (6379) need others.
 # Nothing from vault/ or .env is ever copied in (see .dockerignore).
 FROM python:3.12-slim AS base
 
@@ -44,6 +45,6 @@ ENV DEPLOYMENT_PROFILE=public \
     HOST=0.0.0.0 \
     APP_ENV=prod \
     LOG_FORMAT=json \
-    PORT=7860
-EXPOSE 7860
+    PORT=8080
+EXPOSE 8080
 CMD ["python", "-m", "app.main"]

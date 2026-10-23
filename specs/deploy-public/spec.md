@@ -5,8 +5,10 @@ The portfolio's assistant has to run somewhere public, with published knowledge 
 the owner's machine.
 
 ## Decisions
-- **Host.** A container on Hugging Face Spaces (Docker SDK, port 7860). Any container host works with the same
-  image (Fly, Render, Cloud Run).
+- **Host.** Google Cloud Run in `asia-south1` (Mumbai), next to the Upstash Redis and the Atlas cluster. Hugging
+  Face Spaces were the first choice but block outbound ports other than 80, 443 and 8080, so they cannot reach
+  MongoDB Atlas (27017) or Redis (6379). Any container host without that limit works with the same
+  image (Fly, Render).
   - Vercel was the first idea, but its Python functions cannot hold this app: the embedding, reranking and
     redaction models exceed its function size limits.
   - The portfolio (on Vercel) calls the API from its server route with the public key, as before.
@@ -31,7 +33,7 @@ the owner's machine.
    - It is a dry run unless given `--apply`: counts only, no values printed.
 3. **Image.**
    - `Dockerfile` (python 3.12-slim, uv, non-root user, models fetched at build time).
-   - It defaults to `DEPLOYMENT_PROFILE=public` and port 7860.
+   - It defaults to `DEPLOYMENT_PROFILE=public` and port 8080 (Cloud Run sets `PORT`).
    - A `.dockerignore` keeps `vault/`, `.env`, `dev-notes/` and every data file out of the image.
 4. **Docs.** `docs/deploy-public.md`: the accounts to create, the Space's variables and secrets, publish, smoke
    test, and rollback. Every command in macOS and PowerShell form in the dev-notes.
