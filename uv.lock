@@ -57,6 +57,10 @@ dev = [
     { name = "types-dateparser" },
     { name = "types-pyyaml" },
 ]
+public = [
+    { name = "fastembed" },
+    { name = "onnxruntime" },
+]
 vault = [
     { name = "fastembed" },
     { name = "laya" },
@@ -110,6 +114,10 @@ dev = [
     { name = "ruff", specifier = ">=0.8" },
     { name = "types-dateparser", specifier = ">=1.4.3.20260907" },
     { name = "types-pyyaml", specifier = ">=6.0" },
+]
+public = [
+    { name = "fastembed", specifier = ">=0.6" },
+    { name = "onnxruntime", specifier = ">=1.20" },
 ]
 vault = [
     { name = "fastembed", specifier = ">=0.6" },

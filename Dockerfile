@@ -20,11 +20,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY packages/llm-orchestrator/pyproject.toml packages/llm-orchestrator/README.md packages/llm-orchestrator/
 COPY packages/llm-orchestrator/src packages/llm-orchestrator/src
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --group public --no-install-project
 
 COPY app app
 COPY config config
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --group public
 
 # The embedding, sparse and reranking models, fetched at build time so start-up is offline.
 ENV MODELS_DIR=/app/models
