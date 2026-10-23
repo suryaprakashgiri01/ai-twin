@@ -156,3 +156,11 @@ async def test_the_public_profile_trusts_kb_public_hits() -> None:
     published = PublishedFilter()
     assert await published.live(["a", "b"]) == {"a", "b"}
     assert await published.live([]) == set()
+
+
+def test_what_do_you_do_is_about_the_owners_work() -> None:
+    from app.guardrails.scope import about_owner_work
+
+    for text in ("What do you do?", "what do you do for a living", "What's your job?"):
+        assert about_owner_work(text), text
+    assert not about_owner_work("What model do you run on?")

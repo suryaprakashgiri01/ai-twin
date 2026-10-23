@@ -131,6 +131,9 @@ OWNER_WORK = _rx(
     # assistant itself and is left to the rules and the classifier.
     r"\b(did|have) you (use|used|choose|chose|pick|picked|work with|worked with)\b",
     r"\byour (experience|background|career|work)\b",
+    # "What do you do?" asks about the owner's job, not about the assistant (found by make eval).
+    r"\bwhat do you do( for (a )?(living|work))?\b",
+    r"\bwhat (is|'s) your (job|role|profession|occupation)\b",
 )
 # Names the assistant or site itself: then a `meta_probe` verdict stands.
 ASSISTANT_REF = _rx(
