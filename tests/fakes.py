@@ -10,10 +10,12 @@ from typing import Any
 
 from qdrant_client import models
 
+from app.agents.models import AgentModel
 from app.auth.keys import KeyRecord
 from app.db.documents import Scope, utcnow
 from app.services.conversations import ConversationRef, StoredConversation, Turn
 from app.services.model_overrides import Override, OverrideIn
+from app.services.starters import Starter, StarterAgent, StarterIn
 
 
 class MemoryConversationStore:
@@ -35,10 +37,20 @@ class MemoryConversationStore:
 
     async def load(self, conversation_id: str, limit: int) -> StoredConversation | None:
         meta = self.conversations.get(conversation_id)
-        if meta is None:
+        if meta is None or meta.get("deleted_at") is not None:
             return None
-        turns = [t for _, t in sorted(self.turns.get(conversation_id, {}).items())]
+        turns = [
+            t.model_copy(update={"trace": None})
+            for _, t in sorted(self.turns.get(conversation_id, {}).items())
+        ]
         return StoredConversation(channel=meta["channel"], turns=turns[-limit:])
+
+    async def soft_delete(self, conversation_id: str, at: datetime) -> bool:
+        meta = self.conversations.get(conversation_id)
+        if meta is None or meta.get("deleted_at") is not None:
+            return False
+        meta["deleted_at"] = at
+        return True
 
 
 class FailingStore(MemoryConversationStore):
@@ -118,6 +130,22 @@ class MemoryApiKeyStore:
         return len(hits)
 
 
+class MemoryAgentOverrideStore:
+    def __init__(self) -> None:
+        self.rows: dict[str, tuple[AgentModel, datetime]] = {}
+
+    async def list(self) -> list[tuple[str, AgentModel, datetime]]:
+        return [(name, settings, at) for name, (settings, at) in self.rows.items()]
+
+    async def put(self, name: str, settings: AgentModel) -> datetime:
+        at = utcnow()
+        self.rows[name] = (settings, at)
+        return at
+
+    async def delete(self, name: str) -> bool:
+        return self.rows.pop(name, None) is not None
+
+
 class MemoryOverrideStore:
     def __init__(self) -> None:
         self.rows: dict[str, Override] = {}
@@ -177,3 +205,21 @@ class FakeQdrant:
     ) -> None:
         self.collections[name]["payload"][field_name] = field_schema
         self.writes.append(f"index {name}.{field_name}")
+
+
+class MemoryStarterStore:
+    def __init__(self) -> None:
+        self.rows: list[Starter] = []
+
+    async def list(self, agent: StarterAgent | None = None) -> list[Starter]:
+        return [s for s in self.rows if agent is None or s.agent == agent]
+
+    async def add(self, body: StarterIn) -> Starter:
+        saved = Starter(id=f"s{len(self.rows) + 1}", created_at=utcnow(), **body.model_dump())
+        self.rows.append(saved)
+        return saved
+
+    async def delete(self, starter_id: str) -> bool:
+        before = len(self.rows)
+        self.rows = [s for s in self.rows if s.id != starter_id]
+        return len(self.rows) < before

@@ -396,6 +396,8 @@ class Conversation(Document):
     summary: str | None = None
     summarized_turns: int = 0
     summary_tier: Tier | None = None
+    # Soft delete: hidden from lists and reads, never continued; the turns stay stored.
+    deleted_at: datetime | None = None
 
     class Settings:
         name = "conversations"
@@ -464,6 +466,8 @@ class Message(Document):
     withheld: int = 0
     # A public answer served from the answer cache.
     cache_hit: bool = False
+    # Owner answers only: agents, steps, models, sources and capped reasoning (`TurnTrace`).
+    trace: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime | None = None
 
@@ -528,6 +532,36 @@ class ModelOverride(Document):
 
     class Settings:
         name = "model_overrides"
+
+
+class AgentModelOverride(Document):
+    """The owner's model settings for one agent (`_id` = agent name), layered over
+    config/agents.yaml. Deleting the row resets the agent to the file."""
+
+    id: str  # type: ignore[assignment]
+    model: str = "auto"
+    prefer: str | None = None
+    confidential_model: str = "auto"
+    confidential_prefer: str | None = None
+    need: str | None = None
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "agent_model_overrides"
+
+
+class ChatStarter(Document):
+    """A conversation starter the owner saved for one console agent."""
+
+    agent: str
+    text: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "chat_starters"
+        indexes: ClassVar[list[IndexModel]] = [
+            IndexModel([("agent", ASCENDING), ("created_at", ASCENDING)], name="agent_created")
+        ]
 
 
 class AppliedMigration(Document):
@@ -621,6 +655,8 @@ DOCUMENT_MODELS: list[type[Document]] = [
     SecurityEvent,
     AuditEntry,
     ModelOverride,
+    AgentModelOverride,
+    ChatStarter,
     AppliedMigration,
     CheckpointEntry,
     CheckpointWrite,

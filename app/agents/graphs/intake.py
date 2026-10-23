@@ -77,7 +77,7 @@ from app.agents.intake.labels import (
     validate_paste,
 )
 from app.agents.intake.suggest import suggest
-from app.agents.models import AUTO_CHOICE, ModelChoice
+from app.agents.models import AUTO_CHOICE, Choice
 from app.agents.prompts import intake as prompts
 from app.agents.routing import (
     canonical_kind,
@@ -215,7 +215,7 @@ class IntakeDeps:
     conversations: ConversationService | None = None
     memory: MemoryService | None = None
     # config/agents.yaml `intake`: which local model reads the owner's message.
-    models: ModelChoice = AUTO_CHOICE
+    models: Choice = AUTO_CHOICE
     now: Callable[[], datetime] = field(default=utcnow)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
 

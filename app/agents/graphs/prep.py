@@ -34,7 +34,7 @@ from app.agents.graphs.owner import (
     turn_tier,
     visible_history,
 )
-from app.agents.models import AUTO_CHOICE, ModelChoice
+from app.agents.models import AUTO_CHOICE, Choice
 from app.agents.prep.filter import OutwardFilter
 from app.agents.prompts import prep as prompts
 from app.agents.prompts.prep import PrepType
@@ -42,7 +42,13 @@ from app.exceptions import ErrorCode
 from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import Hit
-from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.conversations import (
+    ConversationRef,
+    ConversationService,
+    Turn,
+    TurnTrace,
+    trace_sources,
+)
 from llm_orchestrator import (
     NoEligibleModelError,
     Orchestrator,
@@ -176,7 +182,7 @@ class PrepDeps:
     generator: AnswerGenerator
     filter: OutwardFilter
     settings: PrepSettings = field(default_factory=PrepSettings)
-    models: ModelChoice = AUTO_CHOICE
+    models: Choice = AUTO_CHOICE
     profiler: Profiler | None = None
 
 
@@ -192,7 +198,7 @@ class PrepState(TypedDict, total=False):
     revise: Revise | None
     model: str | None
     prefer: Prefer | None
-    models: ModelChoice | None
+    models: Choice | None
     context: OwnerContext | None
     started: float
     # plan
@@ -347,7 +353,7 @@ class PrepNodes:
     ) -> tuple[str, ErrorInfo | None]:
         parts: list[str] = []
         model, prefer = choose(state, self.deps.models, tier)
-        models: ModelChoice = state.get("models") or self.deps.models
+        models: Choice = state.get("models") or self.deps.models
         need = await models.need_for(state["target"], tier, self.deps.profiler)
         try:
             async for text in self.deps.generator.stream(
@@ -438,6 +444,14 @@ class PrepNodes:
                 citations=[s.document_id for s in state.get("sources", [])],
                 incomplete=state.get("error") is not None,
                 withheld=state.get("withheld", 0),
+                trace=TurnTrace(
+                    agents=["prep"],
+                    models=[m for m in [state.get("model_id")] if m],
+                    tier=state["tier"].label,
+                    sources=trace_sources(state.get("sources", [])),
+                    thinking=str(state.get("thinking") or ""),
+                    output_tokens=state.get("output_tokens") or None,
+                ).capped(),
             ),
         )
         _step("finalize", started, seq=assistant.seq)
@@ -493,7 +507,7 @@ def initial_state(
     model: str | None = None,
     prefer: Prefer | None = None,
     context: OwnerContext | None = None,
-    models: ModelChoice | None = None,
+    models: Choice | None = None,
 ) -> PrepState:
     return PrepState(
         conversation_id=conversation_id,

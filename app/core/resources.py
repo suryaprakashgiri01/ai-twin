@@ -18,11 +18,13 @@ from app.db.migrations import run_migrations
 from app.kb.store import KbStore, MongoKbStore
 from app.kb.vectors import QdrantIndex, VectorIndex
 from app.leads.store import LeadStore, MongoLeadStore
+from app.services.agent_settings import AgentOverrideStore, MongoAgentOverrideStore
 from app.services.audit import AuditLog, MongoAuditLog
 from app.services.conversations import ConversationService, MongoConversationStore
 from app.services.model_overrides import MongoOverrideStore, OverrideStore
 from app.services.profile import MongoProfileStore, MongoRecordStore, ProfileStore, RecordStore
 from app.services.security_events import MongoSecurityEvents, SecurityEventWriter
+from app.services.starters import MongoStarterStore, StarterStore
 from app.storage.blobs import BlobStore
 from app.vector.qdrant import open_qdrant
 
@@ -36,6 +38,8 @@ class Resources:
     blobs: BlobStore
     api_keys: ApiKeyStore
     overrides: OverrideStore
+    agent_overrides: AgentOverrideStore
+    starters: StarterStore
     audit: AuditLog
     kb: KbStore
     vectors: VectorIndex
@@ -79,6 +83,8 @@ async def open_resources(settings: Settings) -> AsyncIterator[Resources]:
             blobs=blobs,
             api_keys=MongoApiKeyStore(),
             overrides=MongoOverrideStore(),
+            agent_overrides=MongoAgentOverrideStore(),
+            starters=MongoStarterStore(),
             audit=MongoAuditLog(),
             kb=MongoKbStore(),
             vectors=QdrantIndex(qdrant),

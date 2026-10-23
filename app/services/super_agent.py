@@ -44,7 +44,7 @@ from app.agents.graphs.owner import initial_state as owner_state
 from app.agents.graphs.prep import PrepGraph, build_prep_graph
 from app.agents.graphs.prep import initial_state as prep_state
 from app.agents.intake.confirm import classify_rules
-from app.agents.models import ModelChoice
+from app.agents.models import Choice
 from app.agents.prompts import super_agent as prompts
 from app.agents.routing import looks_like_write
 from app.agents.streaming import sse
@@ -56,7 +56,14 @@ from app.db.documents import ConversationMode, utcnow
 from app.exceptions import AppError, ErrorCode
 from app.kb.retrieval.context import Source
 from app.observability.tracing import tracing
-from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.conversations import (
+    ConversationRef,
+    ConversationService,
+    TraceStep,
+    Turn,
+    TurnTrace,
+    trace_sources,
+)
 from app.services.intake import AssistantRequest, IntakeIndex, IntakeService
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
 from app.services.owner_chat import TurnHook
@@ -167,7 +174,7 @@ class StepResult:
     # An intake step that wrote something (not a draft waiting, not a chat reply).
     saved: bool = False
     waiting: Waiting = None
-    # The model's thinking for this step (owner-only event; never stored).
+    # The model's thinking for this step: an owner-only event, and kept in the owner trace.
     thinking: str = ""
 
     def summary(self) -> dict[str, Any]:
@@ -198,7 +205,7 @@ class SuperDeps:
     owner_graph: OwnerGraph
     prep_graph: PrepGraph
     intake: IntakeService
-    models: ModelChoice
+    models: Choice
     context: ContextBuilder | None = None
     on_turn: TurnHook | None = None
     today: Callable[[], date] = field(default=lambda: utcnow().date())
@@ -503,6 +510,7 @@ class SuperAgent:
                 citations=[s.document_id for s in sources],
                 incomplete=any(r.error for r in results),
                 guards=guards,
+                trace=_trace(results, sources, tier),
             ),
         )
         return stored.seq
@@ -533,6 +541,18 @@ def compose(results: list[StepResult]) -> str:
     return "\n\n".join(blocks) or "Nothing to do."
 
 
+def _trace(results: list[StepResult], sources: list[Source], tier: Tier) -> TurnTrace:
+    """Each step with its own reasoning, so the console can show it under that step."""
+    steps = [TraceStep(**r.summary(), thinking=r.thinking) for r in results]
+    return TurnTrace(
+        agents=[r.agent for r in results],
+        steps=steps,
+        models=sorted({r.model for r in results if r.model}),
+        tier=tier.label,
+        sources=trace_sources(sources),
+    ).capped()
+
+
 def _sources(results: list[StepResult]) -> list[Source]:
     """Every step's sources, one entry per document. Numbers stay as each step cited them."""
     seen: dict[str, Source] = {}
@@ -557,7 +577,7 @@ def build_super(
     context: ContextBuilder | None = None,
     on_turn: TurnHook | None = None,
 ) -> SuperAgent:
-    models = llm.agents.choice("super")
+    models = llm.agents.live("super")
     return SuperAgent(
         SuperDeps(
             orchestrator=llm.orchestrator,

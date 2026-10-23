@@ -111,6 +111,8 @@ class ConversationSummary(ApiModel):
     updated_at: datetime
     message_count: int
     mode: ConversationMode = "ask"
+    # owner: the owner's own agents; public: a visitor's chat with the portfolio assistant.
+    channel: Channel = "owner"
 
 
 class TitleUpdate(ApiModel):
@@ -121,7 +123,6 @@ class TitleUpdate(ApiModel):
 
 
 class ConversationMeta(ConversationSummary):
-    channel: Channel
     visitor_hash: str | None = None
     name_locked: bool = False
     titled_turns: int = 0
@@ -131,7 +132,6 @@ class ConversationMeta(ConversationSummary):
 
 
 _INTERNAL_META = {
-    "channel",
     "visitor_hash",
     "name_locked",
     "titled_turns",
@@ -148,6 +148,9 @@ class ConversationDetail(ConversationSummary):
     turns: list[Turn]
 
 
+# Which conversations a list shows: the owner's, visitors' (public), or both.
+ListChannel = Literal["owner", "public", "all"]
+
 # Called with (conversation id, stored seq) after every owner turn; must return at once.
 TurnHook = Callable[[str, int | None], None]
 
@@ -156,6 +159,10 @@ class ConversationIndex(Protocol):
     async def get(self, conversation_id: str) -> ConversationMeta | None: ...
 
     async def list_owner(self, limit: int) -> list[ConversationSummary]: ...
+
+    async def list_channel(
+        self, limit: int, channel: ListChannel, visitor_hash: str | None = None
+    ) -> list[ConversationSummary]: ...
 
     async def by_name(self, name: str) -> ConversationMeta | None: ...
 
@@ -181,7 +188,7 @@ class ConversationIndex(Protocol):
 class MongoConversationIndex:
     async def get(self, conversation_id: str) -> ConversationMeta | None:
         found = await Conversation.get(conversation_id)
-        if found is None:
+        if found is None or found.deleted_at is not None:
             return None
         return _meta(found)
 
@@ -270,12 +277,17 @@ class MongoConversationIndex:
         )
 
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
-        found = (
-            await Conversation.find(Conversation.channel == "owner")
-            .sort("-updated_at")
-            .limit(limit)
-            .to_list()
-        )
+        return await self.list_channel(limit, "owner")
+
+    async def list_channel(
+        self, limit: int, channel: ListChannel, visitor_hash: str | None = None
+    ) -> list[ConversationSummary]:
+        query: dict[str, Any] = {"deleted_at": None}
+        if channel != "all":
+            query["channel"] = channel
+        if visitor_hash is not None:
+            query["visitor_hash"] = visitor_hash
+        found = await Conversation.find(query).sort("-updated_at").limit(limit).to_list()
         return [
             ConversationSummary(
                 id=c.id,
@@ -285,6 +297,7 @@ class MongoConversationIndex:
                 updated_at=c.updated_at,
                 message_count=c.message_count,
                 mode=c.mode,
+                channel=c.channel,
             )
             for c in found
         ]
@@ -358,6 +371,7 @@ class OwnerChatService:
         self._index = index
         self._known_models = known_models
         self._on_turn = on_turn
+        self.directory = ConversationDirectory(index, conversations)
 
     async def prepare(self, request: ChatRequest) -> Prepared:
         """Everything that can fail with a plain error response, before any event is sent."""
@@ -531,19 +545,56 @@ class OwnerChatService:
         except Exception as exc:
             logger.warning("conversation naming failed", error_type=type(exc).__name__)
 
-    async def list_conversations(self, limit: int) -> list[ConversationSummary]:
-        return await self._index.list_owner(limit)
+    async def list_conversations(
+        self, limit: int, channel: ListChannel = "owner", visitor_hash: str | None = None
+    ) -> list[ConversationSummary]:
+        return await self.directory.list_conversations(limit, channel, visitor_hash)
+
+    async def conversation_by_name(self, name: str) -> ConversationSummary:
+        return await self.directory.conversation_by_name(name)
+
+    async def update_title(
+        self, conversation_id: str, update: TitleUpdate, visitor_hash: str | None = None
+    ) -> ConversationSummary:
+        return await self.directory.update_title(conversation_id, update, visitor_hash)
+
+    async def conversation(
+        self, conversation_id: str, limit: int, visitor_hash: str | None = None
+    ) -> ConversationDetail:
+        return await self.directory.conversation(conversation_id, limit, visitor_hash)
+
+    async def delete(self, conversation_id: str, visitor_hash: str | None = None) -> None:
+        await self.directory.delete(conversation_id, visitor_hash)
+
+
+class ConversationDirectory:
+    """Browsing conversations, scoped to who asks: list, read, rename and soft delete.
+
+    The owner (no `visitor_hash`) sees owner conversations and visitors' (read-only). A visitor
+    (`visitor_hash`) sees exactly its own public conversations; anything else does not exist.
+    Both profiles build one, so the console works with a public key on the public deployment.
+    """
+
+    def __init__(self, index: ConversationIndex, conversations: ConversationService) -> None:
+        self._index = index
+        self._conversations = conversations
+
+    async def list_conversations(
+        self, limit: int, channel: ListChannel = "owner", visitor_hash: str | None = None
+    ) -> list[ConversationSummary]:
+        return await self._index.list_channel(limit, channel, visitor_hash)
 
     async def conversation_by_name(self, name: str) -> ConversationSummary:
         meta = await self._index.by_name(name)
         if meta is None:
             raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
-        return ConversationSummary(**meta.model_dump(exclude={"channel", "visitor_hash"}))
+        return ConversationSummary(**meta.model_dump(exclude={"visitor_hash"}))
 
-    async def update_title(self, conversation_id: str, update: TitleUpdate) -> ConversationSummary:
-        meta = await self._index.get(conversation_id)
-        if meta is None or meta.channel != "owner":
-            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
+    async def update_title(
+        self, conversation_id: str, update: TitleUpdate, visitor_hash: str | None = None
+    ) -> ConversationSummary:
+        """The owner renames owner conversations; a visitor (`visitor_hash`) only its own."""
+        meta = await self._visible(conversation_id, visitor_hash, writable=True)
         if update.name is not None and update.name != meta.name:
             holder = await self._index.by_name(update.name)
             if holder is not None and holder.id != conversation_id:
@@ -556,14 +607,33 @@ class OwnerChatService:
         changed.update(update.model_dump(exclude_none=True))
         return ConversationSummary(**changed)
 
-    async def conversation(self, conversation_id: str, limit: int) -> ConversationDetail:
-        meta = await self._index.get(conversation_id)
-        if meta is None or meta.channel != "owner":
-            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
+    async def conversation(
+        self, conversation_id: str, limit: int, visitor_hash: str | None = None
+    ) -> ConversationDetail:
+        """The owner reads any conversation (visitor ones read-only); a visitor only its own."""
+        meta = await self._visible(conversation_id, visitor_hash, writable=False)
         turns = await self._index.turns(conversation_id, limit)
-        return ConversationDetail(
-            **meta.model_dump(exclude={"channel", "visitor_hash"}), turns=turns
-        )
+        return ConversationDetail(**meta.model_dump(exclude={"visitor_hash"}), turns=turns)
+
+    async def delete(self, conversation_id: str, visitor_hash: str | None = None) -> None:
+        """Soft delete: the owner deletes owner conversations; a visitor only its own."""
+        await self._visible(conversation_id, visitor_hash, writable=True)
+        await self._conversations.soft_delete(conversation_id)
+
+    async def _visible(
+        self, conversation_id: str, visitor_hash: str | None, *, writable: bool
+    ) -> ConversationMeta:
+        meta = await self._index.get(conversation_id)
+        if meta is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
+        if visitor_hash is not None:
+            # A visitor sees exactly its own public conversations; anything else does not exist.
+            if meta.channel != "public" or meta.visitor_hash != visitor_hash:
+                raise AppError(ErrorCode.NOT_FOUND, "Conversation not found")
+            return meta
+        if writable and meta.channel != "owner":
+            raise AppError(ErrorCode.CONFLICT, "Visitor conversations are read-only")
+        return meta
 
 
 def _trace_owner_run(trace: TraceRun, state: dict[str, Any]) -> None:
@@ -604,7 +674,7 @@ def owner_deps(
         generator=StreamingGenerator(
             llm.orchestrator, idle_timeout_seconds=settings.llm_timeout_seconds
         ),
-        models=llm.agents.choice("owner"),
+        models=llm.agents.live("owner"),
         profiler=llm.profiler,
         settings=OwnerSettings(
             top_k=settings.retrieval_top_k,

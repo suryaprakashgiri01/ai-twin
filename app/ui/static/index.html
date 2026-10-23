@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ai-twin console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%233b6fd8'/%3E%3C/svg%3E">
+  <!-- Classic (blocking) script so the saved theme applies before first paint: no flash. -->
+  <script src="js/theme-boot.js"></script>
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <div id="login" class="login" hidden></div>
+
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <button id="side-toggle" class="btn btn-ghost icon-btn" type="button" aria-label="Toggle history">☰</button>
+      <div class="brand">
+        <span class="logo" aria-hidden="true"></span>
+        <div class="brand-name">ai-twin console</div>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Sections" id="tabs"></nav>
+      <div class="topbar-right">
+        <span id="role-badge"></span>
+        <button id="theme-toggle" class="btn btn-ghost theme-toggle" type="button" aria-label="Theme">◐ System</button>
+        <button id="logout" class="btn" type="button">Log out</button>
+      </div>
+    </header>
+    <div class="body">
+      <aside id="sidebar" class="sidebar" aria-label="History"></aside>
+      <main id="panels"></main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

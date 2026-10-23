@@ -37,8 +37,8 @@ Model choice today is a fixed chain per role, reordered only by an agent's `pref
 4. **Reasoning output handled.**
    - Ollama models with `reasoning` run with thinking separated (`reasoning=True`).
    - For every provider, any remaining `<think>…</think>` is removed from the text before it reaches a graph.
-   - Thinking is never part of an answer, never logged (only its size) and never stored with a
-     conversation.
+   - Thinking is never part of an answer and never logged (only its size). It was never stored with a
+     conversation; owner-console T3 now keeps it, capped, in the trace of owner turns only.
    - Owner channels (owner chat, prep, the super agent) stream it as a separate `thinking` event. The CLI
      shows it dimmed above the answer (`/thinking` toggles it), and an owner-mode UI can use the same event.
      The public channel never forwards it.

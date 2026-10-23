@@ -115,6 +115,10 @@ async def test_behavioural_answer_is_first_person_filtered_and_checked() -> None
     assert any("35%" in c for c in state["checks"])
     system = str(factory.models["cloud"].seen[0][0].content)
     assert 'first person ("I"' in system and "STAR" in system
+    store = cast(MemoryConversationStore, conversations._store)
+    trace = store.turns[state["conversation_id"]][state["seq"]].trace
+    assert trace is not None and trace.agents == ["prep"] and trace.models == ["cloud"]
+    assert [s.document_id for s in trace.sources] == ["p1"] and trace.thinking == ""
 
 
 async def test_confidential_sources_use_the_local_model_and_limits_hold() -> None:

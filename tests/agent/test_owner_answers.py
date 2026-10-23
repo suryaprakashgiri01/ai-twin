@@ -155,6 +155,12 @@ async def test_thinking_is_shown_to_the_owner_but_never_in_the_answer() -> None:
     assert "".join(agent.thinking) == "check the raft notes"
     assert state["thinking"] == "check the raft notes"
     stored = (await agent.history(state["conversation_id"]))[-1]
-    assert "raft notes" not in stored.content  # never saved with the conversation
+    assert "raft notes" not in stored.content  # never part of the saved answer
+    assert stored.trace is None  # nor of the history that feeds prompts
+    await agent.conversations.drain()
+    kept = agent.store.turns[state["conversation_id"]][2].trace
+    assert kept is not None and kept.thinking == "check the raft notes"  # owner trace only
+    assert kept.agents == ["ask"] and kept.models == ["cloud"] and kept.tier == "private"
+    assert [(s.index, s.document_id) for s in kept.sources] == [(1, "priv")]
     assert custom_event({"thinking": "x"}) == ("thinking", {"text": "x"})
     assert custom_event({"token": "y"}) == ("token", {"text": "y"})

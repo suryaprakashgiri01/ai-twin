@@ -72,6 +72,9 @@ async def test_about_owner_answer_is_cited_and_stored_with_guard_metadata() -> N
     assert assistant.guards["scope"]["intent"] == "about_owner"
     stored = public.store.conversations[meta["conversation_id"]]
     assert stored["channel"] == "public" and stored["visitor_hash"] == "visitor-a"
+    await public.conversations.drain()
+    # Public turns never carry a trace (no reasoning, no steps).
+    assert all(t.trace is None for t in public.store.turns[meta["conversation_id"]].values())
 
 
 def test_every_search_is_pinned_to_public() -> None:

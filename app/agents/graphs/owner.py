@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from app.agents.context import OwnerContext
 from app.agents.generation import AnswerGenerator, Generation, MidStreamError
-from app.agents.models import AUTO_CHOICE, ModelChoice
+from app.agents.models import AUTO_CHOICE, Choice
 from app.agents.prompts import owner as prompts
 from app.agents.routing import (
     GuardResult,
@@ -48,7 +48,13 @@ from app.exceptions import ErrorCode
 from app.kb.retrieval.context import Source, build_context
 from app.kb.retrieval.rerank import Reranker
 from app.kb.retrieval.retriever import Hit, SearchFilters
-from app.services.conversations import ConversationRef, ConversationService, Turn
+from app.services.conversations import (
+    ConversationRef,
+    ConversationService,
+    Turn,
+    TurnTrace,
+    trace_sources,
+)
 from llm_orchestrator import (
     Need,
     NoEligibleModelError,
@@ -194,7 +200,7 @@ class OwnerDeps:
     generator: AnswerGenerator
     settings: OwnerSettings = field(default_factory=OwnerSettings)
     # config/agents.yaml for this agent; a caller's state may pass another (the super agent).
-    models: ModelChoice = AUTO_CHOICE
+    models: Choice = AUTO_CHOICE
     # Reads each request's complexity for the gateway; None keeps the chain order.
     profiler: Profiler | None = None
     today: Callable[[], date] = field(default=lambda: utcnow().date())
@@ -218,7 +224,7 @@ class OwnerState(TypedDict, total=False):
     # so only local models answer there).
     min_tier: Tier | None
     # Overrides the graph's own model choice (the super agent passes its own).
-    models: ModelChoice | None
+    models: Choice | None
     # The owner's active preferences and the conversation summary (never for visitors).
     context: OwnerContext | None
     started: float
@@ -244,7 +250,8 @@ class OwnerState(TypedDict, total=False):
     error: ErrorInfo | None
     input_tokens: int
     output_tokens: int
-    # A reasoning model's thinking: shown to the owner, never stored or part of the answer.
+    # A reasoning model's thinking: shown to the owner and kept in the owner trace (capped);
+    # never part of the answer.
     thinking: str
     # finalized
     seq: int
@@ -305,9 +312,9 @@ def _step(step: str, started: float, **fields: Any) -> None:
     logger.info("owner step", step=step, latency_ms=_ms(started), **fields)
 
 
-def choose(state: Any, default: ModelChoice, tier: Tier) -> tuple[str | None, Prefer | None]:
+def choose(state: Any, default: Choice, tier: Tier) -> tuple[str | None, Prefer | None]:
     """The generator model and prefer for a step at `tier` (request > agent config > auto)."""
-    models: ModelChoice = state.get("models") or default
+    models: Choice = state.get("models") or default
     return models.pick(tier, state.get("model"), state.get("prefer"))
 
 
@@ -633,7 +640,7 @@ class OwnerNodes:
         return plan
 
     async def _need(self, state: OwnerState, tier: Tier) -> Need | None:
-        models: ModelChoice = state.get("models") or self.deps.models
+        models: Choice = state.get("models") or self.deps.models
         return await models.need_for(
             state.get("query") or state["question"], tier, self.deps.profiler
         )
@@ -699,10 +706,23 @@ class OwnerNodes:
                 citations=[s.document_id for s in state.get("sources", [])],
                 incomplete=state.get("incomplete", False),
                 withheld=state.get("withheld", 0),
+                trace=_trace(state),
             ),
         )
         _step("finalize", started, seq=assistant.seq, incomplete=assistant.incomplete)
         return {"seq": assistant.seq, "latency_ms": latency}
+
+
+def _trace(state: OwnerState) -> TurnTrace:
+    model = state.get("model_id")
+    return TurnTrace(
+        agents=["ask"],
+        models=[model] if model else [],
+        tier=_label(state["tier"]),
+        sources=trace_sources(state.get("sources", [])),
+        thinking=str(state.get("thinking") or ""),
+        output_tokens=state.get("output_tokens") or None,
+    ).capped()
 
 
 def _merge(first: list[Hit], second: list[Hit], limit: int) -> list[Hit]:
@@ -779,7 +799,7 @@ def initial_state(
     prefer: Prefer | None = None,
     min_tier: Tier | None = None,
     context: OwnerContext | None = None,
-    models: ModelChoice | None = None,
+    models: Choice | None = None,
 ) -> OwnerState:
     return OwnerState(
         conversation_id=conversation_id,

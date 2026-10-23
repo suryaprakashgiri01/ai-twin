@@ -127,6 +127,7 @@ publishing.
 | `app/security` | Security events, debounced email alerts. |
 | `app/observability` | Langfuse tracing and masking, metrics. |
 | `app/services` | Chat services, conversations, memory, profile, resume, rate limits, answer cache. |
+| `app/ui/static` | The owner console at `/ui`: login by key, history, chat with every agent and the API tabs ([`owner-console.md`](owner-console.md)). |
 
 Details and the LangChain boundary are in [`components.md`](components.md).
 
@@ -136,6 +137,7 @@ Details and the LangChain boundary are in [`components.md`](components.md).
 - Owner chat and the intake assistant: [`flows/owner-flow.md`](flows/owner-flow.md).
 - The super agent and prep: [`super-agent.md`](super-agent.md).
 - Ingestion, publish and retrieval: [`rag-pipeline.md`](rag-pipeline.md).
+- The owner console, conversation scoping and the turn trace: [`owner-console.md`](owner-console.md).
 
 ```mermaid
 flowchart LR

@@ -312,3 +312,22 @@ async def test_a_missed_rewording_is_retried_with_the_owners_message() -> None:
     events, _ = await turn(agent, conversations, message)
     assert intake.told == ["Add a new record for an interview with Acme today", message]
     assert of(events, "token")[0]["text"] == "Added the Acme interview."
+
+
+def test_trace_keeps_each_steps_reasoning_within_the_cap() -> None:
+    from app.services.conversations import TRACE_THINKING_MAX
+    from app.services.super_agent import _trace
+
+    results = [
+        StepResult(agent="intake", model="local", tier=Tier.CONFIDENTIAL, action="add_record"),
+        StepResult(agent="ask", model="cloud", thinking="look in the raft notes"),
+        StepResult(agent="prep", model="planner", thinking="x" * (TRACE_THINKING_MAX + 5)),
+    ]
+    trace = _trace(results, [], Tier.CONFIDENTIAL)
+    assert trace.agents == ["intake", "ask", "prep"]
+    assert trace.models == ["cloud", "local", "planner"] and trace.tier == "confidential"
+    steps = trace.steps
+    assert (steps[0].action, steps[0].status, steps[0].thinking) == ("add_record", "done", "")
+    assert steps[1].thinking == "look in the raft notes"
+    assert steps[2].thinking.endswith("[… reasoning cut]")
+    assert sum(len(s.thinking) for s in steps) <= TRACE_THINKING_MAX
