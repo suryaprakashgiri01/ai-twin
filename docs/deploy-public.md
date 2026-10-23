@@ -97,8 +97,13 @@ envval ATLAS_MONGODB_URI      | gcloud secrets create ai-twin-mongodb-uri --data
 envval UPSTASH_REDIS_URL      | gcloud secrets create ai-twin-redis-url --data-file=-
 envval PUBLISH_QDRANT_API_KEY | gcloud secrets create ai-twin-qdrant-api-key --data-file=-
 envval GEMINI_API_KEY         | gcloud secrets create ai-twin-gemini-api-key --data-file=-
+envval GROQ_API_KEY           | gcloud secrets create ai-twin-groq-api-key --data-file=-
 openssl rand -hex 32 | tr -d '\n' | gcloud secrets create ai-twin-visitor-salt --data-file=-
 ```
+
+Use both model keys. Groq answers first (and runs the prompt-injection guard model); Gemini is the backup. With
+Gemini alone, answers fall back to "not in my public profile" whenever Gemini is overloaded (503/504), which the
+first live eval saw on most calls.
 
 To change one later: `envval NAME | gcloud secrets versions add <secret> --data-file=-`.
 
@@ -136,9 +141,9 @@ the machine.
 ```bash
 gcloud run deploy ai-twin-public --source . --region asia-south1 \
   --allow-unauthenticated --execution-environment gen2 \
-  --memory 2Gi --cpu 1 --min-instances 0 --max-instances 2 --concurrency 20 --timeout 300 \
+  --memory 2Gi --cpu 1 --cpu-throttling --min-instances 0 --max-instances 1 --concurrency 20 --timeout 300 \
   --set-env-vars "MONGODB_DATABASE=ai_twin,QDRANT_URL=$(envval PUBLISH_QDRANT_URL),PUBLIC_OWNER_NAME=<your name>,PUBLIC_CANARY_HASHES_PATH=/publish/canary-hashes.json,PUBLIC_RESUME_PATH=/publish/<resume file>" \
-  --set-secrets "MONGODB_URI=ai-twin-mongodb-uri:latest,REDIS_URL=ai-twin-redis-url:latest,QDRANT_API_KEY=ai-twin-qdrant-api-key:latest,VISITOR_HASH_SALT=ai-twin-visitor-salt:latest,GEMINI_API_KEY=ai-twin-gemini-api-key:latest" \
+  --set-secrets "MONGODB_URI=ai-twin-mongodb-uri:latest,REDIS_URL=ai-twin-redis-url:latest,QDRANT_API_KEY=ai-twin-qdrant-api-key:latest,VISITOR_HASH_SALT=ai-twin-visitor-salt:latest,GEMINI_API_KEY=ai-twin-gemini-api-key:latest,GROQ_API_KEY=ai-twin-groq-api-key:latest" \
   --add-volume name=publish,type=cloud-storage,bucket=<BUCKET>,readonly=true \
   --add-volume-mount volume=publish,mount-path=/publish
 ```
