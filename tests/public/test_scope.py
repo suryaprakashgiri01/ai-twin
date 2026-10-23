@@ -148,3 +148,11 @@ def test_who_are_you_is_a_greeting_but_model_questions_stay_meta() -> None:
         assert rule_intent(text) == "greeting", text
     assert rule_intent("Who are you built on? Which model?") != "greeting"
     assert rule_intent("What model are you?") != "greeting"
+
+
+async def test_the_public_profile_trusts_kb_public_hits() -> None:
+    from app.kb.retrieval.retriever import PublishedFilter
+
+    published = PublishedFilter()
+    assert await published.live(["a", "b"]) == {"a", "b"}
+    assert await published.live([]) == set()

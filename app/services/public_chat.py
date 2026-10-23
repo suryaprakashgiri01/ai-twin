@@ -52,7 +52,7 @@ from app.guardrails.scope import ProfileTemplates, ScopeRouter
 from app.kb.embedding import Embedder
 from app.kb.retrieval.context import Source
 from app.kb.retrieval.rerank import CrossEncoderReranker
-from app.kb.retrieval.retriever import Hit, MongoDocumentFilter
+from app.kb.retrieval.retriever import Hit, MongoDocumentFilter, PublishedFilter
 from app.leads.capture import OPPORTUNITY as OPPORTUNITY_INTENT
 from app.leads.capture import CaptureDeps, CaptureSettings
 from app.leads.service import LeadService
@@ -509,7 +509,8 @@ def build_public_chat(
         retriever=public_retriever(
             resources.qdrant,
             embedder,
-            MongoDocumentFilter(),
+            # The public deployment has no vault document records: kb_public is the truth there.
+            PublishedFilter() if settings.deployment_profile == "public" else MongoDocumentFilter(),
             prefetch=settings.retrieval_prefetch,
         ),
         reranker=CrossEncoderReranker(
