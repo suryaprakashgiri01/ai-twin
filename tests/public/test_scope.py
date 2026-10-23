@@ -133,3 +133,18 @@ async def test_profile_templates() -> None:
     assert "resume link" in await templates.reply("resume")
     available = False
     assert "isn't available" in await templates.reply("resume")
+
+
+def test_who_are_you_is_a_greeting_but_model_questions_stay_meta() -> None:
+    from app.guardrails.scope import rule_intent
+
+    for text in (
+        "Who are you?",
+        "hi, who are you",
+        "What are you?",
+        "Are you a bot?",
+        "are you real",
+    ):
+        assert rule_intent(text) == "greeting", text
+    assert rule_intent("Who are you built on? Which model?") != "greeting"
+    assert rule_intent("What model are you?") != "greeting"

@@ -172,9 +172,16 @@ def about_owner_work(text: str) -> bool:
     return _any(OWNER_WORK, text) and not _any(ASSISTANT_REF, text)
 
 
+# "Who are you?" is the first thing many visitors ask: the greeting answers it (an AI twin).
+IDENTITY = _rx(
+    r"^\s*(hi|hello|hey)?[,!.\s]*(who|what) are you\s*[?.!]*\s*$",
+    r"^\s*are you (a |an )?(bot|ai|robot|human|real( person)?|chat ?bot)\s*[?.!]*\s*$",
+)
+
+
 def rule_intent(text: str) -> Intent | None:
     """The intent when a rule is certain, else None (the classifier decides)."""
-    if _any(GREETING, text):
+    if _any(GREETING, text) or _any(IDENTITY, text):
         return "greeting"
     if _any(META, text) and not about_owner_work(text):
         return "meta_probe"
