@@ -1,0 +1,10 @@
+# Only code and config go into the image: never data, secrets or notes.
+*
+!pyproject.toml
+!uv.lock
+!app/
+!config/
+!packages/llm-orchestrator/pyproject.toml
+!packages/llm-orchestrator/src/
+**/__pycache__
+**/*.pyc

@@ -41,3 +41,17 @@ jobs:
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
             | tar -xz gitleaks
           ./gitleaks git --redact --verbose .
+
+  image:
+    # The public deployment's image: it builds, holds no data or notes, and the app imports.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build
+        run: docker build -t ai-twin:ci .
+      - name: Nothing private inside
+        run: |
+          docker run --rm ai-twin:ci sh -c 'for p in /app/vault /app/.env /app/dev-notes /app/tests /app/scripts; do test ! -e "$p" || { echo "found $p"; exit 1; }; done'
+      - name: The public app imports and has no admin routes
+        run: |
+          docker run --rm ai-twin:ci python -c "from app.core.config import Settings; from app.core.app_factory import create_app; app = create_app(Settings(_env_file=None)); paths = {r.path for r in app.routes}; assert not any(p.startswith('/admin') for p in paths), 'admin routes mounted'; print(len(paths), 'routes, no admin')"
