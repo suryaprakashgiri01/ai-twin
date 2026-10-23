@@ -1,0 +1,13 @@
+# What `gcloud run deploy --source .` uploads to Cloud Build: code and config only, as in
+# .dockerignore. Never data, secrets or notes. Gitignore syntax: /* matches top-level entries only.
+/*
+!/Dockerfile
+!/.dockerignore
+!/pyproject.toml
+!/README.md
+!/uv.lock
+!/app/
+!/config/
+!/packages/
+__pycache__/
+*.pyc
