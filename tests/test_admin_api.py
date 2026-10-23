@@ -141,21 +141,21 @@ async def test_override_put_is_validated_stored_and_audited(
     headers = {"X-API-Key": await _key(fakes, "admin", name="owner")}
     url = "/admin/v1/models/overrides"
 
-    first = await client.put(f"{url}/groq-llama-8b", json={"enabled": False}, headers=headers)
+    first = await client.put(f"{url}/groq-gpt-oss-20b", json={"enabled": False}, headers=headers)
     second = await client.put(
-        f"{url}/groq-llama-8b", json={"enabled": True, "max_tier": "public"}, headers=headers
+        f"{url}/groq-gpt-oss-20b", json={"enabled": True, "max_tier": "public"}, headers=headers
     )
     assert first.status_code == second.status_code == 200
     assert result(second)["maxTier"] == "public"
 
     listed = await client.get(url, headers=headers)
-    assert [o["id"] for o in items(listed)] == ["groq-llama-8b"]
+    assert [o["id"] for o in items(listed)] == ["groq-gpt-oss-20b"]
 
     assert len(fakes.audit.entries) == 2
     entry: dict[str, Any] = fakes.audit.entries[1]
     assert entry["actor"] == "key:owner"
     assert entry["action"] == "model_override.put"
-    assert entry["target"] == "groq-llama-8b"
+    assert entry["target"] == "groq-gpt-oss-20b"
     assert entry["before"]["enabled"] is False
     assert entry["after"]["max_tier"] == "public"
 
@@ -163,12 +163,12 @@ async def test_override_put_is_validated_stored_and_audited(
 @pytest.mark.parametrize(
     ("model_id", "body"),
     [
-        ("groq-llama-8b", {"max_tier": "restricted"}),
-        ("groq-llama-8b", {"max_tier": "secret"}),
-        ("groq-llama-8b", {}),
-        ("groq-llama-8b", {"chain": ["mock"]}),
-        ("groq-llama-8b", {"enabled": True, "surprise": 1}),
-        ("groq-llama-8b", {"max_tier": "confidential"}),  # above the file's ceiling
+        ("groq-gpt-oss-20b", {"max_tier": "restricted"}),
+        ("groq-gpt-oss-20b", {"max_tier": "secret"}),
+        ("groq-gpt-oss-20b", {}),
+        ("groq-gpt-oss-20b", {"chain": ["mock"]}),
+        ("groq-gpt-oss-20b", {"enabled": True, "surprise": 1}),
+        ("groq-gpt-oss-20b", {"max_tier": "confidential"}),  # above the file's ceiling
         ("not-in-inventory", {"enabled": False}),
         ("role:classifier", {"enabled": True}),
         ("role:classifier", {"chain": []}),
