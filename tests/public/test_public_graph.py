@@ -285,3 +285,13 @@ async def test_chat_route_streams_and_answers_json() -> None:
             "/v1/chat", json={"message": Q, "conversationId": "e" * 32}, headers=headers
         )
         assert missing.status_code == 404
+
+
+def test_persona_prompt_names_the_owner_or_falls_back_to_v1() -> None:
+    from app.agents.prompts import public as prompts
+
+    assert prompts.PROMPT_VERSION == "public-v2"
+    voiced = prompts.generate_prompt("Kavya")
+    assert voiced.startswith("You are Kavya's AI twin") and "first person" in voiced
+    assert prompts.NO_CONTEXT in voiced and "[1]" in voiced and "{owner}" not in voiced
+    assert prompts.generate_prompt("  ") == prompts.GENERATE_V1

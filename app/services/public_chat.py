@@ -490,9 +490,11 @@ def build_public_chat(
         second_opinion=classifier,
         second_opinion_enabled=lambda: _jev_on(classifier),
     )
+    system_prompt = prompts.generate_prompt(settings.public_owner_name)
     output_guard = OutputGuard(
         canaries=canary_source(settings),
-        system_prompts=[prompts.GENERATE_V1],
+        # The prompt in use is the one a leak would echo.
+        system_prompts=[system_prompt],
         allowlist=split_list(settings.public_contact_allowlist),
         judge=SwitchedJudge(
             default=OrchestratorJudge(orchestrator),
@@ -517,6 +519,7 @@ def build_public_chat(
         output_guard=output_guard,
         events=resources.security_events,
         settings=PublicSettings(
+            system_prompt=system_prompt,
             top_k=settings.retrieval_top_k,
             context_tokens=settings.public_context_tokens,
             history_turns=settings.public_history_turns,
