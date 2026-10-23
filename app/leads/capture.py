@@ -1,7 +1,7 @@
 """The capture loop: the public graph's nodes that take an opportunity's details in conversation.
 
 `capture` runs after the input guard and the scope router on every turn while a draft is open
-(or when the router says `opportunity`). The model only extracts: email and link come from
+(or when the router says `opportunity`). The model only extracts: email, link and phone come from
 patterns in code, a value the model gives must be grounded in the visitor's own words, and
 `app.leads.models.check` decides what is valid and what is still missing. One short question per
 turn, at most LEAD_MAX_TURNS turns, then the contact-form reply.
@@ -64,6 +64,7 @@ LABELS = {
     "employment_type": "Type",
     "location": "Location",
     "link": "Link",
+    "phone": "Phone",
     "message": "About",
 }
 QUESTIONS = {
@@ -71,7 +72,9 @@ QUESTIONS = {
     "company": "Which company or organisation is it with?",
     "message": "Could you tell me a little about the opportunity?",
     "name": "And what's your name?",
-    "email": "What email address should the reply go to?",
+    "email": (
+        "What email address should the reply go to? (Add a phone number too if you'd rather talk.)"
+    ),
 }
 INTRO = "Thanks for thinking of me! I can pass this straight on to {owner}."
 INVALID = "That {label} doesn't look right ({reason})."
@@ -111,6 +114,8 @@ EXITS = frozenset(
 )
 _EMAIL = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+# A phone number in the visitor's words: 10 to 15 digits with the usual separators.
+_PHONE = re.compile(r"(?<![\w+])\+?\d[\d\s().-]{8,20}\d(?!\w)")
 _QUESTION = re.compile(
     r"^\s*(what|which|how|why|when|where|who|do|did|does|are|is|can|could|have|has|would|will)\b",
     re.IGNORECASE,
@@ -181,6 +186,11 @@ def pattern_values(text: str) -> dict[str, str]:
         found["email"] = email.group(0).rstrip(".")
     if url := _URL.search(text):
         found["link"] = url.group(0).rstrip(".,;:!?)")
+    for match in _PHONE.finditer(_URL.sub(" ", text)):
+        digits = re.sub(r"\D", "", match.group(0))
+        if 10 <= len(digits) <= 15:
+            found["phone"] = match.group(0).strip()
+            break
     return found
 
 
@@ -407,8 +417,8 @@ class CaptureNodes:
         except OrchestratorError as exc:
             logger.warning("lead summary failed", error_type=type(exc).__name__)
             return None
-        # The address is in the email's fields already; the guard would block it here.
-        summary = _EMAIL.sub("[email]", result.text.strip())[:1000]
+        # Contact details are in the email's fields already; the guard would block them here.
+        summary = _PHONE.sub("[phone]", _EMAIL.sub("[email]", result.text.strip()))[:1000]
         verdict = await self.deps.output_guard.check(
             summary, question="Summarise this conversation.", context=text
         )

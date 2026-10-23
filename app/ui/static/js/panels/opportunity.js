@@ -13,7 +13,8 @@ export function mount(root) {
     if (r.ok) form.reset();
   } } },
   h("div", { class: "row" }, field("Name", h("input", { name: "name", required: true })), field("Email", h("input", { name: "email", type: "email", required: true }))),
-  h("div", { class: "row" }, field("Company", h("input", { name: "company", required: true })), field("Role", h("input", { name: "role", required: true }))),
+  h("div", { class: "row" }, field("Company", h("input", { name: "company", required: true })), field("Role", h("input", { name: "role", required: true })),
+    field("Phone", h("input", { name: "phone", type: "tel", placeholder: "+91 98765 43210" }))),
   h("div", { class: "row" }, field("Location", h("input", { name: "location" })), field("Employment type", h("input", { name: "employmentType", placeholder: "full-time, contract…" })),
     field("Link", h("input", { name: "link", type: "url" }))),
   field("Message", h("textarea", { name: "message", rows: 5, required: true })),

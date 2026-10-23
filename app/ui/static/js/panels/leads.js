@@ -37,8 +37,9 @@ function open(l) {
   } } });
   clear(detail,
     h("div", { class: "card-title" }, h("strong", { text: `${l.name} · ${l.company || "—"}` }), status, h("span", { class: "spacer" }),
-      l.email ? h("a", { class: "btn btn-primary btn-sm icon-button", href: `mailto:${encodeURIComponent(l.email)}?subject=${encodeURIComponent(`Re: ${l.role || "your message"}`)}`, title: `Write to ${l.email} in your mail app` }, icon("mail", { size: 14 }), h("span", { text: "Contact" })) : null),
-    kv([["Email", l.email], ["Role", l.role], ["Location", l.location], ["Type", l.employmentType], ["Link", l.link],
+      l.email ? h("a", { class: "btn btn-primary btn-sm icon-button", href: `mailto:${encodeURIComponent(l.email)}?subject=${encodeURIComponent(`Re: ${l.role || "your message"}`)}`, title: `Write to ${l.email} in your mail app` }, icon("mail", { size: 14 }), h("span", { text: "Email" })) : null,
+      l.phone ? h("a", { class: "btn btn-sm icon-button", href: `tel:${l.phone.replace(/[^\d+]/g, "")}`, title: `Call ${l.phone}` }, icon("phone", { size: 14 }), h("span", { text: "Call" })) : null),
+    kv([["Email", l.email], ["Phone", l.phone || "—"], ["Role", l.role], ["Location", l.location], ["Type", l.employmentType], ["Link", l.link],
       ["Triage", l.triage ? `${l.triage} (${Math.round((l.triageConfidence || 0) * 100)}%)` : "—"], ["Fit", l.fitNote], ["Duplicates", l.duplicates],
       ["Emailed", l.emailedAt ? time(l.emailedAt) : "—"], ["Source", l.source]]),
     l.summary ? h("p", { class: "muted", text: l.summary }) : null,

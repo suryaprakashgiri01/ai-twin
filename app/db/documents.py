@@ -318,6 +318,8 @@ class LeadDetails(BaseModel):
     employment_type: str | None = None
     # Stored as text: never fetched, never rendered as a link.
     link: str | None = None
+    # Optional: a visitor who would rather talk gives a number with their email.
+    phone: str | None = None
 
 
 class LeadFields(BaseModel):

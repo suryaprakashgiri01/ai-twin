@@ -332,6 +332,7 @@ class LeadOut(ApiModel):
     location: str | None = None
     employment_type: str | None = None
     link: str | None = None
+    phone: str | None = None
     summary: str | None = None
     triage: str | None = None
     triage_confidence: float | None = None
@@ -346,7 +347,7 @@ class LeadOut(ApiModel):
     def of(cls, lead: StoredLead) -> LeadOut:
         return cls(
             **lead.model_dump(
-                include=set(cls.model_fields) - {"location", "employment_type", "link"}
+                include=set(cls.model_fields) - {"location", "employment_type", "link", "phone"}
             ),
             **lead.details.model_dump(),
         )
