@@ -138,6 +138,8 @@ Details and the LangChain boundary are in [`components.md`](components.md).
 - The super agent and prep: [`super-agent.md`](super-agent.md).
 - Ingestion, publish and retrieval: [`rag-pipeline.md`](rag-pipeline.md).
 - The owner console, conversation scoping and the turn trace: [`owner-console.md`](owner-console.md).
+- Persona voice and `make eval`: [`persona-evals.md`](persona-evals.md).
+- Deploying the public assistant: [`deploy-public.md`](deploy-public.md).
 
 ```mermaid
 flowchart LR
