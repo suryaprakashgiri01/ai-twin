@@ -67,6 +67,11 @@ free-tier behavior: `--min-instances 0 --cpu-throttling --max-instances 1`.
 
 ## Secret hygiene (hard rules)
 
+- **Git identity:** every commit must be authored by `suryaprakashgiri01` (noreply or the
+  gmail address this account uses — see local git config); never any other name/email or gh
+  account. Verify `git config user.name` before the first commit in a session; if wrong,
+  fix repo config and `--global` first.
+
 - Never print, log, or echo a secret/key value — not into chat, not into files. Verify by
   version state / length only (`gcloud secrets versions list <name>`).
 - Windows: `.env` is CRLF. Always `.Trim(' "').TrimEnd("`r")` when piping a value into a file;
