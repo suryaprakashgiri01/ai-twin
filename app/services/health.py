@@ -63,13 +63,23 @@ class RedisCheck:
 class QdrantCheck:
     name = "qdrant"
 
-    def __init__(self, url: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        url: str,
+        timeout_seconds: float,
+        api_key: str | None = None,
+    ) -> None:
         self._url = url.rstrip("/")
         self._timeout = timeout_seconds
+        self._api_key = api_key or None
 
     async def ping(self) -> None:
+        # Qdrant Cloud demands the api-key header on every route, /readyz included;
+        # an unauthenticated call answers 403. A self-hosted Qdrant without auth
+        # ignores the header, so sending it is safe both ways.
+        headers = {"api-key": self._api_key} if self._api_key else {}
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.get(f"{self._url}/readyz")
+            response = await client.get(f"{self._url}/readyz", headers=headers)
             response.raise_for_status()
 
 
@@ -78,7 +88,11 @@ def default_checks(settings: Settings) -> list[DependencyCheck]:
     return [
         MongoCheck(settings.mongodb_uri, timeout),
         RedisCheck(settings.redis_url, timeout),
-        QdrantCheck(settings.qdrant_url, timeout),
+        QdrantCheck(
+            settings.qdrant_url,
+            timeout,
+            api_key=settings.qdrant_api_key.get_secret_value(),
+        ),
     ]
 
 

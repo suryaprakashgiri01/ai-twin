@@ -5,6 +5,7 @@
 !uv.lock
 !app/
 !config/
+!docker_warmup.py
 !packages/llm-orchestrator/pyproject.toml
 !packages/llm-orchestrator/README.md
 !packages/llm-orchestrator/src/

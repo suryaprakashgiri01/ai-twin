@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -15,9 +16,25 @@ SERVICE_NAME = "ai-twin"
 DEFAULT_MODEL_INVENTORY = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
 DEFAULT_AGENT_MODELS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
 
+# Environment-source toggle (`make deploy-env` / `make deploy-check` pull the GCP secret
+# values into `.env.prod` so local testing can run against the deployed configuration).
+# Empty (or unset) means the local `.env`; `.env.prod` means the deployed mirror values.
+# Deliberately closed: only these two files may ever be selected.
+_ENV_FILE_CHOICES = (".env", ".env.prod")
+
+
+def resolve_env_file() -> str:
+    """Which env file Settings reads, from `AI_TWIN_ENV_FILE` (empty = the local `.env`)."""
+    choice = os.getenv("AI_TWIN_ENV_FILE", "").strip()
+    if not choice:
+        choice = ".env"
+    if choice not in _ENV_FILE_CHOICES:
+        raise ValueError(f"AI_TWIN_ENV_FILE must be one of {_ENV_FILE_CHOICES}, got {choice!r}")
+    return choice
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=resolve_env_file(), extra="ignore")
 
     # --- service ---------------------------------------------------------
     app_env: Literal["local", "test", "dev", "prod"] = "local"

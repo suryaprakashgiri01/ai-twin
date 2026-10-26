@@ -277,7 +277,7 @@ def default_launcher(argv: list[str], env: dict[str, str], log: Path) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     else:
         kwargs["start_new_session"] = True
     with log.open("ab") as out:

@@ -35,7 +35,7 @@ SESSION_ID_HEADER = "X-Session-ID"
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
 
 # Probe and scrape traffic would drown the access log at INFO.
-_QUIET_PATHS = frozenset({"/healthz", "/readyz"})
+_QUIET_PATHS = frozenset({"/healthz", "/readyz", "/livez"})
 
 logger = structlog.get_logger("app.access")
 

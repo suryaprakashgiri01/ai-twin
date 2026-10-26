@@ -33,13 +33,13 @@ flowchart LR
 ## Why Cloud Run
 
 - **Not Vercel.** Its Python functions cannot hold this app: the embedding and reranking models exceed their
-  size limits.
+size limits.
 - **Not Hugging Face Spaces.** Spaces allow outbound connections only on ports 80, 443 and 8080. MongoDB Atlas
-  (27017) and Redis (6379) are unreachable from a Space.
+(27017) and Redis (6379) are unreachable from a Space.
 - **Cloud Run** runs the same container, has no port limits, sits in `asia-south1` next to Upstash (Mumbai) and
-  Atlas, scales to zero, and its free tier covers a portfolio's traffic.
+Atlas, scales to zero, and its free tier covers a portfolio's traffic.
   - **Cold starts.** The first request after an idle period waits a few seconds while the models load. Set
-    `--min-instances 1` if that matters more than cost.
+  `--min-instances 1` if that matters more than cost.
 - **Same image elsewhere.** The image runs unchanged on Fly.io (`bom`) or Render.
 
 ## On the public profile
@@ -55,16 +55,17 @@ flowchart LR
 ## One-time setup (owner)
 
 ### 1. Data services
+
 - **MongoDB Atlas.**
   - Create a database user for the app with `readWrite` on `ai_twin` only, not the root user.
   - Under Network Access, allow `0.0.0.0/0`. Cloud Run has no fixed outbound IP without a paid VPC connector
-    and Cloud NAT, so access is protected by that user's long random password.
+  and Cloud NAT, so access is protected by that user's long random password.
 - **Upstash Redis.** Use the TCP connection URL (`rediss://default:<password>@<host>.upstash.io:6379`). The REST
-  URL and tokens are not used.
+URL and tokens are not used.
 - **Qdrant Cloud.** Create a free cluster as close to Mumbai as the free tier allows: an Asia region on GCP if
-  offered, otherwise AWS Europe (Frankfurt, `eu-central-1`, about 110–130 ms from Mumbai; North America is
-  about 200 ms). Note its URL (`https://<id>.<region>.cloud.qdrant.io:6333`) and an API key. Free clusters are
-  suspended after a week without use.
+offered, otherwise AWS Europe (Frankfurt, `eu-central-1`, about 110–130 ms from Mumbai; North America is
+about 200 ms). Note its URL (`https://<id>.<region>.cloud.qdrant.io:6333`) and an API key. Free clusters are
+suspended after a week without use.
 
 ### Where the cloud values live in the vault's `.env`
 
@@ -80,6 +81,7 @@ names (`.env.example` lists them):
 | `UPSTASH_TOKEN`, `UPSTASH_READONLY_TOKEN` | Upstash REST tokens | nothing (kept for reference) |
 
 ### 2. Google Cloud
+
 Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install). Then, with your project:
 
 ```bash
@@ -112,15 +114,14 @@ Add any other public-tier provider keys, `TURNSTILE_SECRET_KEY` and the SMTP pas
 **Bucket for the published files** (private, in Mumbai):
 
 ```bash
-gcloud storage buckets create gs://<BUCKET> --location=asia-south1 --uniform-bucket-level-access
+gcloud storage buckets create gs://ai-twin-512504-publish --location=us-central1 --uniform-bucket-level-access
 ```
 
 **Service identity.** Let the service read the secrets and the bucket:
 
 ```bash
-SA="$(gcloud projects describe <PROJECT_ID> --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
-gcloud projects add-iam-policy-binding <PROJECT_ID> --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor
-gcloud storage buckets add-iam-policy-binding gs://<BUCKET> --member="serviceAccount:$SA" --role=roles/storage.objectViewer
+gcloud projects add-iam-policy-binding ai-twin-512504 --member="serviceAccount:1093981831482-compute@developer.gserviceaccount.com" --role=roles/secretmanager.secretAccessor
+gcloud storage buckets add-iam-policy-binding gs://ai-twin-512504-publish --member="serviceAccount:1093981831482-compute@developer.gserviceaccount.com" --role=roles/storage.objectViewer
 ```
 
 ## Every publish
@@ -128,7 +129,7 @@ gcloud storage buckets add-iam-policy-binding gs://<BUCKET> --member="serviceAcc
 ```bash
 make publish                         # dry run: counts only
 make publish ARGS="--apply"          # mirror kb_public to Qdrant Cloud, write vault/publish/*
-gcloud storage cp vault/publish/* gs://<BUCKET>/
+gcloud storage cp vault/publish/* gs://ai-twin-512504-publish/
 ```
 
 The canary file is re-read whenever it changes, so no redeploy is needed.
@@ -149,8 +150,8 @@ gcloud run deploy ai-twin-public --source . --region asia-south1 \
 ```
 
 - **No sign-in on the service.** `--allow-unauthenticated` lets the portfolio reach it; the API itself
-  requires its own key on every route.
-- **`--timeout 300`** leaves room for streamed answers.
+requires its own key on every route.
+- `--timeout 300` leaves room for streamed answers.
 
 **Public key for the portfolio.** Create the key against Atlas with one command, pointing the key script at
 Atlas for that command only:
@@ -165,7 +166,7 @@ Put the printed key in Vercel (`AI_TWIN_PUBLIC_KEY`), with `AI_TWIN_API_URL` set
 
 ```bash
 URL="$(gcloud run services describe ai-twin-public --region asia-south1 --format='value(status.url)')"
-curl -s -o /dev/null -w '%{http_code}\n' "$URL/healthz"            # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$URL/livez"             # 200
 curl -s -o /dev/null -w '%{http_code}\n' "$URL/readyz"             # 200 once Atlas, Upstash and Qdrant answer
 curl -s -o /dev/null -w '%{http_code}\n' "$URL/admin/v1/whoami"    # 404: no admin surface
 ```
@@ -182,3 +183,15 @@ gcloud run services update-traffic ai-twin-public --region asia-south1 --to-revi
 
 To withdraw content: unpublish it in the vault, then `make publish ARGS="--apply"` (it removes it from Qdrant
 Cloud).
+
+Rules to stay free:
+
+1. **Rotate keys by destroying the old version, not just disabling it**:
+   ```powershell
+   gcloud secrets versions add ai-twin-gemini-api-key --data-file=<file>
+   # after verifying the new version works and is deployed:
+   gcloud secrets versions list ai-twin-gemini-api-key  # find old version number
+   gcloud secrets versions destroy <OLD-N> --secret=ai-twin-gemini-api-key
+   ```
+2. **Avoid needless version bumps.** Changing only env vars / code doesn't touch secrets — redeploys with unchanged `--set-secrets` re-read the same `:latest` for free.
+3. Right now, don't add any more versions until something is actually wrong.

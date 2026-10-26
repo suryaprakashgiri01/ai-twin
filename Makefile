@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync models-check eval publish chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync models-check eval publish chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path deploy-env deploy-check
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -59,6 +59,12 @@ models-check: ## Are the cloud model ids in config/models.yaml still served? (id
 
 publish: ## Mirror kb_public to the public Qdrant + export canary hashes and resume (dry run; ARGS="--apply")
 	$(PY) scripts.publish $(ARGS)
+
+deploy-env: ## Pull the deployed GCP secrets into .env.prod (values never printed)
+	$(PY) scripts.deploy_env pull
+
+deploy-check: ## Verify the deployed config locally (.env.prod deps + optional live URL): ARGS="--url <url> --public-key <key>"
+	$(PY) scripts.deploy_env check $(ARGS)
 
 eval: ## Evaluate the public assistant with real models (red-team + golden set); ARGS="--limit 5"
 	$(PY) scripts.eval $(ARGS)
