@@ -29,7 +29,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -277,7 +277,11 @@ def default_launcher(argv: list[str], env: dict[str, str], log: Path) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        # Typeshed declares these constants win32-only; getattr(,0) keeps ruff and mypy neutral.
+        nt_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess, "DETACHED_PROCESS", 0
+        )
+        kwargs["creationflags"] = cast(int, nt_flags)
     else:
         kwargs["start_new_session"] = True
     with log.open("ab") as out:

@@ -13,6 +13,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
+DEFAULT_VERSION = "0.1.0"
 DEFAULT_MODEL_INVENTORY = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
 DEFAULT_AGENT_MODELS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
 
@@ -40,7 +41,7 @@ class Settings(BaseSettings):
     app_env: Literal["local", "test", "dev", "prod"] = "local"
     # `vault` holds every tier and the admin routes; `public` serves published chunks only.
     deployment_profile: Literal["vault", "public"] = "vault"
-    service_version: str = "0.1.0"
+    service_version: str = DEFAULT_VERSION
     host: str = "127.0.0.1"
     port: int = 8000
     reload: bool = False

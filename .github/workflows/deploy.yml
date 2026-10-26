@@ -1,0 +1,101 @@
+# Deploys the public service to Cloud Run whenever main moves (PR merges only: main is
+# branch-protected, so no direct pushes exist to trigger this).
+#
+# Credential: Workload Identity Federation (no stored keys). One-time GCP setup lives in
+# docs/deploy-public.md ("CI deploy identity"). The deploy intentionally reuses the exact
+# flags from dev-notes/deploy-public.md §2; env vars/secrets mirror that command.
+#
+# Gate: this runs after CI's check/secrets jobs must pass on the same commit,
+# enforced here by requiring them (cheap, same-repo dependency).
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: auth
+        name: GCP auth (Workload Identity Federation)
+        uses: google-github-actions/auth@v3
+        with:
+          # Secrets live in the repo settings: no keys, only WIF identifiers
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Resolve deploy-time values
+        id: vals
+        env:
+          SERVICE: ai-twin-public
+          REGION: asia-south1
+          PROJECT: ai-twin-512504
+        run: |
+          # Deploy env vars that are not Schema Manager secrets: fetched here, never logged.
+          # ai-twin-public-owner-name and ai-twin-public-qdrant-url are GCP secrets the
+          # deploy SA may read (see the CI deploy identity setup in docs/deploy-public.md).
+          OWNER_NAME="$(gcloud secrets versions access latest --secret=ai-twin-public-owner-name)"
+          QDRANT_URL="$(gcloud secrets versions access latest --secret=ai-twin-public-qdrant-url)"
+          echo "owner_name=$OWNER_NAME" >> "$GITHUB_OUTPUT"
+          echo "qdrant_url=$QDRANT_URL" >> "$GITHUB_OUTPUT"
+
+      - id: deploy
+        name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          project_id: ai-twin-512504
+          region: asia-south1
+          service: ai-twin-public
+          source: .
+          env_vars: >-
+            MONGODB_DATABASE=ai_twin,
+            QDRANT_URL=${{ steps.vals.outputs.qdrant_url }},
+            PUBLIC_OWNER_NAME=${{ steps.vals.outputs.owner_name }},
+            PUBLIC_CANARY_HASHES_PATH=/publish/canary-hashes.json,
+            PUBLIC_RESUME_PATH=/publish/resume.pdf
+          secrets: >-
+            MONGODB_URI=ai-twin-mongodb-uri:latest,
+            REDIS_URL=ai-twin-redis-url:latest,
+            QDRANT_API_KEY=ai-twin-qdrant-api-key:latest,
+            VISITOR_HASH_SALT=ai-twin-visitor-salt:latest,
+            GEMINI_API_KEY=ai-twin-gemini-api-key:latest,
+            GROQ_API_KEY=ai-twin-groq-api-key:latest,
+            BLOB_ENCRYPTION_KEY=ai-twin-blob-encryption-key:latest
+          flags: >-
+            --allow-unauthenticated
+            --execution-environment=gen2
+            --memory=2Gi
+            --cpu=1
+            --cpu-throttling
+            --min-instances=0
+            --max-instances=1
+            --concurrency=20
+            --timeout=300
+            --add-volume=name=publish,type=cloud-storage,bucket=ai-twin-512504-publish,readonly=true
+            --add-volume-mount=volume=publish,mount-path=/publish
+
+      - name: Smoke test the deployed revision
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -e
+          code() { curl -s -o /dev/null -w '%{http_code}' "$SERVICE_URL$1"; }
+          test "$(code /livez)" = "200"
+          test "$(code /readyz)" = "200"
+          test "$(code /admin/v1/whoami)" = "404"
+          echo "smoke test passed"

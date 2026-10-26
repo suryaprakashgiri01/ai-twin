@@ -66,6 +66,9 @@ deploy-env: ## Pull the deployed GCP secrets into .env.prod (values never printe
 deploy-check: ## Verify the deployed config locally (.env.prod deps + optional live URL): ARGS="--url <url> --public-key <key>"
 	$(PY) scripts.deploy_env check $(ARGS)
 
+release-bump: ## One bump per develop->main release PR: ARGS="patch|minor|major|absolute X.Y.Z"
+	$(PY) scripts.version_bump $(ARGS)
+
 eval: ## Evaluate the public assistant with real models (red-team + golden set); ARGS="--limit 5"
 	$(PY) scripts.eval $(ARGS)
 
