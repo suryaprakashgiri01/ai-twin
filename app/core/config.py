@@ -13,7 +13,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
-DEFAULT_VERSION = "0.1.0"
+DEFAULT_VERSION = "0.1.1"
 DEFAULT_MODEL_INVENTORY = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
 DEFAULT_AGENT_MODELS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
 
