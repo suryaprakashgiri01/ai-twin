@@ -4,7 +4,8 @@ Presidio finds e-mail addresses, phone numbers, cards, IBANs, IP addresses and (
 `en_core_web_md` model) person names; the rule recognisers in `app.guardrails.identifiers`
 find Indian identifiers: PAN, Aadhaar (Verhoeff-checked), UAN, IFSC, bank account, passport,
 roll/enrolment numbers and dates of birth. Each match becomes a typed placeholder such as
-`[AADHAAR]`. Strings on the owner's public allowlist (`PUBLIC_CONTACT_ALLOWLIST`) are kept.
+`[AADHAAR]`. Strings on the owner's public allowlist (`PUBLIC_CONTACT_ALLOWLIST`) are kept, and
+so is a person name made only of the owner's own name parts (`OWNER_NAMES`).
 The report holds counts per placeholder, never values.
 
 Labelled identifiers (UAN, account, passport, roll number, DOB) need their label nearby, so a
@@ -13,6 +14,7 @@ bare 12-digit number in a log line is not mistaken for one; the label itself is 
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -48,6 +50,7 @@ PLACEHOLDERS: dict[str, str] = {
 SCORE_THRESHOLD = 0.5
 # spaCy handles at most ~1M characters per call; blocks keep memory flat on big files.
 BLOCK_CHARS = 20_000
+_NAME_TOKEN = re.compile(r"[^\W\d_]+")
 
 # --- presidio ---------------------------------------------------------------------------------
 
@@ -155,13 +158,27 @@ def _resolve(spans: Sequence[Span]) -> list[tuple[int, int, str]]:
     return sorted(chosen)
 
 
+def name_tokens(value: str) -> list[str]:
+    return [t.lower() for t in _NAME_TOKEN.findall(value)]
+
+
 class Redactor:
-    def __init__(self, detector: Detector | None, allowlist: Iterable[str] = ()) -> None:
+    def __init__(
+        self,
+        detector: Detector | None,
+        allowlist: Iterable[str] = (),
+        owner_names: Iterable[str] = (),
+    ) -> None:
         self._detector = detector
         self._allow = {a.strip().lower() for a in allowlist if a.strip()}
+        self._owner = {t for name in owner_names for t in name_tokens(name)}
 
-    def _kept(self, value: str) -> bool:
-        return value.strip().lower() in self._allow
+    def _kept(self, value: str, entity: str) -> bool:
+        if value.strip().lower() in self._allow:
+            return True
+        # "Surya", "Giri" or "Surya Prakash Giri" are the owner; "Surya Sharma" is someone else.
+        tokens = name_tokens(value)
+        return entity == "PERSON" and bool(tokens) and set(tokens) <= self._owner
 
     def redact(self, text: str) -> Redaction:
         spans: list[Span] = []
@@ -174,7 +191,7 @@ class Redactor:
         pieces: list[str] = []
         cursor = 0
         for start, end, entity in _resolve(spans):
-            if entity not in PLACEHOLDERS or self._kept(text[start:end]):
+            if entity not in PLACEHOLDERS or self._kept(text[start:end], entity):
                 continue
             placeholder = PLACEHOLDERS[entity]
             pieces += [text[cursor:start], f"[{placeholder}]"]

@@ -13,8 +13,9 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.api.envelope import ApiModel
 from app.db.documents import ModelOverride, utcnow
 from app.exceptions import AppError, ErrorCode
 from llm_orchestrator import Inventory, InventoryError, Role
@@ -26,7 +27,7 @@ ROLE_PREFIX = "role:"
 OverrideTier = Literal["public", "private", "confidential"]
 
 
-class OverrideIn(BaseModel):
+class OverrideIn(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool | None = None
@@ -35,18 +36,18 @@ class OverrideIn(BaseModel):
     chain: list[str] | None = Field(default=None, min_length=1)
 
     def check_for(self, override_id: str) -> None:
-        """Raise VALIDATION_ERROR when the body does not fit the kind of id."""
+        """Raise INVALID_INPUT when the body does not fit the kind of id."""
         if override_id.startswith(ROLE_PREFIX):
             if self.chain is None or self.enabled is not None or self.max_tier is not None:
-                raise AppError(ErrorCode.VALIDATION_ERROR, "A role override takes `chain` only")
+                raise AppError(ErrorCode.INVALID_INPUT, "A role override takes `chain` only")
             return
         if self.chain is not None:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "`chain` is only valid for role:<role>")
+            raise AppError(ErrorCode.INVALID_INPUT, "`chain` is only valid for role:<role>")
         if self.enabled is None and self.max_tier is None:
-            raise AppError(ErrorCode.VALIDATION_ERROR, "Set `enabled` and/or `max_tier`")
+            raise AppError(ErrorCode.INVALID_INPUT, "Set `enabled` and/or `max_tier`")
 
     def check_against(self, override_id: str, inventory: Inventory) -> None:
-        """Raise VALIDATION_ERROR for an unknown model or role, a bad chain, or a widened tier."""
+        """Raise INVALID_INPUT for an unknown model or role, a bad chain, or a widened tier."""
         self.check_for(override_id)
         try:
             if override_id.startswith(ROLE_PREFIX):
@@ -56,7 +57,7 @@ class OverrideIn(BaseModel):
                     override_id, LLMOverride(enabled=self.enabled, max_tier=self.max_tier)
                 )
         except (InventoryError, ValueError) as exc:
-            raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+            raise AppError(ErrorCode.INVALID_INPUT, str(exc)) from exc
 
 
 def _role(override_id: str) -> Role:

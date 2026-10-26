@@ -55,10 +55,14 @@ def test_openrouter_uses_its_base_url() -> None:
     assert "openrouter.ai" in str(model.openai_api_base)  # type: ignore[attr-defined]
 
 
-def test_ollama_model_setting_replaces_spec_name() -> None:
-    secrets = ProviderSecrets(ollama_base_url="http://127.0.0.1:11434", ollama_model="qwen2.5:3b")
+def test_ollama_model_setting_replaces_spec_name_per_entry() -> None:
+    secrets = ProviderSecrets(
+        ollama_base_url="http://127.0.0.1:11434", ollama_models={"ollama-m": "qwen2.5:3b"}
+    )
     model = build_chat_model(_spec("ollama"), secrets, timeout=5)
     assert model.model == "qwen2.5:3b"  # type: ignore[attr-defined]
+    other = ModelSpec.model_validate(spec("ollama-q", provider="ollama"))
+    assert build_chat_model(other, secrets, timeout=5).model == "ollama-q-name"  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize("provider", ["groq", "cerebras", "gemini", "openrouter", "ollama", "mock"])
@@ -85,3 +89,13 @@ async def test_missing_key_models_are_skipped_not_errors() -> None:
 def test_mock_model_does_not_echo_input() -> None:
     reply = MockChatModel().invoke([HumanMessage(content="secret words")])
     assert "secret" not in str(reply.content)
+
+
+def test_ollama_reasoning_models_separate_their_thinking() -> None:
+    secrets = ProviderSecrets(ollama_base_url="http://127.0.0.1:11434")
+    plain = build_chat_model(_spec("ollama"), secrets, timeout=5)
+    thinker_spec = ModelSpec.model_validate(
+        {**spec("ollama-t", provider="ollama"), "capabilities": ["reasoning"]}
+    )
+    thinker = build_chat_model(thinker_spec, secrets, timeout=5)
+    assert plain.reasoning is None and thinker.reasoning is True  # type: ignore[attr-defined]

@@ -7,8 +7,12 @@ macOS, the GPU driver on Windows), never in the compose stack, and only on a loo
 - `install` macOS: `brew install ollama` · Windows: `winget install --id Ollama.Ollama -e`
 - `start`   start `ollama serve` in the background unless one answers (log: vault/logs/ollama.log)
 - `stop`    stop the server `start` launched (a desktop-app or `brew services` server is left alone)
-- `pull`    pull OLLAMA_MODEL (else the inventory's `ollama-local` model)
-- `smoke`   one tiny fixed prompt; prints latency and token counts
+- `pull`    pull every required Ollama model, or the one named (`pull qwen2.5:14b`); optional
+            (`local-max`) models are pulled only when named
+- `smoke`   one tiny fixed prompt to each configured model; prints latency and token counts
+
+Configured models: each Ollama entry in config/models.yaml, with OLLAMA_MODEL replacing
+`ollama-local`'s and OLLAMA_QUALITY_MODEL replacing `ollama-qwen`'s.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -39,6 +43,15 @@ LOG_FILE = ROOT / "vault" / "logs" / "ollama.log"
 PID_FILE = ROOT / "vault" / "run" / "ollama.pid"
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 SMOKE_PROMPT = "Reply with the single word: ready"
+# Inventory id -> the .env key that replaces its model name.
+MODEL_ENV = {
+    "ollama-local": "OLLAMA_MODEL",
+    "ollama-qwen": "OLLAMA_QUALITY_MODEL",
+    "ollama-qwen-14b": "OLLAMA_MAX_MODEL",
+}
+# Desktop / tray app log locations when we did not start the server ourselves.
+MAC_APP_LOG = Path.home() / ".ollama" / "logs" / "server.log"
+WIN_APP_LOG = Path(os.environ.get("LOCALAPPDATA", "")) / "Ollama" / "server.log"
 
 Launcher = Callable[[list[str], dict[str, str], Path], int]
 
@@ -57,18 +70,62 @@ class Target:
     host: str
     port: int
     model: str
+    # Every configured Ollama model, `model` (the router/classifier one) first.
+    models: tuple[str, ...] = ()
+    # Models some agents prefer but none needs (the `local-max` ones, e.g. qwen2.5:14b): a
+    # missing one is reported as optional, and a plain `pull` skips it.
+    optional: tuple[str, ...] = ()
+
+    @property
+    def all_models(self) -> tuple[str, ...]:
+        return self.models or (self.model,)
+
+    @property
+    def required_models(self) -> tuple[str, ...]:
+        return tuple(m for m in self.all_models if m not in self.optional)
 
     @property
     def loopback(self) -> bool:
         return self.host in LOOPBACK
 
 
-def inventory_model(path: Path = INVENTORY) -> str:
+def inventory_models(path: Path = INVENTORY) -> dict[str, str]:
+    """Enabled Ollama entries of the inventory: id -> model name, in file order. A disabled
+    entry (an optional model such as Qwen3) is not pulled or checked until it is enabled."""
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
-    for spec in data.get("models", []):
-        if spec.get("id") == "ollama-local":
-            return str(spec["model"])
-    raise OllamaError("config/models.yaml has no ollama-local model")
+    return {
+        str(spec["id"]): str(spec["model"])
+        for spec in data.get("models", [])
+        if spec.get("provider") == "ollama" and spec.get("enabled", True)
+    }
+
+
+def inventory_model(path: Path = INVENTORY) -> str:
+    models = inventory_models(path)
+    if "ollama-local" not in models:
+        raise OllamaError("config/models.yaml has no ollama-local model")
+    return models["ollama-local"]
+
+
+def optional_models(env: dict[str, str], path: Path = INVENTORY) -> tuple[str, ...]:
+    """Enabled Ollama models only `local-max` entries use, after .env overrides. A model another
+    (required) entry also uses is required."""
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    entries = [
+        (env.get(MODEL_ENV.get(str(spec["id"]), "")) or str(spec["model"]), spec.get("tags") or [])
+        for spec in data.get("models", [])
+        if spec.get("provider") == "ollama" and spec.get("enabled", True)
+    ]
+    required = {name for name, tags in entries if "local-max" not in tags}
+    return tuple(name for name, tags in entries if "local-max" in tags and name not in required)
+
+
+def configured_models(env: dict[str, str], path: Path = INVENTORY) -> tuple[str, ...]:
+    """Each Ollama entry's model after .env overrides; `ollama-local`'s first, no repeats."""
+    found = inventory_models(path)
+    ordered = ["ollama-local", *(i for i in found if i != "ollama-local")]
+    names = [env.get(MODEL_ENV.get(i, "")) or found[i] for i in ordered if i in found]
+    return tuple(dict.fromkeys(names))
 
 
 def target(env: dict[str, str]) -> Target:
@@ -78,7 +135,11 @@ def target(env: dict[str, str]) -> Target:
         raise OllamaError(f"OLLAMA_BASE_URL is not a URL: {url}")
     port = parts.port or (443 if parts.scheme == "https" else 11434)
     model = env.get("OLLAMA_MODEL") or inventory_model()
-    return Target(url=url, host=parts.hostname, port=port, model=model)
+    models = tuple(dict.fromkeys((model, *configured_models(env))))
+    optional = tuple(m for m in optional_models(env) if m != model)
+    return Target(
+        url=url, host=parts.hostname, port=port, model=model, models=models, optional=optional
+    )
 
 
 def require_loopback(t: Target) -> None:
@@ -144,9 +205,21 @@ def has_model(pulled: list[str], model: str) -> bool:
 # --- commands ----------------------------------------------------------------------------------
 
 
+def launcher_and_log(*, pid_file: Path = PID_FILE) -> tuple[str, Path]:
+    """Who started Ollama and which log file to read."""
+    if pid_file.exists():
+        return "script (make ollama ARGS=start)", LOG_FILE
+    if platform.system() == "Windows":
+        return "desktop / tray app (or other)", WIN_APP_LOG
+    return "desktop app / brew services (or other)", MAC_APP_LOG
+
+
 def cmd_status(t: Target, api: Api) -> int:
     binary = shutil.which("ollama")
     (ok if binary else warn)(f"ollama binary: {binary or 'not installed; run: ' + hint('install')}")
+    who, log_path = launcher_and_log()
+    info(f"Launcher: {who}")
+    info(f"Log: {log_path}" + (" (exists)" if log_path.exists() else " (missing)"))
     version = api.version()
     if version is None:
         warn(f"No Ollama answering at {t.url}; run: {hint('start')}")
@@ -154,11 +227,30 @@ def cmd_status(t: Target, api: Api) -> int:
     ok(f"Ollama {version} at {t.url}{'' if t.loopback else '  (NOT loopback)'}")
     pulled = api.models()
     info(f"Pulled: {', '.join(pulled) or 'none'}")
-    if has_model(pulled, t.model):
-        ok(f"Configured model {t.model} is pulled")
-        return 0
-    warn(f"Configured model {t.model} is not pulled; run: {hint('pull')}")
-    return 1
+    missing = [m for m in t.required_models if not has_model(pulled, m)]
+    for model in t.all_models:
+        if has_model(pulled, model):
+            ok(f"Configured model {model} is pulled")
+    for model in missing:
+        warn(f"Configured model {model} is not pulled; run: {hint('pull ' + model)}")
+    for model in t.optional:
+        if not has_model(pulled, model):
+            info(f"Optional model {model} not pulled (agents fall back to smaller ones)")
+    return 1 if missing else 0
+
+
+def cmd_logs(*, lines: int = 80, pid_file: Path = PID_FILE) -> int:
+    """Print the end of the log that matches who started Ollama."""
+    who, log_path = launcher_and_log(pid_file=pid_file)
+    info(f"Launcher: {who}")
+    if not log_path.exists():
+        warn(f"No log at {log_path}")
+        return 1
+    text = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail = text[-max(1, lines) :]
+    print("\n".join(tail))
+    ok(f"{len(tail)} line(s) from {log_path}")
+    return 0
 
 
 def install_argv(system: str) -> list[str] | None:
@@ -185,7 +277,11 @@ def default_launcher(argv: list[str], env: dict[str, str], log: Path) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
+        # Typeshed declares these constants win32-only; getattr(,0) keeps ruff and mypy neutral.
+        nt_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess, "DETACHED_PROCESS", 0
+        )
+        kwargs["creationflags"] = cast(int, nt_flags)
     else:
         kwargs["start_new_session"] = True
     with log.open("ab") as out:
@@ -242,10 +338,19 @@ def cmd_stop(pid_file: Path = PID_FILE, kill: Callable[[int, int], None] = os.ki
 
 
 def cmd_pull(t: Target, api: Api, model: str | None) -> int:
-    name = model or t.model
     if api.version() is None:
         fail(f"No Ollama answering at {t.url}; run: {hint('start')}")
         return 1
+    for name in (model,) if model else t.required_models:
+        _pull_one(api, name)
+    for name in () if model else t.optional:
+        info(
+            f"Skipped optional {name}; pull it when this machine can run it: {hint('pull ' + name)}"
+        )
+    return 0
+
+
+def _pull_one(api: Api, name: str) -> None:
     info(f"Pulling {name}")
     last = {"status": ""}
 
@@ -261,18 +366,18 @@ def cmd_pull(t: Target, api: Api, model: str | None) -> int:
     api.pull(name, progress)
     print()
     ok(f"{name} is ready")
-    return 0
 
 
-def cmd_smoke(t: Target, api: Api) -> int:
+def cmd_smoke(t: Target, api: Api, model: str | None = None) -> int:
     require_loopback(t)
-    started = time.perf_counter()
-    reply = api.chat(t.model, SMOKE_PROMPT)
-    seconds = time.perf_counter() - started
-    text = reply.get("message", {}).get("content", "").strip()
-    tokens = reply.get("eval_count", 0)
-    rate = tokens / (reply.get("eval_duration", 0) / 1e9) if reply.get("eval_duration") else 0
-    ok(f"{t.model} answered in {seconds:.1f}s ({tokens} tokens, {rate:.0f} tok/s): {text[:40]!r}")
+    for name in (model,) if model else t.all_models:
+        started = time.perf_counter()
+        reply = api.chat(name, SMOKE_PROMPT)
+        seconds = time.perf_counter() - started
+        text = reply.get("message", {}).get("content", "").strip()
+        tokens = reply.get("eval_count", 0)
+        rate = tokens / (reply.get("eval_duration", 0) / 1e9) if reply.get("eval_duration") else 0
+        ok(f"{name} answered in {seconds:.1f}s ({tokens} tokens, {rate:.0f} tok/s): {text[:40]!r}")
     return 0
 
 
@@ -289,9 +394,17 @@ def main(
         "command",
         nargs="?",
         default="status",
-        choices=["status", "install", "start", "stop", "pull", "smoke"],
+        choices=["status", "logs", "install", "start", "stop", "pull", "smoke"],
     )
-    parser.add_argument("model", nargs="?", help="model for `pull` (default: the configured one)")
+    parser.add_argument(
+        "model", nargs="?", help="model for `pull` / `smoke` (default: every configured one)"
+    )
+    parser.add_argument(
+        "--tail",
+        type=int,
+        default=80,
+        help="lines to show for `logs` (default: 80)",
+    )
     args = parser.parse_args(argv)
     try:
         t = target(read_env())
@@ -306,7 +419,9 @@ def main(
             case "pull":
                 return cmd_pull(t, api, args.model)
             case "smoke":
-                return cmd_smoke(t, api)
+                return cmd_smoke(t, api, args.model)
+            case "logs":
+                return cmd_logs(lines=args.tail)
             case _:
                 return cmd_status(t, api)
     except OllamaError as exc:

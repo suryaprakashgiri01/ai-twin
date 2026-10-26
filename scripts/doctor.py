@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
-from scripts import models, ollama
+from scripts import models, models_check, ollama
 from scripts._common import (
     ENV_EXAMPLE,
     ENV_FILE,
@@ -159,11 +159,70 @@ def check_ollama(env: dict[str, str], api: ollama.Api | None = None) -> list[Fin
         return [
             Finding("warn", f"Ollama not answering at {target.url}; run: {ollama.hint('start')}")
         ]
-    if not ollama.has_model(api.models(), target.model):
+    pulled = api.models()
+    missing = [m for m in target.required_models if not ollama.has_model(pulled, m)]
+    if missing:
         return [
-            Finding("warn", f"Ollama model {target.model} not pulled; run: {ollama.hint('pull')}")
+            Finding("warn", f"Ollama model {m} not pulled; run: {ollama.hint('pull ' + m)}")
+            for m in missing
         ]
-    return [Finding("ok", f"Ollama {version} with {target.model}")]
+    have = [m for m in target.all_models if ollama.has_model(pulled, m)]
+    findings = [Finding("ok", f"Ollama {version} with {', '.join(have)}")]
+    findings += [
+        Finding("ok", f"optional Ollama model {m} not pulled (agents fall back to smaller ones)")
+        for m in target.optional
+        if not ollama.has_model(pulled, m)
+    ]
+    return findings
+
+
+def check_cloud_models() -> list[Finding]:
+    """Retired cloud model ids (make models-check has the full list); quiet when all is well."""
+    import httpx
+
+    from app.core.config import DEFAULT_MODEL_INVENTORY, Settings
+    from llm_orchestrator import Inventory
+
+    specs = list(Inventory.from_yaml(DEFAULT_MODEL_INVENTORY).models.values())
+    with httpx.Client() as client:
+        results = models_check.check(specs, Settings(), client)
+    missing = [r for r in results if r.status == "missing"]
+    if missing:
+        names = ", ".join(f"{r.model_id} ({r.provider_model})" for r in missing)
+        return [
+            Finding("warn", f"cloud model ids no longer served: {names}; run: make models-check")
+        ]
+    checked = sum(r.status == "ok" for r in results)
+    return [Finding("ok", f"{checked} cloud model id(s) confirmed live")] if checked else []
+
+
+def check_graphify() -> Finding:
+    if shutil.which("graphify"):
+        return Finding("ok", "graphify found")
+    return Finding(
+        "warn",
+        "graphify not found (code-graph make targets need it); install the CLI then retry",
+    )
+
+
+def check_ollama_context(env: dict[str, str]) -> Finding | None:
+    """Warn when a large context is configured on a CPU-only machine."""
+    raw = env.get("OLLAMA_NUM_CTX") or env.get("OLLAMA_CONTEXT_LENGTH") or ""
+    try:
+        ctx = int(raw) if raw.strip() else 0
+    except ValueError:
+        return Finding("warn", f"OLLAMA_NUM_CTX is not an integer: {raw!r}")
+    if ctx <= 16_000:
+        return None
+    # Heuristic: no CUDA/Metal env and no nvidia-smi → treat as CPU-only.
+    has_gpu = bool(shutil.which("nvidia-smi")) or bool(env.get("CUDA_VISIBLE_DEVICES"))
+    if has_gpu:
+        return None
+    return Finding(
+        "warn",
+        f"Ollama context {ctx} is above 16k on a CPU-only host; title refresh and intake "
+        "will be slow — prefer 8192",
+    )
 
 
 def collect() -> list[Finding]:
@@ -178,6 +237,10 @@ def collect() -> list[Finding]:
     findings += check_ports(env, running)
     findings += check_ingestion_deps(env)
     findings += check_ollama(env)
+    findings += check_cloud_models()
+    findings.append(check_graphify())
+    if ctx := check_ollama_context(env):
+        findings.append(ctx)
     return findings
 
 

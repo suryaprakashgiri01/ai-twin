@@ -71,13 +71,19 @@ class IngestionService:
         self.store = store
         self.pool = pool
 
-    async def submit(self, fields: SourceFields) -> tuple[SourceView, bool]:
-        """Returns the source and whether a job was queued. Same bytes, same source."""
+    async def submit(
+        self, fields: SourceFields, *, refresh: bool = False
+    ) -> tuple[SourceView, bool]:
+        """Returns the source and whether a job was queued. Same bytes, same source.
+
+        `refresh` re-runs a finished source (a URL or repository whose content changed): the
+        job first removes the documents and vectors the last run made, then ingests afresh."""
         source, created = await self.store.create_source(fields)
         if created:
             self.pool.submit(source.id)
             return source, True
-        if source.status == "failed":  # a retry of the same content is worth another go
+        refreshable = refresh and source.status in ("done", "quarantined")
+        if source.status == "failed" or refreshable:  # a retry or a refresh
             await self.store.update_source(source.id, status="queued", attempts=0)
             self.pool.submit(source.id)
             return source, True

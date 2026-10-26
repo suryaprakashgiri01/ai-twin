@@ -4,7 +4,7 @@
 
 PY := uv run python -m
 
-.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed chat chat-list chat-continue twin memory migrate-status upgrade downgrade
+.PHONY: help setup doctor models ollama up down status logs cleanup check run test keys export import seed kb-sync models-check eval publish chat chat-list chat-continue twin prep super memory migrate-status upgrade downgrade graph-update graph-query graph-explain graph-path deploy-env deploy-check
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/'
@@ -33,14 +33,47 @@ logs: ## Container logs (ARGS="service --follow")
 cleanup: ## Dry run; ARGS="--apply" deletes containers, volumes, caches
 	$(PY) scripts.cleanup $(ARGS)
 
-ollama: ## Native Ollama: ARGS="status" | "install" | "start" | "stop" | "pull [model]" | "smoke"
+ollama: ## Native Ollama: ARGS="status" | "logs" | "install" | "start" | "stop" | "pull [model]" | "smoke"
 	$(PY) scripts.ollama $(ARGS)
+
+graph-update: ## Rebuild the code graph (graphify update .)
+	$(PY) scripts.graph update $(ARGS)
+
+graph-query: ## Query the code graph: ARGS="your question"
+	$(PY) scripts.graph query $(ARGS)
+
+graph-explain: ## Explain a concept from the graph: ARGS="concept"
+	$(PY) scripts.graph explain $(ARGS)
+
+graph-path: ## Path between two symbols: ARGS="A B"
+	$(PY) scripts.graph path $(ARGS)
 
 keys: ## API keys: ARGS="create NAME --scope admin" | "list" | "revoke NAME"
 	$(PY) scripts.keys $(ARGS)
 
 seed: ## Fake-persona demo data via the API: dry run; ARGS="--apply" | "--remove --apply"
 	$(PY) scripts.seed $(ARGS)
+
+models-check: ## Are the cloud model ids in config/models.yaml still served? (ids only; keys never printed)
+	$(PY) scripts.models_check $(ARGS)
+
+publish: ## Mirror kb_public to the public Qdrant + export canary hashes and resume (dry run; ARGS="--apply")
+	$(PY) scripts.publish $(ARGS)
+
+deploy-env: ## Pull the deployed GCP secrets into .env.prod (values never printed)
+	$(PY) scripts.deploy_env pull
+
+deploy-check: ## Verify the deployed config locally (.env.prod deps + optional live URL): ARGS="--url <url> --public-key <key>"
+	$(PY) scripts.deploy_env check $(ARGS)
+
+release-bump: ## One bump per develop->main release PR: ARGS="patch|minor|major|absolute X.Y.Z"
+	$(PY) scripts.version_bump $(ARGS)
+
+eval: ## Evaluate the public assistant with real models (red-team + golden set); ARGS="--limit 5"
+	$(PY) scripts.eval $(ARGS)
+
+kb-sync: ## Build/refresh the KB from vault/kb/manifest.yaml: dry run; ARGS="--apply" | "cards --apply" | "--reset --apply"
+	$(PY) scripts.kb_sync $(ARGS)
 
 export: ## Encrypted vault archive under vault/exports/ (prompts for a passphrase)
 	$(PY) scripts.export $(ARGS)
@@ -56,6 +89,12 @@ chat: ## Chat with the vault in the terminal (new conversation; ARGS="rename X n
 
 twin: ## Add knowledge in plain language (intake assistant; confirms before every write)
 	$(PY) scripts.chat twin $(ARGS)
+
+super: ## The super agent: one conversation that saves, answers and prepares (local only)
+	$(PY) scripts.chat super $(ARGS)
+
+prep: ## Interview and application answers in your voice (first person, from your vault)
+	$(PY) scripts.chat prep $(ARGS)
 
 chat-list: ## List conversations: name, mode, id, updated, turns, description
 	$(PY) scripts.chat list $(ARGS)
@@ -75,18 +114,10 @@ upgrade: ## Apply pending MongoDB migrations (the API also does this at every st
 downgrade: ## Roll back migrations newer than a version (dry run): ARGS="0003 --apply"
 	$(PY) scripts.migrate downgrade $(ARGS)
 
-# On Windows, Ctrl+C ends `make` before the server has finished stopping, so PowerShell prints
-# its prompt above the last shutdown lines and the cursor looks stuck: press Enter. Running the
-# server through scripts/dev.ps1 (no make in between) avoids it.
-ifeq ($(OS),Windows_NT)
-RUN_HINT = @echo "Tip (Windows): ./scripts/dev.ps1 run stops cleanly on Ctrl+C; with make, press Enter after it stops."
-else
-RUN_HINT = @true
-endif
-
-run: ## Run the API locally (reload)
-	$(RUN_HINT)
-	$(PY) app.main --reload
+# On Windows the server opens in its own PowerShell window (Ctrl+C there shows the full
+# shutdown, then a clean prompt); ARGS="--here" keeps it in this terminal. See scripts/run.py.
+run: ## Run the API locally (reload); Windows: in its own window
+	$(PY) scripts.run $(ARGS)
 
 test: ## Tests only (no coverage gate)
 	uv run pytest $(ARGS)

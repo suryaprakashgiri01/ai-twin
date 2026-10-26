@@ -10,6 +10,7 @@ import pytest
 from app.auth.keys import issue_key
 from app.services.memory import MemoryService
 from llm_orchestrator import Tier
+from tests.envelope import items, result
 from tests.memory.fakes import FakeAudit, FakeMemoryStore
 from tests.test_admin_api import _app, _client
 
@@ -35,11 +36,11 @@ async def test_memory_crud_is_audited(
         json={"text": "Use British spelling", "kind": "instruction"},
         headers=headers,
     )
-    assert created.status_code == 201 and created.json()["status"] == "active"
+    assert created.status_code == 201 and result(created)["status"] == "active"
     again = await client.post(
         "/admin/v1/memories", json={"text": "use british spelling"}, headers=headers
     )
-    assert again.status_code == 200 and again.json()["uses"] == 2
+    assert again.status_code == 200 and result(again)["uses"] == 2
 
     from app.services.digest import MemoryCandidate
 
@@ -49,23 +50,24 @@ async def test_memory_crud_is_audited(
         conversation_id="c1",
         tier=Tier.PRIVATE,
     )
-    pending = (await client.get("/admin/v1/memories?status=pending", headers=headers)).json()
+    pending = items(await client.get("/admin/v1/memories?filter=status:pending", headers=headers))
     mid = pending[0]["id"]
     accepted = await client.patch(
         f"/admin/v1/memories/{mid}", json={"status": "active"}, headers=headers
     )
-    assert accepted.json()["status"] == "active"
+    assert result(accepted)["status"] == "active"
     edited = await client.patch(
         f"/admin/v1/memories/{mid}", json={"text": "Short bullets"}, headers=headers
     )
-    assert edited.json()["text"] == "Short bullets"
+    assert result(edited)["text"] == "Short bullets"
     archived = await client.patch(
         f"/admin/v1/memories/{mid}", json={"status": "archived"}, headers=headers
     )
-    assert archived.json()["status"] == "archived"
-    assert (await client.delete(f"/admin/v1/memories/{mid}", headers=headers)).status_code == 204
+    assert result(archived)["status"] == "archived"
+    deleted = await client.delete(f"/admin/v1/memories/{mid}", headers=headers)
+    assert result(deleted) == {"id": mid}
     assert (await client.delete(f"/admin/v1/memories/{mid}", headers=headers)).status_code == 404
-    listed = (await client.get("/admin/v1/memories", headers=headers)).json()
+    listed = items(await client.get("/admin/v1/memories", headers=headers))
     assert [m["text"] for m in listed] == ["Use British spelling"]
     actions = [(actor, action) for actor, action, _, _ in audit.entries]
     assert actions == [

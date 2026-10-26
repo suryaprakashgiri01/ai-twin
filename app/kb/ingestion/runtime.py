@@ -14,6 +14,7 @@ from app.core.config import Settings, ingest_max_bytes, split_list
 from app.core.llm import LLMServices
 from app.core.resources import Resources
 from app.kb.embedding import FastEmbedder
+from app.kb.ingestion.cards import CardWriter
 from app.kb.ingestion.fetch.github import GitHubFetcher, parse_allowlist
 from app.kb.ingestion.fetch.url import UrlFetcher
 from app.kb.ingestion.guard import EmployerGuard
@@ -21,6 +22,7 @@ from app.kb.ingestion.jobs import IngestionService, WorkerPool
 from app.kb.ingestion.labelling import Labeller
 from app.kb.ingestion.pipeline import Pipeline
 from app.kb.ingestion.redaction import Redactor, default_detector
+from app.kb.ingestion.tagging import Tagger
 
 
 @dataclass(frozen=True)
@@ -31,15 +33,20 @@ class Ingestion:
 
 def build_ingestion(settings: Settings, resources: Resources, llm: LLMServices) -> Ingestion:
     allowlist = split_list(settings.public_contact_allowlist)
+    owner_names = split_list(settings.owner_names) or [settings.public_owner_name]
     model_path = settings.models_dir / "spacy" / "en_core_web_md"
     token = settings.github_token.get_secret_value() if settings.github_token else None
     pipeline = Pipeline(
         store=resources.kb,
         vectors=resources.vectors,
         blobs=resources.blobs,
-        redactor=lambda: Redactor(default_detector(model_path), allowlist=allowlist),
+        redactor=lambda: Redactor(
+            default_detector(model_path), allowlist=allowlist, owner_names=owner_names
+        ),
         guard=EmployerGuard(settings.denylist_path),
         labeller=Labeller(llm.orchestrator, llm.classifier),
+        cards=CardWriter(llm.orchestrator),
+        tagger=Tagger(llm.orchestrator),
         embedder=FastEmbedder(settings.models_dir / "fastembed"),
         url_fetcher=UrlFetcher(
             max_bytes=ingest_max_bytes(settings),

@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
 from app.agents.checkpoint import MongoCheckpointSaver
 from app.agents.context import ContextBuilder, OwnerContext
@@ -35,6 +35,7 @@ from app.agents.graphs.intake import (
 from app.agents.graphs.owner import OwnerDeps, build_owner_graph
 from app.agents.prompts import intake as prompts
 from app.agents.streaming import sse
+from app.api.envelope import ApiModel
 from app.core.config import Settings
 from app.core.llm import LLMServices
 from app.core.resources import Resources
@@ -46,7 +47,7 @@ from app.services.admin_ops import AdminDeps, AdminOps
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.memory import MemoryService
 from app.services.naming import describe, fallback_name, slugify_title, unique_name
-from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook
+from app.services.owner_chat import ConversationMeta, MongoConversationIndex, TurnHook, custom_event
 from llm_orchestrator import Orchestrator, OrchestratorError, Role
 
 logger = structlog.get_logger(__name__)
@@ -55,14 +56,14 @@ HISTORY_TURNS = 6
 TURN_ROUTE = "intake"
 
 
-class AssistantRequest(BaseModel):
+class AssistantRequest(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     message: str = Field(min_length=1, max_length=4000)
 
 
-class PendingDraft(BaseModel):
+class PendingDraft(ApiModel):
     """A summary waiting for the owner's yes: a draft, a suggestion, or a delete's retype."""
 
     kind: Literal["draft", "suggestion", "retype"]
@@ -74,7 +75,7 @@ class PendingDraft(BaseModel):
     reask: bool = False
 
 
-class AssistantState(BaseModel):
+class AssistantState(ApiModel):
     conversation_id: str
     mode: ConversationMode
     pending: PendingDraft | None = None
@@ -211,7 +212,7 @@ class IntakeService:
             before = await self._graph.aget_state(config)
         except Exception as exc:
             logger.error("intake state unreadable", error_type=type(exc).__name__)
-            yield "error", self._error(cid, ErrorCode.DEPENDENCY_UNAVAILABLE, "State unavailable")
+            yield "error", self._error(cid, ErrorCode.SERVICE_UNAVAILABLE, "State unavailable")
             return
         resumed = bool(before.interrupts)
         yield "meta", {"conversation_id": cid, "mode": "intake", "resumed": resumed}
@@ -234,7 +235,7 @@ class IntakeService:
         ) as trace:
             try:
                 async for item in self._graph.astream(graph_input, config, stream_mode="custom"):
-                    yield "token", {"text": item["token"]}
+                    yield custom_event(item)
                 after = await self._graph.aget_state(config)
             except AppError as exc:
                 trace.tag("status:error")
@@ -380,6 +381,7 @@ def build_intake(
         owner_graph=build_owner_graph(owner, checkpointer=False),
         conversations=resources.conversations,
         memory=memory,
+        models=llm.agents.live("intake"),
     )
     service = IntakeService(
         build_intake_graph(deps, saver),

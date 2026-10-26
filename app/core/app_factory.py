@@ -6,38 +6,53 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.agents.context import ContextBuilder
-from app.api.routes import health, public
+from app.api.routes import console, health, public
 from app.api.routes.admin import build_admin_router
 from app.core.config import Settings, get_settings
 from app.core.llm import LLMServices, build_llm
 from app.core.logging import setup_logging
 from app.core.resources import Resources, ResourcesFactory, open_resources
 from app.core.telemetry import setup_telemetry, shutdown_telemetry
+from app.exceptions.codes import catalog_markdown
 from app.exceptions.handlers import register_exception_handlers
 from app.kb.embedding import Embedder, FastEmbedder
 from app.kb.ingestion.runtime import build_ingestion, run_ingestion
 from app.leads.outbox import build_outbox
 from app.leads.service import build_lead_service
 from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.security_headers import CONSOLE_PREFIX, SecurityHeadersMiddleware
 from app.observability import metrics
 from app.observability.tracing import NOOP, Tracing, build_tracing, install
 from app.security.worker import build_alert_worker
+from app.services.agent_settings import AgentSettingsService
 from app.services.digest import ConversationDigester
 from app.services.health import DependencyCheck, default_checks
 from app.services.intake import build_intake, prune_checkpoints
 from app.services.memory import build_memory
 from app.services.model_overrides import OrchestratorOverrides, OverrideStore
-from app.services.owner_chat import MongoConversationIndex, build_owner_chat_from, owner_deps
+from app.services.owner_chat import (
+    ConversationDirectory,
+    MongoConversationIndex,
+    build_owner_chat_from,
+    owner_deps,
+)
+from app.services.prep import build_prep
 from app.services.public_chat import build_public_chat, prune_public, public_checkpointer
 from app.services.resume import resume_provider
 from app.services.security_events import recording_exhausted_chains
+from app.services.super_agent import build_super
 
 logger = structlog.get_logger(__name__)
+
+# The web console: plain HTML, CSS and ES modules, no build step.
+CONSOLE_DIR = Path(__file__).resolve().parents[1] / "ui" / "static"
 
 SHUTDOWN_FLUSH_SECONDS = 5.0
 
@@ -83,7 +98,8 @@ def create_app(
             "**Tracing:** every response carries `X-Request-ID` and `X-Trace-ID` (the trace id "
             "on the request's log lines and its Langfuse trace); send `X-Session-ID` to group "
             "requests.\n\n"
-            '**Errors:** always `{"error": {code, message, request_id, details?}}`.'
+            '**Errors:** always `{"status": "error", "message", "result": null, '
+            '"error": {code, requestId, details?}}`. Codes:\n\n' + catalog_markdown()
         ),
         lifespan=lifespan,
         # Our middleware owns the server span: FastAPI's native one would adopt a caller's
@@ -97,13 +113,17 @@ def create_app(
     app.state.llm = llm or build_llm(settings, OrchestratorOverrides(lambda: _overrides(app)))
 
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(metrics.router)
     app.include_router(public.router)
+    app.include_router(console.router)
     # The public deployment has no admin surface at all, not merely a locked one.
     if settings.deployment_profile == "vault":
         app.include_router(build_admin_router())
+    # Last, so no API route is ever shadowed by a file. Every data call carries its key.
+    app.mount(CONSOLE_PREFIX, StaticFiles(directory=CONSOLE_DIR, html=True), name="console")
     return app
 
 
@@ -116,6 +136,10 @@ async def _start_services(
     )
     # Ingestion workers and owner chat run in the vault only.
     if settings.deployment_profile == "vault":
+        app.state.agent_settings = AgentSettingsService(
+            app.state.llm.agents, resources.agent_overrides
+        )
+        await app.state.agent_settings.load()
         ingestion = build_ingestion(settings, resources, app.state.llm)
         app.state.ingestion = await stack.enter_async_context(run_ingestion(ingestion))
         # One embedder for indexing and search, so its models load once.
@@ -150,6 +174,25 @@ async def _start_services(
             memory=app.state.memory,
         )
         app.state.intake = intake
+        app.state.prep = build_prep(
+            settings,
+            resources,
+            app.state.llm,
+            owner,
+            index=MongoConversationIndex(),
+            context=context,
+            on_turn=digester.after_turn,
+        )
+        app.state.super_agent = build_super(
+            settings,
+            resources,
+            app.state.llm,
+            owner,
+            intake,
+            index=MongoConversationIndex(),
+            context=context,
+            on_turn=digester.after_turn,
+        )
         await prune_checkpoints(saver, settings.intake_checkpoint_days)
     else:
         embedder = FastEmbedder(settings.models_dir / "fastembed")
@@ -174,6 +217,10 @@ async def _start_services(
         app.state.resume,
         leads=app.state.leads,
         checkpointer=saver,
+    )
+    # Conversation browsing for the console, on both profiles (a public key sees its own).
+    app.state.conversation_directory = ConversationDirectory(
+        MongoConversationIndex(), resources.conversations
     )
 
 

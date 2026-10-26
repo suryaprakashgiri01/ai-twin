@@ -20,6 +20,7 @@ from app.kb import canaries
 from app.kb.ingestion.pipeline import Pipeline
 from app.kb.store import DocumentView, KbStore
 from app.kb.vectors import PUBLIC_COLLECTION, VectorIndex, VectorPoint, collection_for, point_id
+from llm_orchestrator import Tier
 
 logger = structlog.get_logger(__name__)
 
@@ -56,6 +57,8 @@ class Publisher:
 
     async def publish(self, document_id: PydanticObjectId) -> tuple[DocumentView, int]:
         doc = await self.get(document_id)
+        if doc.local_only:
+            raise _conflict("This document was released for local use only; it can't be published")
         if doc.tier != "public":
             raise _conflict(f"Only public documents can be published (tier is {doc.tier})")
         if doc.review_status != "approved":
@@ -94,6 +97,8 @@ class Publisher:
     async def update(self, document_id: PydanticObjectId, changes: dict[str, Any]) -> DocumentView:
         doc = await self.get(document_id)
         tier = changes.pop("tier", None)
+        if doc.local_only and tier is not None and Tier.parse(tier) < Tier.CONFIDENTIAL:
+            raise _conflict("A local-only document stays confidential (local models only)")
         if changes:
             await self.store.update_document(doc.id, **changes)
             payload = {k: v for k, v in changes.items() if k in ("title", "category")}
@@ -183,13 +188,21 @@ class Publisher:
             canary=bool(point.payload.get("canary")),
         )
 
-    async def release(self, document_id: PydanticObjectId) -> tuple[DocumentView, int]:
-        """Owner says a quarantined document is fine: label and index it now."""
+    async def release(
+        self, document_id: PydanticObjectId, *, local_only: bool = True
+    ) -> tuple[DocumentView, int]:
+        """Owner says a quarantined document is fine: label and index it now.
+
+        `local_only` (the default) indexes it at confidential, so only local models read it,
+        and refuses publishing for good; False releases it at the tier its labels give."""
         doc = await self.get(document_id)
         if doc.review_status != "quarantined":
             raise _conflict("Only quarantined documents can be released")
-        await self.store.update_document(doc.id, review_status="pending", quarantine_rules=[])
-        indexed = await self.pipeline.relabel_and_index(await self.get(doc.id))
+        await self.store.update_document(
+            doc.id, review_status="pending", quarantine_rules=[], local_only=local_only
+        )
+        floor = Tier.CONFIDENTIAL if local_only else None
+        indexed = await self.pipeline.relabel_and_index(await self.get(doc.id), min_tier=floor)
         return await self.get(doc.id), indexed
 
     async def delete(self, document_id: PydanticObjectId) -> None:

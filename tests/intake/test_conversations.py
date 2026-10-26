@@ -434,3 +434,25 @@ def test_missing_kind_lists_the_allowed_values() -> None:
     kinds = "invite, application, hr_call, assessment, interview, offer, rejection or withdrawal"
     assert f"- kind: {kinds}" in text
     assert "owner" not in text and "your words" in text
+
+
+async def test_a_short_reply_fills_the_one_field_that_was_asked(make_twin: MakeTwin) -> None:
+    twin = make_twin(
+        [
+            extract(
+                "add_record",
+                kind="interview",
+                company="Acme Widgets",
+                role="AI Engineer",
+                date="2026-10-16",
+            ),
+            extract("add_record"),  # the model maps nothing from the bare answer
+        ]
+    )
+    first = await twin.say(
+        "I have an interview with Acme Widgets for an AI Engineer role on 2026-10-16"
+    )
+    assert first.done["status"] == "asked" and "- stage:" in first.text
+    second = await twin.say("It is a technical screen.", first.conversation_id)
+    assert second.draft is not None
+    assert second.draft["payload"]["stage"] == "technical screen"

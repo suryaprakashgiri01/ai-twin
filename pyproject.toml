@@ -51,8 +51,15 @@ dev = [
     "types-dateparser>=1.4.3.20260907",
     "aiosmtpd>=1.4",
 ]
+# The public deployment's image (Dockerfile): retrieval and reranking only, no ingestion stack.
+public = [
+    "fastembed>=0.6",
+    "onnxruntime>=1.20",
+]
 vault = [
     "fastembed>=0.6",
+    # Local classifier, the open-source alternative to Jev (FF_LAYA_ENABLED); pulls PyTorch.
+    "laya>=0.4.13",
     "markitdown[docx,pptx,xlsx]>=0.1",
     "onnxruntime>=1.20",
     "presidio-analyzer>=2.2",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -12,17 +13,35 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
+DEFAULT_VERSION = "0.1.1"
 DEFAULT_MODEL_INVENTORY = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
+DEFAULT_AGENT_MODELS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
+
+# Environment-source toggle (`make deploy-env` / `make deploy-check` pull the GCP secret
+# values into `.env.prod` so local testing can run against the deployed configuration).
+# Empty (or unset) means the local `.env`; `.env.prod` means the deployed mirror values.
+# Deliberately closed: only these two files may ever be selected.
+_ENV_FILE_CHOICES = (".env", ".env.prod")
+
+
+def resolve_env_file() -> str:
+    """Which env file Settings reads, from `AI_TWIN_ENV_FILE` (empty = the local `.env`)."""
+    choice = os.getenv("AI_TWIN_ENV_FILE", "").strip()
+    if not choice:
+        choice = ".env"
+    if choice not in _ENV_FILE_CHOICES:
+        raise ValueError(f"AI_TWIN_ENV_FILE must be one of {_ENV_FILE_CHOICES}, got {choice!r}")
+    return choice
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=resolve_env_file(), extra="ignore")
 
     # --- service ---------------------------------------------------------
     app_env: Literal["local", "test", "dev", "prod"] = "local"
     # `vault` holds every tier and the admin routes; `public` serves published chunks only.
     deployment_profile: Literal["vault", "public"] = "vault"
-    service_version: str = "0.1.0"
+    service_version: str = DEFAULT_VERSION
     host: str = "127.0.0.1"
     port: int = 8000
     reload: bool = False
@@ -37,6 +56,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6380/0"
     qdrant_url: str = "http://localhost:6334"
     qdrant_api_key: SecretStr = SecretStr("")
+    # `make publish` mirrors kb_public here (the public deployment's Qdrant). Vault only.
+    publish_qdrant_url: str = ""
+    publish_qdrant_api_key: SecretStr = SecretStr("")
     # Startup gives MongoDB this long to answer before failing fast.
     mongodb_timeout_ms: int = Field(default=5000, gt=0)
     # Each readiness check gets this long before it counts as unavailable.
@@ -48,16 +70,27 @@ class Settings(BaseSettings):
     cerebras_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
+    # Paid APIs (public and private text only); their inventory entries start disabled.
+    anthropic_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
     ollama_base_url: str = ""
-    # Replaces the inventory's Ollama model name when set.
+    # Replace the inventory's Ollama model names when set: `ollama-local` and `ollama-qwen`.
     ollama_model: str = ""
+    ollama_quality_model: str = ""
+    ollama_max_model: str = ""
     typesafe_api_key: SecretStr | None = None
     jev_model: str = "jev-1.13.0"
+    # Laya: the open-source local alternative to Jev (`uv add laya`); may read up to
+    # confidential text because it runs on this machine. "cpu", "mps" or "cuda".
+    ff_laya_enabled: bool = False
+    laya_device: str = "cpu"
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     # Local models (Ollama) on a CPU can take far longer to start answering a long prompt.
     llm_local_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
     llm_max_attempts: int = Field(default=3, ge=1, le=10)
     model_inventory_path: Path = DEFAULT_MODEL_INVENTORY
+    # Which models each owner agent uses (auto, pins, prefer): see the file's header.
+    agent_models_path: Path = DEFAULT_AGENT_MODELS
     # Offline stand-in model for keyless local runs and tests.
     llm_mock_enabled: bool = False
     # --- storage -------------------------------------------------------------
@@ -83,6 +116,9 @@ class Settings(BaseSettings):
     denylist_path: Path = Path("vault/config/denylist.yaml")
     # Comma-separated strings redaction keeps: the owner's published e-mail, phone, name.
     public_contact_allowlist: str = ""
+    # Comma-separated spellings of the owner's own name, never redacted as a person (each part
+    # alone counts too). Empty means PUBLIC_OWNER_NAME.
+    owner_names: str = ""
     # Comma-separated `owner/name` list: the only repositories GitHub sync may read.
     github_sync_repos: str = ""
     github_token: SecretStr | None = None
@@ -95,7 +131,9 @@ class Settings(BaseSettings):
     owner_context_tokens: int = Field(default=3000, ge=200, le=32000)
     owner_history_turns: int = Field(default=8, ge=0, le=40)
     # How long POST /conversations/{id}/title waits before letting a slow model finish later.
-    title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=60)
+    title_refresh_wait_seconds: float = Field(default=8.0, ge=0, le=120)
+    # Longer wait when the conversation uses a local model only (intake / confidential).
+    title_refresh_wait_local_seconds: float = Field(default=20.0, ge=0, le=120)
     # A rolling summary is refreshed in the background after this many new turns (0: only on
     # exit); long chats send it ahead of the recent turns within SUMMARY_CONTEXT_TOKENS.
     summary_every_turns: int = Field(default=6, ge=0, le=200)

@@ -19,6 +19,7 @@ from app.core.config import Settings
 from app.services.public_chat import PublicChatRequest, PublicChatResponse, PublicPrepared
 from app.services.rate_limit import Limits, RateLimiter
 from tests.conftest import FakeCheck
+from tests.envelope import result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
 from tests.public.fakes import MemorySecurityEvents
 
@@ -89,7 +90,13 @@ async def test_public_profile_has_only_public_and_health_routes() -> None:
     paths = set(app.openapi()["paths"])
     assert not any(p.startswith("/admin") for p in paths)
     # /metrics is 404 there until METRICS_TOKEN is set (observability-alerts).
-    assert {p for p in paths if not p.startswith("/v1/")} == {"/healthz", "/readyz", "/metrics"}
+    # /livez is the Cloud Run-safe liveness twin of /healthz (its ingest claims /healthz).
+    assert {p for p in paths if not p.startswith("/v1/")} == {
+        "/healthz",
+        "/livez",
+        "/readyz",
+        "/metrics",
+    }
     async for client in client_for(app):
         whoami = await client.get("/admin/v1/whoami", headers={"X-API-Key": admin})
         assert whoami.status_code == 404
@@ -103,14 +110,14 @@ async def test_public_routes_need_public_read() -> None:
     async for client in client_for(app):
         missing = await client.post("/v1/chat", json={"message": "hello"})
         assert missing.status_code == 401
-        assert missing.json()["error"]["code"] == "AUTH_REQUIRED"
+        assert missing.json()["error"]["code"] == "UNAUTHENTICATED"
         wrong = await _post(client, "atw_not-a-key")
         assert wrong.status_code == 401
         forbidden = await _post(client, leads)
         assert forbidden.status_code == 403
         assert forbidden.json()["error"]["code"] == "FORBIDDEN"
         assert (await _post(client, reader)).status_code == 200
-        assert (await _post(client, reader, stream="false")).json()["answer"] == "hi"
+        assert result(await _post(client, reader, stream="false"))["answer"] == "hi"
 
 
 async def test_vault_profile_mounts_public_routes_too() -> None:

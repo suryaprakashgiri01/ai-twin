@@ -44,7 +44,10 @@ def api_handler(state: dict[str, Any]) -> httpx.MockTransport:
 
 
 def target(url: str = "http://127.0.0.1:11434", model: str = "llama3.2:1b") -> ollama.Target:
-    return ollama.target({"OLLAMA_BASE_URL": url, "OLLAMA_MODEL": model})
+    # One model for both entries keeps the scripted server's state to a single pull.
+    env = {"OLLAMA_BASE_URL": url, "OLLAMA_MODEL": model, "OLLAMA_QUALITY_MODEL": model}
+    env["OLLAMA_MAX_MODEL"] = model
+    return ollama.target(env)
 
 
 def test_target_and_model_defaults() -> None:
@@ -56,6 +59,12 @@ def test_target_and_model_defaults() -> None:
         True,
     )
     assert t.model == ollama.inventory_model() == "llama3.2:3b"
+    assert t.all_models == ("llama3.2:3b", "qwen2.5:7b", "qwen2.5:14b")
+    assert ollama.target({"OLLAMA_QUALITY_MODEL": "qwen2.5:3b"}).all_models == (
+        "llama3.2:3b",
+        "qwen2.5:3b",
+        "qwen2.5:14b",
+    )
     assert ollama.target({"OLLAMA_BASE_URL": "http://localhost:9999/"}).port == 9999
     with pytest.raises(ollama.OllamaError):
         ollama.target({"OLLAMA_BASE_URL": "not a url"})
@@ -77,6 +86,25 @@ def test_has_model_matches_latest_tag() -> None:
     assert ollama.has_model(["llama3.2:1b"], "llama3.2:1b")
     assert ollama.has_model(["qwen:latest"], "qwen")
     assert not ollama.has_model(["llama3.2:3b"], "llama3.2:1b")
+
+
+def test_launcher_and_log_uses_script_pid(tmp_path: Path) -> None:
+    pid = tmp_path / "ollama.pid"
+    pid.write_text("12345", encoding="utf-8")
+    who, log = ollama.launcher_and_log(pid_file=pid)
+    assert "script" in who
+    assert log == ollama.LOG_FILE
+
+
+def test_cmd_logs_tails_file(tmp_path: Path, capsys: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "server.log"
+    log.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    pid = tmp_path / "ollama.pid"
+    pid.write_text("1", encoding="utf-8")
+    monkeypatch.setattr(ollama, "LOG_FILE", log)
+    assert ollama.cmd_logs(lines=2, pid_file=pid) == 0
+    out = capsys.readouterr().out
+    assert "two" in out and "three" in out
 
 
 def test_start_does_nothing_when_a_server_answers(tmp_path: Path) -> None:
@@ -197,6 +225,7 @@ def test_doctor_reports_ollama() -> None:
     remote = doctor.check_ollama({"OLLAMA_BASE_URL": "http://10.0.0.5:11434", "OLLAMA_MODEL": "m"})
     assert remote[0].level == "fail"
     env = {"OLLAMA_BASE_URL": "http://127.0.0.1:11434", "OLLAMA_MODEL": "llama3.2:1b"}
+    env["OLLAMA_QUALITY_MODEL"] = env["OLLAMA_MAX_MODEL"] = "qwen2.5:7b"
     state: dict[str, Any] = {"up": False, "pulled": []}
     api = ollama.Api(ollama.target(env), api_handler(state))
     down = doctor.check_ollama(env, api)[0]
@@ -205,4 +234,27 @@ def test_doctor_reports_ollama() -> None:
     missing = doctor.check_ollama(env, api)[0]
     assert missing.level == "warn" and "pull" in missing.message
     state["pulled"].append("llama3.2:1b")
+    only_qwen = doctor.check_ollama(env, api)
+    assert len(only_qwen) == 1 and "qwen2.5:7b" in only_qwen[0].message
+    state["pulled"].append("qwen2.5:7b")
     assert doctor.check_ollama(env, api)[0].level == "ok"
+
+
+def test_optional_local_max_model_is_not_a_warning_and_not_pulled_by_default() -> None:
+    from scripts import doctor
+
+    env = {"OLLAMA_BASE_URL": "http://127.0.0.1:11434"}
+    t = ollama.target(env)
+    assert t.optional == ("qwen2.5:14b",)
+    assert "qwen2.5:14b" not in t.required_models
+    state: dict[str, Any] = {"up": True, "pulled": ["llama3.2:3b", "qwen2.5:7b"]}
+    api = ollama.Api(t, api_handler(state))
+    findings = doctor.check_ollama(env, api)
+    assert all(f.level == "ok" for f in findings)
+    assert any("optional" in f.message and "qwen2.5:14b" in f.message for f in findings)
+    assert ollama.cmd_status(t, api) == 0
+    state["pulled"] = []
+    assert ollama.cmd_pull(t, api, None) == 0
+    assert state["pulled"] == ["llama3.2:3b", "qwen2.5:7b"]  # the optional one is skipped
+    assert ollama.cmd_pull(t, api, "qwen2.5:14b") == 0
+    assert state["pulled"][-1] == "qwen2.5:14b"

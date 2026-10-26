@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from app.agents.models import AgentModels
 from app.core.config import Settings
 from llm_orchestrator import (
     InMemoryOverrideStore,
@@ -11,9 +12,16 @@ from llm_orchestrator import (
     Orchestrator,
     OrchestratorSettings,
     OverrideStore,
+    Profiler,
     ProviderSecrets,
 )
-from llm_orchestrator.classify import Classifier, FlaggedClassifier, JevClassifier, LLMClassifier
+from llm_orchestrator.classify import (
+    Classifier,
+    FlaggedClassifier,
+    JevClassifier,
+    LayaClassifier,
+    LLMClassifier,
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +29,10 @@ class LLMServices:
     orchestrator: Orchestrator
     classifier: Classifier
     overrides: OverrideStore
+    # Per-agent model choice from config/agents.yaml.
+    agents: AgentModels = field(default_factory=AgentModels.empty)
+    # Reads a request's complexity for the gateway (rules, plus Laya when enabled).
+    profiler: Profiler = field(default_factory=Profiler)
 
 
 def provider_secrets(settings: Settings) -> ProviderSecrets:
@@ -29,8 +41,18 @@ def provider_secrets(settings: Settings) -> ProviderSecrets:
         cerebras_api_key=settings.cerebras_api_key,
         gemini_api_key=settings.gemini_api_key,
         openrouter_api_key=settings.openrouter_api_key,
+        anthropic_api_key=settings.anthropic_api_key,
+        openai_api_key=settings.openai_api_key,
         ollama_base_url=settings.ollama_base_url or None,
-        ollama_model=settings.ollama_model or None,
+        ollama_models={
+            spec_id: model
+            for spec_id, model in (
+                ("ollama-local", settings.ollama_model),
+                ("ollama-qwen", settings.ollama_quality_model),
+                ("ollama-qwen-14b", settings.ollama_max_model),
+            )
+            if model
+        },
         mock_enabled=settings.llm_mock_enabled,
     )
 
@@ -60,7 +82,20 @@ def build_llm(settings: Settings, overrides: OverrideStore | None = None) -> LLM
         if key is not None and key.get_secret_value().strip()
         else None
     )
+    laya = LayaClassifier(device=settings.laya_device)
     classifier = FlaggedClassifier(
-        LLMClassifier(orchestrator), jev, enabled=lambda: settings.ff_jev_enabled
+        LLMClassifier(orchestrator),
+        jev,
+        enabled=lambda: settings.ff_jev_enabled,
+        laya=laya,
+        laya_enabled=lambda: settings.ff_laya_enabled,
     )
-    return LLMServices(orchestrator=orchestrator, classifier=classifier, overrides=overrides)
+    profiler = Profiler(laya, laya_enabled=settings.ff_laya_enabled)
+    agents = AgentModels.load(inventory, settings.agent_models_path)
+    return LLMServices(
+        orchestrator=orchestrator,
+        classifier=classifier,
+        overrides=overrides,
+        agents=agents,
+        profiler=profiler,
+    )

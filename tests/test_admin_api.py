@@ -15,6 +15,7 @@ from app.core.app_factory import create_app
 from app.core.config import Settings
 from app.db.documents import Scope
 from tests.conftest import FakeCheck
+from tests.envelope import items, result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
 
 
@@ -99,13 +100,13 @@ async def test_missing_unknown_revoked_and_wrong_scope(
     missing = await client.get(url)
     unknown = await client.get(url, headers={"X-API-Key": KEY_PREFIX + "nope"})
     wrong = await client.get(url, headers={"X-API-Key": leads})
-    assert (missing.status_code, missing.json()["error"]["code"]) == (401, "AUTH_REQUIRED")
-    assert (unknown.status_code, unknown.json()["error"]["code"]) == (401, "AUTH_INVALID")
+    assert (missing.status_code, missing.json()["error"]["code"]) == (401, "UNAUTHENTICATED")
+    assert (unknown.status_code, unknown.json()["error"]["code"]) == (401, "INVALID_API_KEY")
     assert (wrong.status_code, wrong.json()["error"]["code"]) == (403, "FORBIDDEN")
 
     await fakes.api_keys.revoke("leads", clock())
     revoked = await client.get("/admin/v1/whoami", headers={"X-API-Key": leads})
-    assert (revoked.status_code, revoked.json()["error"]["code"]) == (401, "AUTH_INVALID")
+    assert (revoked.status_code, revoked.json()["error"]["code"]) == (401, "INVALID_API_KEY")
 
 
 async def test_whoami_and_last_used_at_once_a_minute(
@@ -115,7 +116,7 @@ async def test_whoami_and_last_used_at_once_a_minute(
     key = await _key(fakes, "public:read", name="reader")
     headers = {"X-API-Key": key}
     response = await client.get("/admin/v1/whoami", headers=headers)
-    assert response.json() == {"name": "reader", "scopes": ["public:read"]}
+    assert result(response) == {"name": "reader", "scopes": ["public:read"]}
     clock.now += timedelta(seconds=30)
     await client.get("/admin/v1/whoami", headers=headers)
     assert len(fakes.api_keys.touches) == 1
@@ -140,21 +141,21 @@ async def test_override_put_is_validated_stored_and_audited(
     headers = {"X-API-Key": await _key(fakes, "admin", name="owner")}
     url = "/admin/v1/models/overrides"
 
-    first = await client.put(f"{url}/groq-llama-8b", json={"enabled": False}, headers=headers)
+    first = await client.put(f"{url}/groq-gpt-oss-20b", json={"enabled": False}, headers=headers)
     second = await client.put(
-        f"{url}/groq-llama-8b", json={"enabled": True, "max_tier": "public"}, headers=headers
+        f"{url}/groq-gpt-oss-20b", json={"enabled": True, "max_tier": "public"}, headers=headers
     )
     assert first.status_code == second.status_code == 200
-    assert second.json()["max_tier"] == "public"
+    assert result(second)["maxTier"] == "public"
 
     listed = await client.get(url, headers=headers)
-    assert [o["id"] for o in listed.json()] == ["groq-llama-8b"]
+    assert [o["id"] for o in items(listed)] == ["groq-gpt-oss-20b"]
 
     assert len(fakes.audit.entries) == 2
     entry: dict[str, Any] = fakes.audit.entries[1]
     assert entry["actor"] == "key:owner"
     assert entry["action"] == "model_override.put"
-    assert entry["target"] == "groq-llama-8b"
+    assert entry["target"] == "groq-gpt-oss-20b"
     assert entry["before"]["enabled"] is False
     assert entry["after"]["max_tier"] == "public"
 
@@ -162,12 +163,12 @@ async def test_override_put_is_validated_stored_and_audited(
 @pytest.mark.parametrize(
     ("model_id", "body"),
     [
-        ("groq-llama-8b", {"max_tier": "restricted"}),
-        ("groq-llama-8b", {"max_tier": "secret"}),
-        ("groq-llama-8b", {}),
-        ("groq-llama-8b", {"chain": ["mock"]}),
-        ("groq-llama-8b", {"enabled": True, "surprise": 1}),
-        ("groq-llama-8b", {"max_tier": "confidential"}),  # above the file's ceiling
+        ("groq-gpt-oss-20b", {"max_tier": "restricted"}),
+        ("groq-gpt-oss-20b", {"max_tier": "secret"}),
+        ("groq-gpt-oss-20b", {}),
+        ("groq-gpt-oss-20b", {"chain": ["mock"]}),
+        ("groq-gpt-oss-20b", {"enabled": True, "surprise": 1}),
+        ("groq-gpt-oss-20b", {"max_tier": "confidential"}),  # above the file's ceiling
         ("not-in-inventory", {"enabled": False}),
         ("role:classifier", {"enabled": True}),
         ("role:classifier", {"chain": []}),
@@ -184,7 +185,7 @@ async def test_override_put_rejects_bad_shapes(
         f"/admin/v1/models/overrides/{model_id}", json=body, headers=headers
     )
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert response.json()["error"]["code"] == "INVALID_INPUT"
     assert fakes.audit.entries == []
     assert fakes.overrides.rows == {}
 
@@ -198,4 +199,4 @@ async def test_role_chain_override(setup: tuple[httpx.AsyncClient, Fakes, Clock]
         headers=headers,
     )
     assert response.status_code == 200
-    assert response.json()["chain"] == ["mock", "ollama-local"]
+    assert result(response)["chain"] == ["mock", "ollama-local"]

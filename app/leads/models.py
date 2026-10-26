@@ -18,6 +18,8 @@ from typing import Annotated, Any, Literal, get_args
 from email_validator import EmailNotValidError, validate_email
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from app.api.envelope import ApiModel
+
 LeadSource = Literal["assistant", "form"]
 # `new` waits for (or has had) its email; the owner moves it on from there.
 LeadStatus = Literal["new", "reviewed", "replied", "archived", "suppressed", "failed"]
@@ -26,7 +28,7 @@ EmploymentType = Literal["full-time", "contract", "freelance"]
 TriageLabel = Literal["recruiter", "hiring_manager", "client", "collaboration", "spam", "other"]
 
 REQUIRED: tuple[str, ...] = ("role", "company", "message", "name", "email")
-OPTIONAL: tuple[str, ...] = ("location", "employment_type", "link")
+OPTIONAL: tuple[str, ...] = ("location", "employment_type", "link", "phone")
 FIELDS: tuple[str, ...] = REQUIRED + OPTIONAL
 LIMITS: Mapping[str, int] = {
     "name": 100,
@@ -37,7 +39,10 @@ LIMITS: Mapping[str, int] = {
     "location": 120,
     "employment_type": 20,
     "link": 500,
+    "phone": 25,
 }
+# A phone number: 10 to 15 digits, with optional +, spaces, dots, dashes and brackets.
+PHONE_DIGITS = (10, 15)
 EMPLOYMENT_TYPES: tuple[str, ...] = get_args(EmploymentType)
 _EMPLOYMENT_ALIASES: Mapping[str, str] = {
     "full time": "full-time",
@@ -97,6 +102,16 @@ def normalise_employment(value: str) -> str:
     return found
 
 
+def normalise_phone(value: str) -> str:
+    """The number as given, spacing tidied; raises ValueError unless it has 10 to 15 digits."""
+    text = " ".join(clean(value).split())
+    digits = re.sub(r"\D", "", text)
+    low, high = PHONE_DIGITS
+    if not re.fullmatch(r"\+?[\d\s().-]+", text) or not low <= len(digits) <= high:
+        raise ValueError(f"a phone number with {low} to {high} digits")
+    return text
+
+
 def normalise_link(value: str) -> str:
     text = clean(value)
     if not _LINK.match(text):
@@ -124,6 +139,7 @@ Location = Annotated[str, _text("location")]
 Email = Annotated[str, AfterValidator(normalise_email)]
 Employment = Annotated[str, AfterValidator(normalise_employment)]
 Link = Annotated[str, AfterValidator(normalise_link)]
+Phone = Annotated[str, AfterValidator(normalise_phone)]
 
 
 class LeadDraft(BaseModel):
@@ -139,9 +155,10 @@ class LeadDraft(BaseModel):
     location: str | None = None
     employment_type: str | None = None
     link: str | None = None
+    phone: str | None = None
 
 
-class LeadIn(BaseModel):
+class LeadIn(ApiModel):
     """A complete, valid lead: what is stored and emailed."""
 
     model_config = ConfigDict(extra="forbid")
@@ -154,6 +171,7 @@ class LeadIn(BaseModel):
     location: Location | None = None
     employment_type: Employment | None = None
     link: Link | None = None
+    phone: Phone | None = None
 
     def details(self) -> dict[str, str]:
         return {k: v for k in OPTIONAL if (v := getattr(self, k)) is not None}
@@ -175,6 +193,7 @@ _ADAPTERS: dict[str, TypeAdapter[str]] = {
     "location": TypeAdapter(Location),
     "employment_type": TypeAdapter(Employment),
     "link": TypeAdapter(Link),
+    "phone": TypeAdapter(Phone),
 }
 
 

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Sequence
 
 import uvicorn
 
 from app.core.app_factory import create_app
 from app.core.config import get_settings
+from app.core.logging import install_quiet_shutdown, quiet_shutdown_wanted
 
 app = create_app()
+
+if quiet_shutdown_wanted(os.environ, os.name):
+    # Both the server and the `--reload` supervisor import this module, so both go quiet.
+    install_quiet_shutdown()
 
 # Only code and config restart the server; vault/ (blobs, models, logs) and graphify-out/ change
 # all the time while it runs.

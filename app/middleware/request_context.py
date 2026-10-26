@@ -22,6 +22,7 @@ from app.core.context import set_request_id, set_session_id, set_user_id
 from app.core.telemetry import TRACE_ID_HEADER, current_trace_id, tracer
 from app.exceptions.handlers import render_unhandled
 from app.middleware.routing import route_template
+from app.middleware.security_headers import is_console
 from app.observability.metrics import observe_request
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -34,7 +35,7 @@ SESSION_ID_HEADER = "X-Session-ID"
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
 
 # Probe and scrape traffic would drown the access log at INFO.
-_QUIET_PATHS = frozenset({"/healthz", "/readyz"})
+_QUIET_PATHS = frozenset({"/healthz", "/readyz", "/livez"})
 
 logger = structlog.get_logger("app.access")
 
@@ -50,7 +51,8 @@ class RequestContextMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] != "http" or is_console(scope["path"]):
+            # Console files are static: no span, no request id, no access log line.
             await self.app(scope, receive, send)
             return
 

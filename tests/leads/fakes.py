@@ -10,7 +10,6 @@ from email.message import EmailMessage
 from typing import Any
 
 import httpx
-from bson import ObjectId
 
 from app.db.documents import LeadFields
 from app.leads.email import MailError
@@ -27,7 +26,7 @@ class MemoryLeadStore:
         self.leads: dict[str, StoredLead] = {}
 
     async def insert(self, fields: LeadFields) -> StoredLead:
-        lead = StoredLead(id=str(ObjectId()), **fields.model_dump())
+        lead = StoredLead(id=fields.uid, **fields.model_dump())
         self.leads[lead.id] = lead
         return lead
 

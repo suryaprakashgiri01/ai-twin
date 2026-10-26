@@ -19,6 +19,7 @@ from app.services.owner_chat import ConversationMeta, ConversationSummary, Owner
 from llm_orchestrator import Tier
 from tests.agent.harness import PRIV_TEXT, Agent, hit, make_agent, route_json
 from tests.conftest import FakeCheck
+from tests.envelope import items, result
 from tests.fakes import (
     MemoryApiKeyStore,
     MemoryAuditLog,
@@ -47,6 +48,7 @@ class MemoryIndex:
             name=name,
             description=description,
             channel=meta["channel"],
+            visitor_hash=meta.get("visitor_hash"),
             created_at=min(stamps),
             updated_at=max(stamps),
             message_count=max(turns, default=0),
@@ -56,16 +58,28 @@ class MemoryIndex:
         )
 
     async def get(self, conversation_id: str) -> ConversationMeta | None:
-        if conversation_id not in self.store.conversations:
+        meta = self.store.conversations.get(conversation_id)
+        if meta is None or meta.get("deleted_at") is not None:
             return None
         return self._meta(conversation_id)
 
     async def list_owner(self, limit: int) -> list[ConversationSummary]:
+        return await self.list_channel(limit, "owner")
+
+    async def list_channel(
+        self, limit: int, channel: str, visitor_hash: str | None = None
+    ) -> list[ConversationSummary]:
         metas = [
-            self._meta(c) for c, m in self.store.conversations.items() if m["channel"] == "owner"
+            self._meta(c)
+            for c, m in self.store.conversations.items()
+            if m.get("deleted_at") is None
+            and (channel == "all" or m["channel"] == channel)
+            and (visitor_hash is None or m.get("visitor_hash") == visitor_hash)
         ]
         metas.sort(key=lambda m: m.updated_at, reverse=True)
-        return [ConversationSummary(**m.model_dump(exclude={"channel"})) for m in metas[:limit]]
+        return [
+            ConversationSummary(**m.model_dump(exclude={"visitor_hash"})) for m in metas[:limit]
+        ]
 
     async def turns(self, conversation_id: str, limit: int) -> list[Turn]:
         return [t for _, t in sorted(self.store.turns.get(conversation_id, {}).items())][:limit]
@@ -154,13 +168,13 @@ async def test_sse_order_meta_first_done_last(api: ChatApi) -> None:
     assert names[0] == "meta" and names[-1] == "done"
     assert names == ["meta", "token", "token", "sources", "done"]  # answer + withheld note
     meta, done = events[0][1], events[-1][1]
-    assert meta["route"] == "kb_search" and meta["max_tier"] == "confidential"
+    assert meta["route"] == "kb_search" and meta["maxTier"] == "confidential"
     sources = dict(events)["sources"]
     assert sources["citations"] == ["priv"]
     assert sources["sources"][0]["tier"] == "private"
     assert done["citations"] == ["priv"] and done["tier"] == "private"
     assert done["withheld"] == 1 and done["model"] == "cloud" and done["seq"] == 2
-    assert done["conversation_id"] == meta["conversation_id"]
+    assert done["conversationId"] == meta["conversationId"]
 
 
 async def test_stream_false_returns_the_same_fields(api: ChatApi) -> None:
@@ -168,9 +182,9 @@ async def test_stream_false_returns_the_same_fields(api: ChatApi) -> None:
         "/admin/v1/chat?stream=false", json={"message": Q}, headers=api.headers
     )
     assert response.status_code == 200
-    body = response.json()
+    body = result(response)
     assert body["answer"].startswith("Raft [1].")
-    assert body["citations"] == ["priv"] and body["sources"][0]["document_id"] == "priv"
+    assert body["citations"] == ["priv"] and body["sources"][0]["documentId"] == "priv"
     assert {
         "route",
         "query",
@@ -178,7 +192,7 @@ async def test_stream_false_returns_the_same_fields(api: ChatApi) -> None:
         "model",
         "withheld",
         "incomplete",
-        "latency_ms",
+        "latencyMs",
         "tokens",
         "seq",
     } <= set(body)
@@ -186,23 +200,34 @@ async def test_stream_false_returns_the_same_fields(api: ChatApi) -> None:
 
 
 async def test_follow_up_and_conversation_routes(api: ChatApi) -> None:
-    first = await api.sse({"message": Q, "max_tier": "private"})
-    conversation_id = first[0][1]["conversation_id"]
+    first = await api.sse({"message": Q, "maxTier": "private"})
+    conversation_id = first[0][1]["conversationId"]
     again = await api.sse(
-        {"message": "thanks", "conversation_id": conversation_id, "max_tier": "private"}
+        {"message": "thanks", "conversationId": conversation_id, "maxTier": "private"}
     )
     assert again[-1][1]["seq"] == 4
     listed = await api.client.get("/admin/v1/conversations", headers=api.headers)
-    assert [c["id"] for c in listed.json()] == [conversation_id]
+    assert [c["id"] for c in items(listed)] == [conversation_id]
     detail = await api.client.get(f"/admin/v1/conversations/{conversation_id}", headers=api.headers)
-    turns = detail.json()["turns"]
+    turns = result(detail)["turns"]
     assert [t["role"] for t in turns] == ["user", "assistant", "user", "assistant"]
     assert turns[1]["citations"] == ["priv"] and turns[1]["route"] == "kb_search"
+    trace = turns[1]["trace"]  # the console replays how the answer was made
+    assert trace["agents"] == ["ask"] and trace["models"] == ["cloud"]
+    assert trace["sources"][0] == {
+        "index": 1,
+        "documentId": "priv",
+        "title": "Doc priv",
+        "category": trace["sources"][0]["category"],
+        "tier": "private",
+    }
+    assert trace["sources"][0]["category"]  # kept for grouping in the console
+    assert turns[0]["trace"] is None
 
 
 async def test_history_reloads_after_a_redis_flush(api: ChatApi) -> None:
     first = await api.sse({"message": Q})
-    conversation_id = first[0][1]["conversation_id"]
+    conversation_id = first[0][1]["conversationId"]
     await api.agent.redis.flushall()
     await api.sse({"message": "and the one before that?", "conversation_id": conversation_id})
     router_prompt = "\n".join(str(m.content) for m in api.agent.factory.models["router"].seen[-1])
@@ -238,13 +263,13 @@ async def test_mid_stream_failure_ends_with_error_event() -> None:
         assert [n for n, _ in events] == ["meta", "token", "error"]
         error = events[-1][1]
         assert error["code"] == "STREAM_INTERRUPTED" and error["incomplete"] is True
-        stored = await agent.history(error["conversation_id"])
+        stored = await agent.history(error["conversationId"])
         assert stored[-1].incomplete is True and stored[-1].content == "Raft "
-        body = (
+        body = result(
             await api.client.post(
                 "/admin/v1/chat?stream=false", json={"message": Q}, headers=api.headers
             )
-        ).json()
+        )
         assert body["incomplete"] is True and body["error"]["code"] == "STREAM_INTERRUPTED"
 
 
@@ -268,34 +293,34 @@ async def test_chat_without_the_service_is_unavailable() -> None:
 
 
 async def test_new_conversations_get_unique_names(api: ChatApi) -> None:
-    first = (await api.sse({"message": Q}))[0][1]["conversation_id"]
-    second = (await api.sse({"message": Q}))[0][1]["conversation_id"]
+    first = (await api.sse({"message": Q}))[0][1]["conversationId"]
+    second = (await api.sse({"message": Q}))[0][1]["conversationId"]
     listed = {
         c["id"]: c
-        for c in (await api.client.get("/admin/v1/conversations", headers=api.headers)).json()
+        for c in items(await api.client.get("/admin/v1/conversations", headers=api.headers))
     }
     base = listed[first]["name"]
     assert base and listed[second]["name"] == f"{base}-2"
     assert listed[first]["description"] == Q[:100]
     found = await api.client.get(f"/admin/v1/conversations/by-name/{base}", headers=api.headers)
-    assert found.status_code == 200 and found.json()["id"] == first
+    assert found.status_code == 200 and result(found)["id"] == first
     missing = await api.client.get("/admin/v1/conversations/by-name/nope", headers=api.headers)
     assert missing.status_code == 404
 
 
 async def test_rename_validates_and_refuses_taken_names(api: ChatApi) -> None:
-    first = (await api.sse({"message": Q}))[0][1]["conversation_id"]
-    second = (await api.sse({"message": "another question entirely"}))[0][1]["conversation_id"]
+    first = (await api.sse({"message": Q}))[0][1]["conversationId"]
+    second = (await api.sse({"message": "another question entirely"}))[0][1]["conversationId"]
     url = f"/admin/v1/conversations/{second}"
     renamed = await api.client.patch(
         url, json={"name": "raft-notes", "description": "Raft study"}, headers=api.headers
     )
     assert renamed.status_code == 200
-    assert renamed.json()["name"] == "raft-notes"
-    assert renamed.json()["description"] == "Raft study"
-    first_name = (
+    assert result(renamed)["name"] == "raft-notes"
+    assert result(renamed)["description"] == "Raft study"
+    first_name = result(
         await api.client.get(f"/admin/v1/conversations/{first}", headers=api.headers)
-    ).json()["name"]
+    )["name"]
     taken = await api.client.patch(url, json={"name": first_name}, headers=api.headers)
     assert taken.status_code == 409 and taken.json()["error"]["code"] == "CONFLICT"
     invalid = await api.client.patch(url, json={"name": "Not A Slug"}, headers=api.headers)

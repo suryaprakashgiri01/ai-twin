@@ -7,13 +7,15 @@ are raised before the first chunk; a failure after it raises `MidStreamError`.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from langchain_core.messages import BaseMessage
 
-from llm_orchestrator import Orchestrator, Prefer, Role, Tier
+from llm_orchestrator import Need, Orchestrator, Prefer, Role, Tier
+
+Thinking = Callable[[str], None]
 
 
 @dataclass
@@ -22,6 +24,8 @@ class Generation:
     input_tokens: int = 0
     output_tokens: int = 0
     fallback_used: bool = False
+    # A reasoning model's thinking (owner channels show it; never part of the answer).
+    thinking: list[str] = field(default_factory=list)
 
 
 class MidStreamError(Exception):
@@ -42,6 +46,8 @@ class AnswerGenerator(Protocol):
         *,
         model: str | None = None,
         prefer: Prefer | None = None,
+        need: Need | None = None,
+        on_thinking: Thinking | None = None,
     ) -> AsyncIterator[str]: ...
 
 
@@ -59,10 +65,16 @@ class ChatGenerator:
         *,
         model: str | None = None,
         prefer: Prefer | None = None,
+        need: Need | None = None,
+        on_thinking: Thinking | None = None,
     ) -> AsyncIterator[str]:
         result = await self._orchestrator.chat(
-            Role.GENERATOR, tier, messages, model=model, prefer=prefer, privileged=True
+            Role.GENERATOR, tier, messages, model=model, prefer=prefer, privileged=True, need=need
         )
+        if result.thinking:
+            out.thinking.append(result.thinking)
+            if on_thinking is not None:
+                on_thinking(result.thinking)
         out.model_id = result.model_id
         out.input_tokens = result.usage.input_tokens
         out.output_tokens = result.usage.output_tokens

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import structlog
 
+from llm_orchestrator.gateway import Need, fit_order
 from llm_orchestrator.inventory import EffectiveInventory
 from llm_orchestrator.policy import Availability, eligible, rejection
 from llm_orchestrator.types import (
@@ -38,6 +39,7 @@ def select(
     model: str | None = None,
     prefer: Prefer | None = None,
     privileged: bool = False,
+    need: Need | None = None,
 ) -> Selection:
     """Eligible models for this call, best first.
 
@@ -64,9 +66,22 @@ def select(
         return Selection(role=role, tier=tier, models=[spec], pinned=True)
 
     chain = [s for s in inventory.chain(role) if eligible(s, role, tier, available)]
+    if need is not None and chain:
+        # The gateway reorders what policy already allowed; it never adds a model.
+        chain = fit_order(chain, need)
     if prefer is not None:
-        # Stable sort: preferred models first, chain order kept within each group.
+        # Stable sort: preferred models first, the (fit) order kept within each group.
         chain.sort(key=lambda s: prefer not in s.tags)
     if not chain:
         raise NoEligibleModelError(role, tier)
+    if need is not None:
+        logger.info(
+            "gateway",
+            role=role.value,
+            tier=tier.label,
+            need=need.summary(),
+            need_source=need.source,
+            prefer=prefer,
+            first=[s.id for s in chain[:3]],
+        )
     return Selection(role=role, tier=tier, models=chain)

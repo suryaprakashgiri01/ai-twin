@@ -9,7 +9,6 @@ Payload keys are the owner-facing field names. Document and record actions name 
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -19,8 +18,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agents.intake.batch import RecordsBatchIn, batch_summary
 from app.agents.intake.drafts import InboxError, resolve_inbox, show_day
-from app.db.documents import TERMINAL_STATUSES
+from app.db.documents import TERMINAL_STATUSES, UID_PATTERN
 from app.exceptions import AppError, ErrorCode
 from app.kb.ingestion.labelling import CATEGORIES
 from app.services.admin_ops import (
@@ -30,6 +30,7 @@ from app.services.admin_ops import (
     FileIn,
     GitHubIn,
     MetaIn,
+    ReleaseIn,
     SourceStatus,
     TextIn,
     UrlsIn,
@@ -41,7 +42,7 @@ Payload = dict[str, Any]
 Outcome = dict[str, Any]
 
 # An id anywhere in the reference: the model often copies a whole line from an earlier reply.
-_OBJECT_ID = re.compile(r"\b[0-9a-f]{24}\b")
+_PUBLIC_ID = UID_PATTERN
 PRONOUNS = frozenset(
     {
         "it",
@@ -122,6 +123,8 @@ class ActionSpec:
         return {k: v for k, v in payload.items() if k in keys}
 
     def summary(self, payload: Payload) -> str:
+        if self.name == "add_records" and isinstance(payload.get("records"), list):
+            return batch_summary(list(payload["records"]))
         lines = [self.label]
         if self.target == "document" and payload.get("document_title"):
             lines.append(f"  document: {payload['document_title']} ({payload.get('document_id')})")
@@ -149,6 +152,8 @@ def _show(key: str, value: Any, spec: ActionSpec) -> str:
         return show_day(value)
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in value.items()) or "(none)"
     text = str(value)
     if key == "body" and len(text) > BODY_PREVIEW:
         return text[: BODY_PREVIEW - 1] + "…"
@@ -264,7 +269,7 @@ async def _ingest_file(ctx: RunContext, p: Payload) -> Outcome:
     try:
         path = resolve_inbox(ctx.inbox, str(p["filename"]))
     except InboxError as exc:
-        raise AppError(ErrorCode.VALIDATION_ERROR, str(exc)) from exc
+        raise AppError(ErrorCode.INVALID_INPUT, str(exc)) from exc
     limit = ctx.ops.max_file_bytes()
     if path.stat().st_size > limit:
         raise AppError(
@@ -289,7 +294,12 @@ def _record_line(record: RecordOut) -> str:
     appear here; ask-chat record answers never include it."""
     extra = "".join(
         f" · {label}{value}"
-        for label, value in (("via ", record.platform), ("contact: ", record.contact))
+        for label, value in (
+            ("via ", record.platform),
+            ("contact: ", record.contact),
+            ("at ", record.location),
+            ("", record.work_mode),
+        )
         if value
     )
     return (
@@ -304,6 +314,18 @@ async def _add_record(ctx: RunContext, p: Payload) -> Outcome:
         "action": "add_record",
         "message": f"Saved {_record_line(record)}",
         "record": record.model_dump(mode="json"),
+    }
+
+
+async def _add_records(ctx: RunContext, p: Payload) -> Outcome:
+    batch = RecordsBatchIn.model_validate(p)
+    records = await ctx.ops.create_records(batch.records, ctx.actor)
+    lines = "; ".join(_record_line(r) for r in records)
+    return {
+        "action": "add_records",
+        "message": f"Saved {len(records)} records: {lines}",
+        "records": [r.model_dump(mode="json") for r in records],
+        "record": records[0].model_dump(mode="json") if records else None,
     }
 
 
@@ -397,6 +419,12 @@ async def _approve(ctx: RunContext, p: Payload) -> Outcome:
     return _doc_outcome("approve", "Approved", await ctx.ops.approve(p["document_id"], ctx.actor))
 
 
+async def _release(ctx: RunContext, p: Payload) -> Outcome:
+    """Quarantined → usable by local models only. Never publishable afterwards."""
+    result = await ctx.ops.release(p["document_id"], ctx.actor, ReleaseIn(local_only=True))
+    return _doc_outcome("release", "Released for local use", result.document, chunks=result.chunks)
+
+
 async def _publish(ctx: RunContext, p: Payload) -> Outcome:
     """The owner asked to publish and confirmed a draft that said what would change: a private
     document is made public and approved first. Confidential and restricted ones never get here
@@ -444,7 +472,7 @@ async def _delete_document(ctx: RunContext, p: Payload) -> Outcome:
 
 def _memory(ctx: RunContext) -> MemoryService:
     if ctx.memory is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Owner memory is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Owner memory is not running")
     return ctx.memory
 
 
@@ -521,13 +549,42 @@ UPDATE_RECORD = ActionSpec(
         "notes": "new notes",
         "platform": "new platform (Naukri, LinkedIn, Instahyre, a referral, ...)",
         "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
+        "location": "where the role is based (city, region, country)",
+        "work_mode": "onsite, remote or hybrid",
+        "company_type": "product, service, research, startup or other",
+        "extras": "other short attributes the owner named (referral, salary range, …)",
     },
     required=("record",),
-    needs_any=("company", "role", "stage", "date", "notes", "platform", "contact"),
+    needs_any=(
+        "company",
+        "role",
+        "stage",
+        "date",
+        "notes",
+        "platform",
+        "contact",
+        "location",
+        "work_mode",
+        "company_type",
+        "extras",
+    ),
     model=RecordChanges,
-    model_keys=("company", "role", "stage", "date", "notes", "platform", "contact"),
+    model_keys=(
+        "company",
+        "role",
+        "stage",
+        "date",
+        "notes",
+        "platform",
+        "contact",
+        "location",
+        "work_mode",
+        "company_type",
+        "extras",
+    ),
     target="record",
     date_fields=("date",),
+    lower_fields=("work_mode", "company_type"),
     resolved=_RECORD_RESOLVED,
     run=_update_record,
 )
@@ -645,13 +702,35 @@ _SPECS = [
             "notes": "anything else the owner said about it",
             "platform": "where it came from: Naukri, LinkedIn, Instahyre, a referral, ...",
             "contact": "the HR or recruiter's name, phone or e-mail, as the owner gave it",
+            "location": "where the role is based (city, region, country)",
+            "work_mode": "onsite, remote or hybrid",
+            "company_type": "product, service, research, startup or other",
+            "extras": "other short attributes the owner named (referral, salary range, …)",
         },
         required=("kind", "company", "role", "stage", "date"),
         model=RecordIn,
         inferred=("kind",),
         date_fields=("date",),
-        lower_fields=("kind",),
+        lower_fields=("kind", "work_mode", "company_type"),
         run=_add_record,
+    ),
+    ActionSpec(
+        name="add_records",
+        label="Add several records",
+        description=(
+            "track several job-search steps at once (many applications in one message); "
+            "each item needs company, role, stage and date"
+        ),
+        fields={
+            "records": (
+                "a list of records (kind, company, role, stage, date, and optional location, "
+                "work_mode, company_type, notes, extras)"
+            ),
+        },
+        required=("records",),
+        model=RecordsBatchIn,
+        inferred=("records",),
+        run=_add_records,
     ),
     UPDATE_RECORD,
     ActionSpec(
@@ -708,6 +787,13 @@ _SPECS = [
     ),
     _doc_action(
         "approve", "Approve a document", "approve a document at its current tier", _approve
+    ),
+    _doc_action(
+        "release",
+        "Use a quarantined document locally",
+        "release a quarantined document for the owner's own local use (confidential, local "
+        "models only, never published)",
+        _release,
     ),
     _doc_action(
         "publish",
@@ -932,7 +1018,7 @@ async def _resolve_document(
             return Resolution(payload)  # still missing: the owner is asked which document
         last = recent_docs[-1]
         return Resolution({**payload, "document_id": last["id"], "document_title": last["title"]})
-    if found_id := _OBJECT_ID.search(ref):
+    if found_id := _PUBLIC_ID.search(ref):
         try:
             doc = await ops.get_document(found_id.group(0))
         except AppError:
@@ -968,7 +1054,7 @@ async def _resolve_record(
     if not ref or _norm(ref) in PRONOUNS:
         last = next((r for r in reversed(recent) if r.get("kind") == "record"), None)
         match = [r for r in records if last and r.id == last["id"]]
-    elif found_id := _OBJECT_ID.search(ref):
+    elif found_id := _PUBLIC_ID.search(ref):
         match = [r for r in records if r.id == found_id.group(0)]
     else:
         match = _pick(records, lambda r: r.company, ref)
@@ -997,7 +1083,7 @@ async def _resolve_memory(payload: Payload, memory: MemoryService | None) -> Res
     if not ref:
         return Resolution(payload)
     items = await memory.listing()
-    if found_id := _OBJECT_ID.search(ref):
+    if found_id := _PUBLIC_ID.search(ref):
         match = [m for m in items if m.id == found_id.group(0)]
     else:
         match = _pick(items, lambda m: m.text, ref)

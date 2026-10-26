@@ -141,7 +141,7 @@ async def test_cold_reload_failure_is_a_dependency_error(redis: FakeAsyncRedis) 
     svc = _service(FailingStore(failures=None), redis)
     with pytest.raises(AppError) as err:
         await svc.history("anything")
-    assert err.value.code == ErrorCode.DEPENDENCY_UNAVAILABLE
+    assert err.value.code == ErrorCode.SERVICE_UNAVAILABLE
 
 
 def test_empty_salt_is_refused(redis: FakeAsyncRedis) -> None:

@@ -41,6 +41,8 @@ class KbStore(Protocol):
 
     async def get_source(self, source_id: PydanticObjectId) -> SourceView | None: ...
 
+    async def source_by_uid(self, uid: str) -> SourceView | None: ...
+
     async def update_source(self, source_id: PydanticObjectId, **changes: Any) -> None: ...
 
     async def unfinished_sources(self) -> list[SourceView]: ...
@@ -49,11 +51,17 @@ class KbStore(Protocol):
 
     async def get_document(self, document_id: PydanticObjectId) -> DocumentView | None: ...
 
+    async def document_by_uid(self, uid: str) -> DocumentView | None: ...
+
     async def update_document(self, document_id: PydanticObjectId, **changes: Any) -> None: ...
 
     async def documents_for_source(self, source_id: PydanticObjectId) -> list[DocumentView]: ...
 
     async def review_queue(self, limit: int) -> list[DocumentView]: ...
+
+    async def card_candidates(self, limit: int, *, missing_only: bool) -> list[DocumentView]:
+        """Indexed documents (not deleted, quarantined or restricted) for a card backfill."""
+        ...
 
     async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:
         """Documents (not deleted) whose title shares words with `text`, best match first."""
@@ -108,6 +116,10 @@ class MongoKbStore:
         doc = await Source.get(source_id)
         return _source_view(doc) if doc else None
 
+    async def source_by_uid(self, uid: str) -> SourceView | None:
+        doc = await Source.find_one({"uid": uid})
+        return _source_view(doc) if doc else None
+
     async def update_source(self, source_id: PydanticObjectId, **changes: Any) -> None:
         await Source.find_one({"_id": source_id}).update(
             {"$set": {**changes, "updated_at": utcnow()}}
@@ -124,6 +136,10 @@ class MongoKbStore:
 
     async def get_document(self, document_id: PydanticObjectId) -> DocumentView | None:
         doc = await KbDocument.get(document_id)
+        return _document_view(doc) if doc else None
+
+    async def document_by_uid(self, uid: str) -> DocumentView | None:
+        doc = await KbDocument.find_one({"uid": uid})
         return _document_view(doc) if doc else None
 
     async def update_document(self, document_id: PydanticObjectId, **changes: Any) -> None:
@@ -144,6 +160,18 @@ class MongoKbStore:
             .limit(limit)
             .to_list()
         )
+        return [_document_view(d) for d in docs]
+
+    async def card_candidates(self, limit: int, *, missing_only: bool) -> list[DocumentView]:
+        query: dict[str, Any] = {
+            "deleted_at": None,
+            "review_status": {"$ne": "quarantined"},
+            "tier": {"$ne": "restricted"},
+            "text": {"$ne": None},
+        }
+        if missing_only:
+            query["card"] = None
+        docs = await KbDocument.find(query).sort("created_at").limit(limit).to_list()
         return [_document_view(d) for d in docs]
 
     async def find_by_title(self, text: str, limit: int) -> list[DocumentView]:

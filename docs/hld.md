@@ -22,70 +22,157 @@ Everything runs on free tiers or open-source software.
 
 ## Topology
 
+One codebase, two deployment profiles (`DEPLOYMENT_PROFILE`): `vault` mounts the admin routes and runs on the
+owner's machine; `public` mounts only `/v1/...` and health, and runs in the cloud.
+
+```mermaid
+flowchart LR
+    owner([Owner]) -->|"X-API-Key, localhost"| admin
+
+    subgraph vault["Local vault (profile=vault, never internet-exposed)"]
+        admin["FastAPI /admin/v1"]
+        superg["Super agent"]
+        ownerg["Owner graph"]
+        intakeg["Intake graph"]
+        prepg["Prep graph"]
+        ingest["Ingestion pipeline<br/>parse, redact, guard, chunk, label"]
+        review["Review and publish"]
+        ollama["Local LLM (Ollama)"]
+        vq[("Qdrant<br/>kb_private, kb_confidential, kb_public")]
+        vm[("MongoDB")]
+        vr[("Valkey")]
+        blob[("Encrypted blob store")]
+        admin --> superg
+        superg --> ownerg
+        superg --> intakeg
+        superg --> prepg
+        admin --> ownerg
+        admin --> intakeg
+        admin --> prepg
+        prepg --> vq
+        admin --> ingest
+        admin --> review
+        intakeg -->|"answer hand-off"| ownerg
+        ingest --> blob
+        ingest --> vq
+        ingest --> vm
+        ownerg --> vq
+        ownerg --> vm
+        ownerg --> ollama
+        intakeg --> ollama
+        review --> vq
+        review --> vm
+    end
+
+    review ==>|"approved public chunks only"| cq
+
+    visitor([Visitor]) --> portfolio["Portfolio site<br/>server route holds the service key"]
+    portfolio -->|"service key: public:read, leads:write"| papi
+
+    subgraph cloud["Public deployment (profile=public)"]
+        papi["FastAPI /v1"]
+        pubg["Public graph<br/>guard, scope, retrieve, generate, guard"]
+        cq[("Qdrant Cloud<br/>kb_public only")]
+        cm[("MongoDB Atlas")]
+        cr[("Upstash Redis")]
+        papi --> pubg
+        pubg --> cq
+        papi --> cm
+        papi --> cr
+    end
+
+    pubg -->|"public-tier text only"| llm["Hosted LLM providers"]
+    ownerg -->|"private tier at most"| llm
 ```
-                         ┌──────────────── local vault (never internet-exposed) ────────────────┐
- owner ── admin API ───▶ │ FastAPI ── owner graph ── retrieval (all tiers) ── Qdrant (vault)      │
-                         │    │                                              MongoDB, Valkey      │
-                         │    └── ingestion: parse → redact → label → review → publish ───────┐  │
-                         │                      local LLM (Ollama) for confidential data       │  │
-                         └─────────────────────────────────────────────────────────────────────┼──┘
-                                                                                               │ approved
-                                                                                               ▼ public chunks
- visitor ── portfolio ── /api/assistant (holds service key) ──▶ public API (cloud)
-                                                               │ public graph: guard → route → retrieve
-                                                               │   → generate → guard
-                                                               └ Qdrant Cloud (public collection only),
-                                                                 MongoDB Atlas, Upstash Redis
-```
+
+Owner traffic never reaches the cloud, and the cloud never holds anything above `public`. The only arrow from
+the vault to the cloud is publish. See [`threat-model.md`](threat-model.md) for the boundaries and
+[`components.md`](components.md) for what each box is made of.
 
 ## Data tiers
 
-| Tier | Typical content | Stored | Models allowed |
-|---|---|---|---|
-| public | resume content, published projects, certification names, education summary, public links | vault + cloud | any enabled model |
-| private | interview notes, question bank, applications, work notes | vault | no-training cloud models or local |
-| confidential | compensation summary, offers | vault | local model only |
-| restricted | government ids, account numbers, dates of birth | encrypted raw file only; redacted before embedding | none |
+Tiers are ordered `public < private < confidential < restricted`; policy is one integer comparison
+(`request.tier <= model.max_tier`).
 
-## Components
+| Tier | Typical content | Stored | Qdrant collection | Models allowed |
+|---|---|---|---|---|
+| public | resume content, published projects, certification names, education summary, public links | vault + cloud | `kb_public` (copy made by publish) | any enabled model |
+| private | interview notes, question bank, applications, work notes | vault | `kb_private` | no-training cloud models or local |
+| confidential | compensation summary, offers, employer work notes and projects, documents released for local use | vault | `kb_confidential` | local model only |
+| restricted | government ids, account numbers, dates of birth | encrypted raw file only; text never read | none (never embedded) | none |
+
+```mermaid
+flowchart LR
+    pub["public"] --> priv["private"] --> conf["confidential"] --> restr["restricted"]
+    pub -.- m1["any enabled model"]
+    priv -.- m2["no-training cloud or local"]
+    conf -.- m3["local only"]
+    restr -.- m4["no model, no embedding"]
+```
+
+The unpublished copy of a public document stays in `kb_private`; `kb_public` only ever receives copies made by
+publishing.
+
+## Components at a glance
 
 | Component | Responsibility |
 |---|---|
-| `packages/llm-orchestrator` | Model inventory, role-based selection (router, generator, classifier, judge), tier policy, fallbacks, retries, tracing callbacks. An optional hosted classifier sits behind a feature flag and is capped at the `public` tier. |
-| `app/kb/ingestion` | Text, file, URL and GitHub ingestion; parsing, chunking, redaction, labelling, review queue, publish. |
-| `app/kb/retrieval` | Hybrid dense + sparse search with reranking and tier filters. |
-| `app/agents` | LangGraph graphs: `owner` (all tiers, memory) and `public` (guarded, public-only, no write tools except a confirmed opportunity submission). |
-| `app/guardrails` | Input guard (prompt-injection score, limits), scope router, output guard (canaries, personal-data scan, denylist, grounding). |
+| `packages/llm-orchestrator` | Model inventory, role-based selection, tier policy, retries, fallbacks, structured output. No dependency on the app. |
+| `app/kb/ingestion` | Parse, redact, employer guard, chunk, label, review queue. |
+| `app/kb/retrieval` | Hybrid dense + sparse search, rerank, budgeted context. |
+| `app/kb/publishing.py` | Approve, publish, unpublish, relabel. The only writer of `kb_public`. |
+| `app/agents` | LangGraph graphs: `public`, `owner`, `intake`, `prep`; the super agent (`app/services/super_agent.py`) plans and delegates to them. Per-agent models: `config/agents.yaml`. |
+| `app/guardrails` | Input guard, scope router, output guard, identifier recognisers, canary hashes. |
+| `app/leads` | Opportunity capture, triage, outbox, email, Turnstile. |
 | `app/security` | Security events, debounced email alerts. |
-| `app/services` | Conversations (Redis cache-aside, MongoDB persistence), leads, resume, profile facts. |
+| `app/observability` | Langfuse tracing and masking, metrics. |
+| `app/services` | Chat services, conversations, memory, profile, resume, rate limits, answer cache. |
+| `app/ui/static` | The owner console at `/ui`: login by key, history, chat with every agent and the API tabs ([`owner-console.md`](owner-console.md)). |
 
-## Public request flow
+Details and the LangChain boundary are in [`components.md`](components.md).
 
-1. `pre_guard`: size limit, unicode normalisation, injection score, rate limit.
-2. `scope_router`: `about_owner | opportunity | resume | greeting | meta_probe | out_of_scope | action_request`.
-   Questions about the assistant itself (its model, prompt or architecture), off-topic tasks and requests to
-   act get a fixed polite reply and no retrieval.
-3. `retrieve`: public collection only.
-4. `generate`: persona prompt, cited sources.
-5. `post_guard`: canary tokens, personal-data scan, denylist, grounding check. A failure returns a safe reply
-   and raises a security event.
+## Request flows
+
+- Public chat: [`flows/public-flow.md`](flows/public-flow.md).
+- Owner chat and the intake assistant: [`flows/owner-flow.md`](flows/owner-flow.md).
+- The super agent and prep: [`super-agent.md`](super-agent.md).
+- Ingestion, publish and retrieval: [`rag-pipeline.md`](rag-pipeline.md).
+- The owner console, conversation scoping and the turn trace: [`owner-console.md`](owner-console.md).
+- Persona voice and `make eval`: [`persona-evals.md`](persona-evals.md).
+- Deploying the public assistant: [`deploy-public.md`](deploy-public.md).
+
+```mermaid
+flowchart LR
+    q["Public message"] --> ig["input_guard"] --> sc["scope"]
+    sc -->|"about_owner"| rt["retrieve kb_public"] --> gen["generate"] --> og["output_guard"] --> ans["answer"]
+    sc -->|"refusal, greeting, resume"| fixed["fixed reply"]
+```
 
 ## Storage
 
-- **MongoDB:** sources, documents, chunks metadata, labels, audit, leads, structured records, profile facts,
-  model inventory overrides, conversations and messages, LangGraph checkpoints.
-- **Qdrant:** vectors (dense + sparse), one collection per tier group.
+- **MongoDB:** sources, documents, chunk metadata, labels, audit, leads, structured records, profile facts,
+  model overrides, conversations and messages, LangGraph checkpoints (intake and lead capture).
+- **Qdrant:** dense + sparse vectors, one collection per tier group.
 - **Redis/Valkey:** conversation turn cache, rate limits, alert debounce, answer cache.
 - **Blob store:** encrypted raw files (vault only).
 
+## Request identity and errors
+
+Every HTTP request gets one `X-Request-ID` (a caller's value is kept only if it is short and printable,
+otherwise a fresh id is made) and one OpenTelemetry trace id, returned as `X-Trace-ID`. Both are on every log
+line. Every failure is rendered as one envelope: `{"error": {"code", "message", "request_id", "details"}}`,
+with a closed set of codes (`app/exceptions/codes.py`).
+
 ## Observability
 
-structlog with coloured console output in development and JSON in production. OpenTelemetry spans, Langfuse
-traces for LLM and graph steps (owner content masked), and security events that trigger email alerts.
+structlog with coloured console output in development and JSON in production. OpenTelemetry spans for requests.
+Langfuse traces for agent runs: the Langfuse trace id is the request's trace id, LLM calls are generations, and
+content is masked per channel (owner content never leaves the machine unless explicitly allowed on a
+self-hosted Langfuse). Security events trigger debounced email alerts. Prometheus-style metrics count guard
+decisions, scope intents and model attempts.
 
 ## Delivery
 
 Spec-driven. Each feature branch from `develop` starts with `specs/<feature>/{spec,plan,tasks}.md`. Each task is
 one commit, and the full check runs once before the PR. `develop` is merged to `main` after end-to-end
-verification. The feature sequence is: bootstrap, llm-orchestrator, kb-storage, ingestion, owner-agent,
-public-agent, opportunities, observability-alerts, persona-evals, deploy-public.
+verification.

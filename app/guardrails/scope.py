@@ -131,6 +131,9 @@ OWNER_WORK = _rx(
     # assistant itself and is left to the rules and the classifier.
     r"\b(did|have) you (use|used|choose|chose|pick|picked|work with|worked with)\b",
     r"\byour (experience|background|career|work)\b",
+    # "What do you do?" asks about the owner's job, not about the assistant (found by make eval).
+    r"\bwhat do you do( for (a )?(living|work))?\b",
+    r"\bwhat (is|'s) your (job|role|profession|occupation)\b",
 )
 # Names the assistant or site itself: then a `meta_probe` verdict stands.
 ASSISTANT_REF = _rx(
@@ -172,9 +175,16 @@ def about_owner_work(text: str) -> bool:
     return _any(OWNER_WORK, text) and not _any(ASSISTANT_REF, text)
 
 
+# "Who are you?" is the first thing many visitors ask: the greeting answers it (an AI twin).
+IDENTITY = _rx(
+    r"^\s*(hi|hello|hey)?[,!.\s]*(who|what) are you\s*[?.!]*\s*$",
+    r"^\s*are you (a |an )?(bot|ai|robot|human|real( person)?|chat ?bot)\s*[?.!]*\s*$",
+)
+
+
 def rule_intent(text: str) -> Intent | None:
     """The intent when a rule is certain, else None (the classifier decides)."""
-    if _any(GREETING, text):
+    if _any(GREETING, text) or _any(IDENTITY, text):
         return "greeting"
     if _any(META, text) and not about_owner_work(text):
         return "meta_probe"

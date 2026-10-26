@@ -1,8 +1,10 @@
-"""Chat with the vault from the terminal: `python -m scripts.chat [list|new|twin|continue|rename]`.
+"""Chat with the vault from the terminal: `python -m scripts.chat [list|new|twin|prep|...]`.
 
   list [--limit N]                         your conversations: name, mode, id, updated, turns, ...
   new                                      ask the vault questions (the default)
   twin                                     add knowledge in plain language (intake assistant)
+  prep                                     interview and application answers in your voice
+  super                                    one agent for everything: saves, answers, prepares
   continue <name|id>                       recap the last turns, then keep going in that mode
                                            (an intake conversation resumes at its pending draft)
   rename <name|id> <new-name> [--description TEXT]
@@ -38,8 +40,8 @@ EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
 RECAP_TURNS = 4
 RECAP_CHARS = 280
 LIST_LIMIT_MAX = 200
-# How long /exit waits for a new title before leaving a slow local model to finish later.
-TITLE_WAIT_SECONDS = 8.0
+# Client timeout while the server chooses how long to wait (local models get longer).
+TITLE_REFRESH_TIMEOUT = 45.0
 # Names are at most 48 characters; generated ones at most 40 plus a short suffix.
 NAME_WIDTH = 44
 MODE_WIDTH = 6
@@ -107,7 +109,7 @@ class Api:
             raise CliError(f"{KEY_NAME} lacks the admin scope (403).")
         if response.status_code >= 400:
             try:
-                message = response.json()["error"]["message"]
+                message = response.json()["message"]
             except (ValueError, KeyError, TypeError):
                 message = response.text[:200]
             raise CliError(f"{response.status_code}: {message}")
@@ -122,17 +124,23 @@ class Api:
                 "(Windows: ./scripts/dev.ps1 run)"
             ) from exc
 
+    def _result(self, method: str, path: str, **kwargs: Any) -> Any:
+        """The `result` of the success envelope."""
+        return self._request(method, path, **kwargs).json()["result"]
+
+    def _items(self, path: str, **params: Any) -> list[dict[str, Any]]:
+        """The rows of the first page of a list route."""
+        rows: list[dict[str, Any]] = self._result("GET", path, params=params)["listOfItems"]
+        return rows
+
     def list(self, limit: int) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = self._request(
-            "GET", "/conversations", params={"limit": limit}
-        ).json()
-        return result
+        return self._items("/conversations", pageSize=limit)
 
     def get(self, conversation_id: str, limit: int = 200) -> dict[str, Any] | None:
         try:
-            result: dict[str, Any] = self._request(
+            result: dict[str, Any] = self._result(
                 "GET", f"/conversations/{conversation_id}", params={"limit": limit}
-            ).json()
+            )
         except CliError as exc:
             if str(exc).startswith("404"):
                 return None
@@ -141,7 +149,7 @@ class Api:
 
     def by_name(self, name: str) -> dict[str, Any] | None:
         try:
-            result: dict[str, Any] = self._request("GET", f"/conversations/by-name/{name}").json()
+            result: dict[str, Any] = self._result("GET", f"/conversations/by-name/{name}")
         except CliError as exc:
             if str(exc).startswith(("404", "422")):
                 return None
@@ -152,13 +160,13 @@ class Api:
         self, conversation_id: str, name: str | None, description: str | None
     ) -> dict[str, Any]:
         body = {k: v for k, v in (("name", name), ("description", description)) if v is not None}
-        result: dict[str, Any] = self._request(
+        result: dict[str, Any] = self._result(
             "PATCH", f"/conversations/{conversation_id}", json=body
-        ).json()
+        )
         return result
 
     def whoami(self) -> dict[str, Any]:
-        result: dict[str, Any] = self._request("GET", "/whoami").json()
+        result: dict[str, Any] = self._result("GET", "/whoami")
         return result
 
     def version(self) -> str:
@@ -176,48 +184,47 @@ class Api:
     def base_url(self) -> str:
         return self._base
 
-    def refresh_title(self, conversation_id: str, wait_seconds: float) -> dict[str, Any]:
-        result: dict[str, Any] = self._request(
+    def refresh_title(self, conversation_id: str) -> dict[str, Any]:
+        """Let the server pick the wait (longer for intake / local models)."""
+        result: dict[str, Any] = self._result(
             "POST",
             f"/conversations/{conversation_id}/title",
-            params={"wait_seconds": wait_seconds},
-            timeout=wait_seconds + 15,
-        ).json()
+            timeout=TITLE_REFRESH_TIMEOUT,
+        )
         return result
 
     def memories(self, status: str | None = None) -> builtins.list[dict[str, Any]]:
-        params = {"status": status} if status else {}
-        result: builtins.list[dict[str, Any]] = self._request(
-            "GET", "/memories", params=params
-        ).json()
-        return result
+        params = {"filter": f"status:{status}"} if status else {}
+        return self._items("/memories", pageSize=LIST_LIMIT_MAX, **params)
 
     def remember(
         self, text: str, kind: str = "preference", tier: str = "private"
     ) -> dict[str, Any]:
         body = {"text": text, "kind": kind, "tier": tier}
-        result: dict[str, Any] = self._request("POST", "/memories", json=body).json()
+        result: dict[str, Any] = self._result("POST", "/memories", json=body)
         return result
 
     def update_memory(self, memory_id: str, **changes: Any) -> dict[str, Any]:
-        result: dict[str, Any] = self._request(
-            "PATCH", f"/memories/{memory_id}", json=changes
-        ).json()
+        result: dict[str, Any] = self._result("PATCH", f"/memories/{memory_id}", json=changes)
         return result
 
     def delete_memory(self, memory_id: str) -> None:
         self._request("DELETE", f"/memories/{memory_id}")
 
     def assistant_state(self, conversation_id: str) -> dict[str, Any]:
-        result: dict[str, Any] = self._request("GET", f"/assistant/{conversation_id}").json()
+        result: dict[str, Any] = self._result("GET", f"/assistant/{conversation_id}")
         return result
 
     def chat(
-        self, message: str, conversation_id: str | None, path: str = "/chat"
+        self,
+        message: str,
+        conversation_id: str | None,
+        path: str = "/chat",
+        extra: dict[str, Any] | None = None,
     ) -> Iterator[tuple[str, dict[str, Any]]]:
-        body: dict[str, Any] = {"message": message}
+        body: dict[str, Any] = {"message": message, **(extra or {})}
         if conversation_id:
-            body["conversation_id"] = conversation_id
+            body["conversationId"] = conversation_id
         try:
             with self._client.stream("POST", path, json=body) as response:
                 if response.status_code >= 400:
@@ -260,12 +267,12 @@ def render_list(conversations: Sequence[dict[str, Any]]) -> str:
         "DESCRIPTION"
     ]
     for c in conversations:
-        updated = str(c.get("updated_at", ""))[:16].replace("T", " ")
+        updated = str(c.get("updatedAt", ""))[:16].replace("T", " ")
         name = _short(str(c.get("name") or "-"), NAME_WIDTH)
         mode = str(c.get("mode") or "ask")
         rows.append(
             f"{name:<{NAME_WIDTH}} {mode:<{MODE_WIDTH}} {c['id']:<32} {updated:<16} "
-            f"{c.get('message_count', 0):>5}  {_short(str(c.get('description') or ''), 60)}"
+            f"{c.get('messageCount', 0):>5}  {_short(str(c.get('description') or ''), 60)}"
         )
     return "\n".join(rows)
 
@@ -288,8 +295,33 @@ INTAKE_INTRO = (
     "approve, publish, unpublish, relabel or delete documents · answer questions.",
     'Try: "I had a technical round 2 with Acme yesterday for an AI Engineer role"',
 )
+PREP_INTRO = (
+    "Paste an interview or application question; I answer as you, in the first person, from "
+    "your vault. Internal names, ticket keys, cache keys, topics and internal links are "
+    "rewritten before you see the answer, and listed.",
+    "Types: behavioural (STAR), scenario (step by step + your examples), application (form "
+    "field), pitch (tell me about yourself), project. Numbers your sources don't give become "
+    "[add metric].",
+    'Try: "Tell us about the most challenging technical project you led" · /words 150 then a '
+    "form question",
+)
+SUPER_INTRO = (
+    "Your super agent: say anything and it plans the steps and hands each to the right agent "
+    "(intake saves notes and records, ask answers from your vault, prep writes interview and "
+    "application answers). Runs on this machine; confidential steps use local models only.",
+    "It saves additions and updates straight away; deletes, publishing and tier changes wait "
+    "for your yes.",
+    'Try: "I have an interview with Acme today at 3 pm for an AI Engineer role. Add it and give '
+    'me a 60-second pitch for it."',
+)
+PREP_COMMANDS = (
+    "Prep commands: /shorter · /longer · /variant (rewrite the last answer) · /words N · "
+    "/chars N · /limit off · /mode behavioural|scenario|application|pitch|project|auto"
+)
+PREP_KINDS = ("behavioural", "scenario", "application", "pitch", "project")
 COMMANDS = (
     "Commands: /remember <text> (followed from your next message) · /memory (what I remember) · "
+    "/thinking (show or hide the model's reasoning) · "
     "/exit (or Ctrl+C) leaves; the conversation is kept for make chat-continue."
 )
 REMEMBER = "/remember"
@@ -308,26 +340,31 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
 
     It also proves the API answers and the key works before you type anything."""
     who = api.whoami()
-    title = "intake assistant" if mode == "intake" else "owner chat"
+    title = {"intake": "intake assistant", "prep": "interview prep", "super": "super agent"}.get(
+        mode, "owner chat"
+    )
     print(paint(f"━━ ai-twin · {title} ━━", "bold"))
     print(paint(f'API {api.version()} at {api.base_url} · key "{who.get("name", "?")}"', "dim"))
     if conversation is None:
-        for line in INTAKE_INTRO if mode == "intake" else ASK_INTRO:
+        intro = {"intake": INTAKE_INTRO, "prep": PREP_INTRO, "super": SUPER_INTRO}.get(
+            mode, ASK_INTRO
+        )
+        for line in intro:
             print(line)
     else:
         print(
             f"Continuing {paint(str(conversation.get('name') or '-'), 'bold')} "
             f"({mode}) · id {conversation['id']}"
         )
-        turns = conversation.get("message_count", 0)
+        turns = conversation.get("messageCount", 0)
         print(
-            f"Started {_when(conversation.get('created_at'))} · last active "
-            f"{_when(conversation.get('updated_at'))} · {turns} turns"
+            f"Started {_when(conversation.get('createdAt'))} · last active "
+            f"{_when(conversation.get('updatedAt'))} · {turns} turns"
         )
         if conversation.get("description"):
             print(f"About: {_short(str(conversation['description']), 100)}")
         if conversation.get("summary"):
-            covered = conversation.get("summarized_turns", 0)
+            covered = conversation.get("summarizedTurns", 0)
             summary = _short(str(conversation["summary"]), SUMMARY_CHARS)
             print(f"Summary of the first {covered} turns: {summary}")
         print(
@@ -337,6 +374,8 @@ def print_banner(api: Api, mode: str, conversation: dict[str, Any] | None = None
                 "dim",
             )
         )
+    if mode == "prep":
+        print(paint(PREP_COMMANDS, "dim"))
     print(paint(COMMANDS, "dim"))
 
 
@@ -351,8 +390,8 @@ def print_recap(conversation: dict[str, Any]) -> None:
 
 def _done_line(data: dict[str, Any]) -> str:
     parts = [f"tier {data.get('tier') or '-'}", f"model {data.get('model') or '-'}"]
-    if data.get("latency_ms") is not None:
-        parts.append(f"{float(data['latency_ms']) / 1000:.1f}s")
+    if data.get("latencyMs") is not None:
+        parts.append(f"{float(data['latencyMs']) / 1000:.1f}s")
     if data.get("withheld"):
         parts.append(f"{data['withheld']} withheld")
     return paint("  " + " · ".join(parts), "dim")
@@ -366,15 +405,47 @@ def ask(api: Api, message: str, conversation_id: str | None) -> str | None:
     """Stream one answer to the terminal; returns the conversation id."""
     with _thinking(ASK_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id):
-            conversation_id = data.get("conversation_id", conversation_id)
-            if event in ("token", "sources", "done", "error"):
+            conversation_id = data.get("conversationId", conversation_id)
+            if event in ("thinking", "token", "sources", "done", "error"):
                 thinking.stop()
             _show_answer_event(event, data)
     return conversation_id
 
 
+class ThinkingView:
+    """The model's thinking, dimmed above the answer; `/thinking` turns it on or off."""
+
+    def __init__(self) -> None:
+        self.show = True
+        self._open = False
+
+    def thinking(self, text: str) -> None:
+        if not self.show or not text:
+            return
+        if not self._open:
+            print("\n" + paint("  thinking: ", "dim"), end="")
+            self._open = True
+        print(paint(text, "dim"), end="", flush=True)
+
+    def answer(self) -> None:
+        """Close the thinking block before the first answer text."""
+        if self._open:
+            print("\n")
+            self._open = False
+
+    def toggle(self) -> None:
+        self.show = not self.show
+        ok(f"Thinking {'shown' if self.show else 'hidden'}")
+
+
+THINKING = ThinkingView()
+
+
 def _show_answer_event(event: str, data: dict[str, Any]) -> None:
-    if event == "token":
+    if event == "thinking":
+        THINKING.thinking(str(data.get("text", "")))
+    elif event == "token":
+        THINKING.answer()
         print(data.get("text", ""), end="", flush=True)
     elif event == "sources" and data.get("sources"):
         titles = "; ".join(f"[{s['index']}] {s['title']}" for s in data["sources"])
@@ -386,6 +457,110 @@ def _show_answer_event(event: str, data: dict[str, Any]) -> None:
         warn(f"{data.get('code')}: {data.get('message')}")
 
 
+@dataclass
+class PrepOptions:
+    kind: str | None = None
+    words: int | None = None
+    chars: int | None = None
+
+    def body(self) -> dict[str, Any]:
+        found = {"kind": self.kind, "words": self.words, "chars": self.chars}
+        return {k: v for k, v in found.items() if v is not None}
+
+
+def prep(
+    api: Api,
+    message: str,
+    conversation_id: str | None,
+    options: PrepOptions,
+    revise: str | None = None,
+) -> str | None:
+    """One prep answer: the text, then sources, removed details and checks."""
+    extra = options.body() | ({"revise": revise} if revise else {})
+    with _thinking(ASK_PHRASES) as thinking:
+        for event, data in api.chat(message, conversation_id, path="/prep", extra=extra):
+            conversation_id = data.get("conversationId", conversation_id)
+            if event in ("thinking", "token", "sources", "done", "error"):
+                thinking.stop()
+            _show_prep_event(event, data)
+    return conversation_id
+
+
+def _show_prep_event(event: str, data: dict[str, Any]) -> None:
+    if event == "meta":
+        print(paint(f"  ({data.get('kind')})", "dim"))
+    elif event == "done":
+        for line in data.get("removed") or []:
+            print(paint(f"  internal detail removed: {line}", "yellow"))
+        for line in data.get("checks") or []:
+            print(paint(f"  check before sending: {line}", "yellow"))
+        print(_done_line(data))
+    else:
+        _show_answer_event(event, data)
+        if event == "token":
+            print()
+
+
+def orchestrate(api: Api, message: str, conversation_id: str | None) -> str | None:
+    """One super-agent turn: the plan, each step, then the composed answer."""
+    with _thinking(ASK_PHRASES) as thinking:
+        for event, data in api.chat(message, conversation_id, path="/super"):
+            conversation_id = data.get("conversationId", conversation_id)
+            if event in ("thinking", "token", "error"):
+                thinking.stop()
+            _show_super_event(event, data)
+    return conversation_id
+
+
+def _show_super_event(event: str, data: dict[str, Any]) -> None:
+    if event == "meta":
+        steps = " → ".join(str(s.get("agent")) for s in data.get("plan", []))
+        print(paint(f"  plan: {steps}  ({data.get('planSource')})", "dim"))
+    elif event == "step" and data.get("status") != "running":
+        parts = [f"{data.get('agent')} {data.get('status')}", str(data.get("model") or "-")]
+        if data.get("action"):
+            parts.append(str(data["action"]))
+        print(paint("  step: " + " · ".join(parts), "dim"))
+    elif event == "done":
+        models = ", ".join(data.get("models") or []) or "-"
+        print(
+            paint(
+                f"  tier {data.get('tier')} · models {models} · {data.get('steps')} step(s)", "dim"
+            )
+        )
+        if data.get("pending"):
+            print(paint("  waiting for your answer (yes / no / an edit)", "yellow"))
+    elif event in ("thinking", "token", "sources", "error"):
+        _show_answer_event(event, data)
+        if event == "token":
+            print()
+
+
+def prep_command(message: str, options: PrepOptions) -> tuple[bool, str | None]:
+    """(handled, revise) for a /command; revise is shorter, longer or variant."""
+    command, _, rest = message.partition(" ")
+    value = rest.strip()
+    if command in ("/shorter", "/longer", "/variant"):
+        return True, command[1:]
+    if command in ("/words", "/chars") and value.isdigit():
+        setattr(options, command[1:], int(value))
+        setattr(options, "chars" if command == "/words" else "words", None)
+        ok(f"Limit: {value} {command[1:]}")
+        return True, None
+    if command == "/limit" and value == "off":
+        options.words = options.chars = None
+        ok("No length limit")
+        return True, None
+    if command == "/mode" and value in (*PREP_KINDS, "auto"):
+        options.kind = None if value == "auto" else value
+        ok(f"Question type: {value}")
+        return True, None
+    if command in ("/words", "/chars", "/limit", "/mode"):
+        warn(PREP_COMMANDS)
+        return True, None
+    return False, None
+
+
 def print_draft(draft: dict[str, Any]) -> None:
     print(paint("  " + json.dumps(draft.get("payload", {}), ensure_ascii=False), "dim"))
     print(paint(str(draft.get("prompt", "")), "yellow"))
@@ -395,7 +570,7 @@ def tell(api: Api, message: str, conversation_id: str | None) -> str | None:
     """One intake turn: the reply, a pending draft if any; returns the conversation id."""
     with _thinking(INTAKE_PHRASES) as thinking:
         for event, data in api.chat(message, conversation_id, path="/assistant"):
-            conversation_id = data.get("conversation_id", conversation_id)
+            conversation_id = data.get("conversationId", conversation_id)
             if event in ("token", "draft", "done", "error"):
                 thinking.stop()
             _show_intake_event(event, data)
@@ -430,12 +605,12 @@ def refresh_on_exit(api: Api, conversation_id: str) -> str | None:
     print(paint("Updating the conversation's title…", "dim"))
     try:
         with Thinking(TITLE_PHRASES):
-            result = api.refresh_title(conversation_id, TITLE_WAIT_SECONDS)
+            result = api.refresh_title(conversation_id)
     except (CliError, httpx.HTTPError, KeyboardInterrupt) as exc:
         warn(f"Title not refreshed ({type(exc).__name__}); the conversation is kept as it was")
         return None
     status = result.get("status")
-    new = int(result.get("new_memories") or 0)
+    new = int(result.get("newMemories") or 0)
     if new:
         noun = "memory" if new == 1 else "memories"
         info(f"{new} new {noun} to review: {MEMORY_HINT}")
@@ -482,7 +657,23 @@ def memory_command(api: Api, message: str) -> bool:
 
 
 def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
-    turn = tell if mode == "intake" else ask
+    options = PrepOptions()
+
+    def turn(api: Api, message: str, cid: str | None) -> str | None:
+        if mode == "intake":
+            return tell(api, message, cid)
+        if mode == "super":
+            return orchestrate(api, message, cid)
+        if mode == "prep":
+            handled, revise = prep_command(message, options)
+            if handled and revise is None:
+                return cid
+            if revise and cid is None:
+                warn("Ask a question first; then /shorter, /longer or /variant rewrite it")
+                return cid
+            return prep(api, message, cid, options, revise)
+        return ask(api, message, cid)
+
     named = conversation_id is not None
     spoke = False
     while True:
@@ -496,6 +687,9 @@ def chat_loop(api: Api, conversation_id: str | None, mode: str = "ask") -> int:
         if message.lower() in EXIT_WORDS:
             break
         if memory_command(api, message):
+            continue
+        if message == "/thinking":
+            THINKING.toggle()
             continue
         try:
             conversation_id = turn(api, message, conversation_id)
@@ -529,6 +723,8 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--limit", type=int, default=20)
     sub.add_parser("new", help="start a conversation")
     sub.add_parser("twin", help="add knowledge in plain language (intake assistant)")
+    sub.add_parser("prep", help="interview and application answers in your voice")
+    sub.add_parser("super", help="one agent for everything: it plans and delegates")
     resume = sub.add_parser("continue", help="continue a conversation")
     resume.add_argument("ref", help="name, unique name prefix, or id")
     rename = sub.add_parser("rename", help="rename a conversation")
@@ -557,9 +753,10 @@ def execute(args: argparse.Namespace, api: Api) -> int:
         updated = api.rename(found["id"], args.name, args.description)
         ok(f"Renamed to {updated.get('name')}")
         return 0
-    if command == "twin":
-        print_banner(api, "intake")
-        return chat_loop(api, None, "intake")
+    if command in ("twin", "prep", "super"):
+        mode = {"twin": "intake"}.get(command, command)
+        print_banner(api, mode)
+        return chat_loop(api, None, mode)
     print_banner(api, "ask")
     return chat_loop(api, None)
 

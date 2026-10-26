@@ -117,3 +117,30 @@ async def test_unvalidated_store_still_cannot_widen() -> None:
     effective = await inv.effective(store)
     assert effective.models["a"].max_tier is Tier.PRIVATE
     assert [m.id for m in effective.chain(Role.JUDGE)] == ["a"]
+
+
+def test_capabilities_and_quality_are_declared_and_validated() -> None:
+    from pathlib import Path
+
+    from llm_orchestrator import Inventory, ModelSpec
+
+    base = {
+        "id": "m",
+        "provider": "mock",
+        "model": "x",
+        "roles": ["generator"],
+        "max_tier": "private",
+        "context_window": 1000,
+        "trains_on_inputs": False,
+    }
+    plain = ModelSpec.model_validate(base)
+    assert plain.capabilities == {"text"} and plain.quality == 3
+    thinker = ModelSpec.model_validate({**base, "capabilities": ["reasoning"], "quality": 5})
+    assert thinker.capabilities == {"text", "reasoning"}
+    with pytest.raises(ValueError):
+        ModelSpec.model_validate({**base, "capabilities": ["telepathy"]})
+    with pytest.raises(ValueError):
+        ModelSpec.model_validate({**base, "quality": 6})
+    shipped = Inventory.from_yaml(Path("config/models.yaml"))
+    assert shipped.models["groq-gpt-oss-120b"].capabilities >= {"reasoning", "tools"}
+    assert shipped.models["ollama-qwen3-14b"].enabled is False

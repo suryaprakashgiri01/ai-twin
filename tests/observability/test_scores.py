@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from app.agents.prompts.public import PROMPT_VERSION
 from app.observability.tracing import TraceRun
 from app.services.intake import _trace_intake
 from tests.leads.harness import extraction, make_capture
@@ -30,7 +31,7 @@ async def test_a_passed_public_answer_scores_guard_and_grounding(captured: Captu
         "comment": None,
     }
     [root] = captured.roots()
-    assert attrs_of(root)["langfuse.trace.metadata.prompt_version"] == "public-v1"
+    assert attrs_of(root)["langfuse.trace.metadata.prompt_version"] == PROMPT_VERSION
 
 
 async def test_a_blocked_answer_scores_zero_and_tags_its_rule(captured: CapturedTraces) -> None:

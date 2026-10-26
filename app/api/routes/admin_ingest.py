@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 
+from app.api.envelope import Envelope, ok
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
 from app.kb.ingestion.fetch.url import system_resolver
@@ -45,6 +46,7 @@ __all__ = [
 router = APIRouter(tags=["admin: ingestion"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
+ACCEPTED = "Accepted; poll the source for its status"
 
 
 def _ops(request: Request) -> AdminOps:
@@ -76,12 +78,12 @@ def _form_meta(
             }
         )
     except ValueError as exc:
-        raise AppError(ErrorCode.VALIDATION_ERROR, "Invalid form fields", details=str(exc)) from exc
+        raise AppError(ErrorCode.INVALID_INPUT, "Invalid form fields", details=str(exc)) from exc
 
 
 @router.post("/ingest/text", status_code=status.HTTP_202_ACCEPTED, summary="Ingest a typed note")
-async def ingest_text(body: TextIn, principal: AdminKey, request: Request) -> Submitted:
-    return await _ops(request).ingest_text(body, key_actor(principal.name))
+async def ingest_text(body: TextIn, principal: AdminKey, request: Request) -> Envelope[Submitted]:
+    return ok(await _ops(request).ingest_text(body, key_actor(principal.name)), ACCEPTED)
 
 
 @router.post(
@@ -99,9 +101,9 @@ async def ingest_files(
     category: Annotated[str, Form()],
     tags: Annotated[str, Form(description="comma-separated")] = "",
     tier: Annotated[str | None, Form()] = None,
-    occurred_at: Annotated[datetime | None, Form()] = None,
+    occurred_at: Annotated[datetime | None, Form(alias="occurredAt")] = None,
     summary: Annotated[str | None, Form()] = None,
-) -> SubmittedBatch:
+) -> Envelope[SubmittedBatch]:
     """Up to `INGEST_MAX_FILES` files of `INGEST_MAX_FILE_MB` each. The whole batch is checked
     first; one bad file rejects the batch and nothing is stored."""
     ops = _ops(request)
@@ -111,17 +113,20 @@ async def ingest_files(
     for upload in files:
         read = await _read_capped(upload, ops.max_file_bytes())
         checked.append((read, ops.resolve_file(read)))
-    return await ops.store_files(checked, meta, key_actor(principal.name))
+    return ok(await ops.store_files(checked, meta, key_actor(principal.name)), ACCEPTED)
 
 
 @router.post(
     "/ingest/urls", status_code=status.HTTP_202_ACCEPTED, summary="Ingest public web pages"
 )
-async def ingest_urls(body: UrlsIn, principal: AdminKey, request: Request) -> SubmittedBatch:
+async def ingest_urls(
+    body: UrlsIn, principal: AdminKey, request: Request
+) -> Envelope[SubmittedBatch]:
     """http(s) only; hosts must resolve to public addresses (checked again on every redirect
     when the page is fetched). Public Google Docs/Sheets/Slides links use their export URL."""
     # Looked up here on each call, so a test can swap the module's resolver.
-    return await _ops(request).ingest_urls(body, key_actor(principal.name), system_resolver)
+    submitted = await _ops(request).ingest_urls(body, key_actor(principal.name), system_resolver)
+    return ok(submitted, ACCEPTED)
 
 
 @router.post(
@@ -129,9 +134,11 @@ async def ingest_urls(body: UrlsIn, principal: AdminKey, request: Request) -> Su
     status_code=status.HTTP_202_ACCEPTED,
     summary="Sync allowlisted GitHub repositories",
 )
-async def ingest_github(body: GitHubIn, principal: AdminKey, request: Request) -> SubmittedBatch:
+async def ingest_github(
+    body: GitHubIn, principal: AdminKey, request: Request
+) -> Envelope[SubmittedBatch]:
     """Only repositories listed in `GITHUB_SYNC_REPOS` are accepted."""
-    return await _ops(request).ingest_github(body, key_actor(principal.name))
+    return ok(await _ops(request).ingest_github(body, key_actor(principal.name)), ACCEPTED)
 
 
 @router.post(
@@ -143,14 +150,16 @@ async def ingest_linkedin(
     principal: AdminKey,
     request: Request,
     file: Annotated[UploadFile, File(description='LinkedIn "Get a copy of your data" ZIP')],
-) -> Submitted:
+) -> Envelope[Submitted]:
     """Profile, positions, education, skills, certifications and projects become one document
     each; messages and connections are never read."""
     ops = _ops(request)
     upload = await _read_capped(file, ops.max_file_bytes())
-    return await ops.ingest_linkedin(upload, key_actor(principal.name))
+    return ok(await ops.ingest_linkedin(upload, key_actor(principal.name)), ACCEPTED)
 
 
 @router.get("/sources/{source_id}", summary="Status of one ingestion job")
-async def source_status(source_id: str, _principal: AdminKey, request: Request) -> SourceStatus:
-    return await _ops(request).source_status(source_id)
+async def source_status(
+    source_id: str, _principal: AdminKey, request: Request
+) -> Envelope[SourceStatus]:
+    return ok(await _ops(request).source_status(source_id))

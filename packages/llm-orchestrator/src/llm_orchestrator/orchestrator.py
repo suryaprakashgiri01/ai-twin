@@ -14,7 +14,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from pydantic import BaseModel, ValidationError
 from tenacity.wait import wait_base
 
-from llm_orchestrator.executor import CallContext, Executor, usage_of
+from llm_orchestrator.cooloff import MissingModels
+from llm_orchestrator.executor import CallContext, Executor, thinking_of, usage_of
+from llm_orchestrator.gateway import Need
 from llm_orchestrator.hooks import exhausted
 from llm_orchestrator.inventory import Inventory
 from llm_orchestrator.overrides import OverrideStore
@@ -64,12 +66,15 @@ class Orchestrator:
         self._settings = settings
         self._store = override_store
         self._factory = factory or default_factory(settings.secrets, settings.timeout_for)
+        # Models that answered 404 (a retired id, an Ollama model not pulled) sit out a while.
+        self.missing = MissingModels()
         self._executor = Executor(
             self._factory,
             max_attempts=settings.max_attempts,
             timeout_seconds=settings.timeout_seconds,
             timeout_for=settings.timeout_for,
             wait=wait,
+            missing=self.missing,
         )
 
     def timeout_for(self, spec: ModelSpec) -> float:
@@ -93,7 +98,7 @@ class Orchestrator:
         return self._inventory
 
     def _available(self, spec: ModelSpec) -> bool:
-        return is_available(spec, self._settings.secrets)
+        return is_available(spec, self._settings.secrets) and not self.missing.cooling(spec.id)
 
     async def select(
         self,
@@ -103,6 +108,7 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
     ) -> Selection:
         effective = await self._inventory.effective(self._store)
         return select(
@@ -113,6 +119,7 @@ class Orchestrator:
             model=model,
             prefer=prefer,
             privileged=privileged,
+            need=need,
         )
 
     async def chat(
@@ -124,10 +131,13 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
         callbacks: Callbacks = None,
         max_tokens: int | None = None,
     ) -> CallResult:
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         ctx = CallContext(role=role, tier=tier, callbacks=callbacks, max_tokens=max_tokens)
         for index, spec in enumerate(selection.models):
             try:
@@ -140,6 +150,7 @@ class Orchestrator:
                 attempts=ctx.attempts,
                 fallback_used=index > 0,
                 usage=usage_of(message),
+                thinking=thinking_of(message),
             )
         raise exhausted(role, tier, ctx.attempts)
 
@@ -153,11 +164,14 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
         callbacks: Callbacks = None,
         max_tokens: int | None = None,
     ) -> StructuredResult[T]:
         """Validated `schema` instance. One repair per model on invalid output, then next model."""
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         ctx = CallContext(role=role, tier=tier, callbacks=callbacks, max_tokens=max_tokens)
         prompt = [SystemMessage(content=_schema_instruction(schema)), *messages]
         for index, spec in enumerate(selection.models):
@@ -178,6 +192,7 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
         callbacks: Callbacks = None,
         max_tokens: int | None = None,
     ) -> T:
@@ -191,6 +206,7 @@ class Orchestrator:
             privileged=privileged,
             callbacks=callbacks,
             max_tokens=max_tokens,
+            need=need,
         )
         return result.value
 
@@ -236,12 +252,15 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
     ) -> tuple[ModelSpec, BaseChatModel]:
         """The first eligible model as a LangChain chat model, for LangGraph nodes.
 
         The caller owns retries and fallbacks for a model used this way.
         """
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         spec = selection.models[0]
         return spec, self._executor.model_for(spec)
 
@@ -253,9 +272,12 @@ class Orchestrator:
         model: str | None = None,
         prefer: Prefer | None = None,
         privileged: bool = False,
+        need: Need | None = None,
     ) -> list[tuple[ModelSpec, BaseChatModel]]:
         """Every eligible model, best first, for callers that stream and own their fallbacks."""
-        selection = await self.select(role, tier, model=model, prefer=prefer, privileged=privileged)
+        selection = await self.select(
+            role, tier, model=model, prefer=prefer, privileged=privileged, need=need
+        )
         return [(spec, self._executor.model_for(spec)) for spec in selection.models]
 
     async def model_counts(self) -> dict[str, int]:

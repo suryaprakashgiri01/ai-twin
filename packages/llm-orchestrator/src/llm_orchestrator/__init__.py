@@ -1,5 +1,6 @@
 """Tier-aware model selection, retries and fallbacks over LangChain chat models."""
 
+from llm_orchestrator.gateway import Need, Profiler
 from llm_orchestrator.inventory import Inventory
 from llm_orchestrator.orchestrator import Orchestrator, OrchestratorSettings
 from llm_orchestrator.overrides import InMemoryOverrideStore, ModelOverride, OverrideStore
@@ -38,6 +39,7 @@ __all__ = [
     "InventoryError",
     "ModelOverride",
     "ModelSpec",
+    "Need",
     "NoEligibleModelError",
     "Orchestrator",
     "OrchestratorError",
@@ -45,6 +47,7 @@ __all__ = [
     "OverrideRejectedError",
     "OverrideStore",
     "Prefer",
+    "Profiler",
     "Provider",
     "ProviderError",
     "ProviderSecrets",

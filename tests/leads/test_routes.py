@@ -23,6 +23,7 @@ from app.leads.service import LeadLimits, LeadService
 from app.leads.turnstile import Turnstile
 from app.services.admin_ops import AdminOps
 from tests.conftest import FakeCheck
+from tests.envelope import items, result
 from tests.fakes import MemoryApiKeyStore, MemoryAuditLog, MemoryOverrideStore
 from tests.leads.fakes import (
     OWNER,
@@ -117,8 +118,12 @@ async def test_form_endpoint_runs_the_same_pipeline() -> None:
         response = await post(client, key)
         assert response.status_code == 202
         assert response.json() == {
-            "status": "received",
+            "status": "success",
             "message": "Thanks, your message was passed to Kavya.",
+            "result": {
+                "status": "received",
+                "message": "Thanks, your message was passed to Kavya.",
+            },
         }
         duplicate = await post(client, key, address="198.51.100.4")
         assert duplicate.status_code == 202
@@ -181,20 +186,20 @@ async def test_admin_lists_and_patches_leads_with_an_audit_entry() -> None:
         await post(client, form, {**FORM, "company": "Globex"}, address="198.51.100.4")
         listed = await client.get("/admin/v1/leads", headers={"X-API-Key": admin})
         assert listed.status_code == 200
-        rows = listed.json()
+        rows = items(listed)
         assert [r["company"] for r in rows] == ["Globex", "Acme"]
         assert rows[0]["link"] == FORM["link"] and rows[0]["triage"] == "recruiter"
         lead_id = rows[1]["id"]
         filtered = await client.get(
             "/admin/v1/leads",
-            params={"status": "new", "triage": "spam"},
+            params={"filter": "status:new,triage:spam"},
             headers={"X-API-Key": admin},
         )
-        assert filtered.json() == []
+        assert items(filtered) == []
         patched = await client.patch(
             f"/admin/v1/leads/{lead_id}", json={"status": "replied"}, headers={"X-API-Key": admin}
         )
-        assert patched.status_code == 200 and patched.json()["status"] == "replied"
+        assert patched.status_code == 200 and result(patched)["status"] == "replied"
         bad = await client.patch(
             f"/admin/v1/leads/{lead_id}",
             json={"status": "suppressed"},

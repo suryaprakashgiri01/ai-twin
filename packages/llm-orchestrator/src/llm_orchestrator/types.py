@@ -51,9 +51,19 @@ class Provider(StrEnum):
     OPENROUTER = "openrouter"
     OLLAMA = "ollama"
     MOCK = "mock"
+    # Paid APIs; `openai` also serves any OpenAI-compatible endpoint through `base_url`.
+    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
 
 
-Prefer = Literal["fast", "quality", "local"]
+# Providers that run on the owner's machine; every other one is a cloud API.
+LOCAL_PROVIDERS = frozenset({Provider.OLLAMA, Provider.MOCK})
+
+
+# What a model can do beyond plain text. Every model has `text`.
+Capability = Literal["text", "tools", "reasoning"]
+
+Prefer = Literal["fast", "quality", "local", "local-quality", "local-max", "paid"]
 
 
 class FreeTierLimits(BaseModel):
@@ -92,6 +102,15 @@ class ModelSpec(BaseModel):
     # Ordering hints for `prefer`: "fast", "quality", "local".
     tags: frozenset[str] = frozenset()
     base_url: str | None = None
+    # Declared, not probed: what the model can do, and a rough strength rank (1 weakest, 5
+    # strongest) the gateway uses to fit a model to a request's complexity.
+    capabilities: frozenset[Capability] = frozenset({"text"})
+    quality: int = Field(default=3, ge=1, le=5)
+
+    @field_validator("capabilities", mode="after")
+    @classmethod
+    def _with_text(cls, value: frozenset[Capability]) -> frozenset[Capability]:
+        return value | {"text"}
 
     @field_validator("max_tier", mode="before")
     @classmethod
@@ -104,6 +123,10 @@ class ModelSpec(BaseModel):
             raise ValueError(f"{self.id}: no model may serve the restricted tier")
         if self.trains_on_inputs and self.max_tier > Tier.PUBLIC:
             raise ValueError(f"{self.id}: a model that may train on inputs is capped at public")
+        if self.provider not in LOCAL_PROVIDERS and self.max_tier > Tier.PRIVATE:
+            raise ValueError(
+                f"{self.id}: cloud models are capped at private; confidential text is local only"
+            )
         return self
 
     def serves(self, role: Role) -> bool:
@@ -149,6 +172,8 @@ class CallResult(BaseModel):
     attempts: list[Attempt]
     fallback_used: bool
     usage: TokenUsage = TokenUsage()
+    # A reasoning model's thinking, kept apart from `text`; never logged.
+    thinking: str = ""
 
 
 class StructuredResult[T: BaseModel](BaseModel):

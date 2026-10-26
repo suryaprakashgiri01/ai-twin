@@ -4,26 +4,38 @@ severity, rule names, a visitor-hash prefix, surface and times."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, get_args
 
-from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Path, Query, Request
 
+from app.api.envelope import ApiModel, Envelope, ok
+from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.exceptions import AppError, ErrorCode
+from app.observability.tracing import NOOP, Tracing
 from app.security.alerts import VISITOR_PREFIX, StoredEvent, safe_rule
 from app.security.worker import AlertWorker
 from app.services.admin_ops import key_actor
 from app.services.audit import AuditLog
-from app.services.security_events import EventKind
+from app.services.security_events import EventKind, Severity, Surface
 
 router = APIRouter(tags=["admin: security"])
 
 AdminKey = Annotated[Principal, Depends(require_scopes("admin"))]
-SeverityQuery = Literal["low", "medium", "high", "critical"]
+
+EVENTS = ListSpec(
+    sortable=("createdAt", "kind", "severity", "alertedAt"),
+    default_sort="createdAt",
+    filters={
+        "kind": get_args(EventKind),
+        "severity": get_args(Severity),
+        "surface": get_args(Surface),
+    },
+    search=("kind", "rules", "visitor"),
+)
 
 
-class SecurityEventOut(BaseModel):
+class SecurityEventOut(ApiModel):
     id: str
     kind: str
     severity: str
@@ -34,11 +46,13 @@ class SecurityEventOut(BaseModel):
     created_at: datetime
     alerted_at: datetime | None
     digested_at: datetime | None
+    # The request's trace id: open it with GET /admin/v1/observability/traces/{traceId}.
+    trace_id: str | None = None
 
     @classmethod
     def of(cls, event: StoredEvent) -> SecurityEventOut:
         return cls(
-            id=event.id,
+            id=event.uid,
             kind=event.kind,
             severity=event.severity,
             rules=[safe_rule(r) for r in event.rules],
@@ -47,10 +61,11 @@ class SecurityEventOut(BaseModel):
             created_at=event.created_at,
             alerted_at=event.alerted_at,
             digested_at=event.digested_at,
+            trace_id=event.trace_id,
         )
 
 
-class PolicyOut(BaseModel):
+class PolicyOut(ApiModel):
     name: str
     mode: str
     rule: str
@@ -58,7 +73,7 @@ class PolicyOut(BaseModel):
     last_sent: datetime | None
 
 
-class AlertStatus(BaseModel):
+class AlertStatus(ApiModel):
     smtp_configured: bool
     cooldown_minutes: int
     digest_hour: int
@@ -67,14 +82,14 @@ class AlertStatus(BaseModel):
     policies: list[PolicyOut]
 
 
-class AlertTestResult(BaseModel):
+class AlertTestResult(ApiModel):
     sent: bool
 
 
 def _worker(request: Request) -> AlertWorker:
     worker: AlertWorker | None = getattr(request.app.state, "alert_worker", None)
     if worker is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "The alert worker is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "The alert worker is not running")
     return worker
 
 
@@ -82,50 +97,53 @@ def _worker(request: Request) -> AlertWorker:
 async def list_events(
     _principal: AdminKey,
     request: Request,
-    kind: Annotated[EventKind | None, Query()] = None,
-    severity: Annotated[SeverityQuery | None, Query()] = None,
+    query: Annotated[PageQuery, Depends(page_query(EVENTS))],
     since: Annotated[datetime | None, Query(description="ISO 8601, e.g. 2026-10-19T00:00:00Z")] = (
         None
     ),
-    limit: Annotated[int, Query(ge=1, le=500)] = 50,
-) -> list[SecurityEventOut]:
+) -> Envelope[Page[SecurityEventOut]]:
     events = await _worker(request).store.recent(
-        kind=kind, severity=severity, since=since, limit=limit
+        kind=query.filters.get("kind"),
+        severity=query.filters.get("severity"),
+        since=since,
+        limit=LIST_SCAN_MAX,
     )
-    return [SecurityEventOut.of(e) for e in events]
+    return ok(paginate([SecurityEventOut.of(e) for e in events], query, EVENTS))
 
 
 @router.get("/alerts/status", summary="Alert policies, cooldowns, last sent, SMTP configured")
-async def alert_status(_principal: AdminKey, request: Request) -> AlertStatus:
+async def alert_status(_principal: AdminKey, request: Request) -> Envelope[AlertStatus]:
     worker = _worker(request)
     s = worker.settings
-    return AlertStatus(
-        smtp_configured=worker.configured,
-        cooldown_minutes=int(s.cooldown.total_seconds() // 60),
-        digest_hour=s.digest_hour,
-        timezone=str(s.timezone),
-        last_digest=await worker.last_digest(),
-        policies=[
-            PolicyOut(
-                name=p.name,
-                mode=p.mode,
-                rule=p.rule,
-                cooldown_remaining_seconds=p.cooldown_seconds,
-                last_sent=p.last_sent,
-            )
-            for p in await worker.status()
-        ],
+    return ok(
+        AlertStatus(
+            smtp_configured=worker.configured,
+            cooldown_minutes=int(s.cooldown.total_seconds() // 60),
+            digest_hour=s.digest_hour,
+            timezone=str(s.timezone),
+            last_digest=await worker.last_digest(),
+            policies=[
+                PolicyOut(
+                    name=p.name,
+                    mode=p.mode,
+                    rule=p.rule,
+                    cooldown_remaining_seconds=p.cooldown_seconds,
+                    last_sent=p.last_sent,
+                )
+                for p in await worker.status()
+            ],
+        )
     )
 
 
 @router.post("/alerts/test", summary="Send one test alert email (audited)")
-async def test_alert(principal: AdminKey, request: Request) -> AlertTestResult:
+async def test_alert(principal: AdminKey, request: Request) -> Envelope[AlertTestResult]:
     """Sends `ai-twin alert · low · test` to the alert recipient. 503 when SMTP is not
     configured; `sent: false` when the send itself failed (the error is in the logs)."""
     worker = _worker(request)
     if not worker.configured:
         raise AppError(
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            ErrorCode.SERVICE_UNAVAILABLE,
             "Alert email is not configured (SMTP_HOST, LEAD_EMAIL_FROM, ALERT_EMAIL_TO or "
             "LEAD_EMAIL_TO)",
         )
@@ -137,4 +155,26 @@ async def test_alert(principal: AdminKey, request: Request) -> AlertTestResult:
         target="alerts",
         details={"sent": sent},
     )
-    return AlertTestResult(sent=sent)
+    return ok(AlertTestResult(sent=sent), "Test alert sent" if sent else "Test alert failed")
+
+
+class TraceLink(ApiModel):
+    trace_id: str
+    url: str
+
+
+@router.get(
+    "/observability/traces/{trace_id}",
+    summary="The Langfuse link for a trace (404 when tracing is off)",
+)
+async def trace_link(
+    trace_id: Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")],
+    _principal: AdminKey,
+    request: Request,
+) -> Envelope[TraceLink]:
+    """Security events, chat turns and every response's `X-Trace-ID` carry this id."""
+    tracing: Tracing = getattr(request.app.state, "tracing", NOOP)
+    url = await tracing.trace_url(trace_id)
+    if url is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Tracing is off, or Langfuse did not answer")
+    return ok(TraceLink(trace_id=trace_id, url=url))

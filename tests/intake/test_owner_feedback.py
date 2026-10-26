@@ -47,7 +47,7 @@ def test_github_repos_are_read_from_free_text(text: str, repos: list[str]) -> No
 
 
 def test_rules_route_status_questions_and_github_links() -> None:
-    sid = "6ad5afab0d04c371db474c76"
+    sid = "3f0c1d2e-7a4b-4c5d-9e8f-0a1b2c3d4e5f"
     assert rule_action(f"What is the status of source {sid}?", "ingest_github") == "source_status"
     assert rule_action("is my last upload done? status please", None) == "source_status"
     link = "Add this: https://github.com/suryaprakashgiri01/observable-ai-service"
@@ -114,3 +114,29 @@ async def test_confidential_document_is_never_published_from_intake(make_twin: M
     assert reply.draft is None
     assert "is confidential; I won't publish that from here" in reply.text
     assert not any(d.published for d in twin.h.store.documents.values())
+
+
+async def test_quarantined_document_is_released_for_local_use(make_twin: MakeTwin) -> None:
+    twin = make_twin(
+        [
+            extract(
+                "add_note", title="Sprint notes", body="Fixed FAKEPROJ-12.", category="work-note"
+            ),
+            extract("release", document="it"),
+        ]
+    )
+    cid = (await twin.say("save my sprint notes")).conversation_id
+    await twin.say("yes", cid)
+    doc = next(iter(twin.h.store.documents.values()))
+    # As the employer guard leaves it: no vectors, waiting for the owner.
+    await twin.h.store.update_document(
+        doc.id, review_status="quarantined", quarantine_rules=["ticket-keys"]
+    )
+    await twin.h.pipeline.delete_vectors(str(doc.id))
+    await twin.h.store.delete_chunks(doc.id)
+    draft = await twin.say("release it for local use", cid)
+    assert draft.draft is not None and draft.draft["action"] == "release"
+    done = await twin.say("yes", cid)
+    assert done.result is not None and "Released for local use" in done.text
+    doc = next(iter(twin.h.store.documents.values()))
+    assert (doc.tier, doc.local_only, doc.review_status) == ("confidential", True, "pending")

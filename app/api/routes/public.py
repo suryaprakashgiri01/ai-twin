@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
 
+from app.api.envelope import ApiModel, Deleted, Envelope, ok
+from app.api.paging import LIST_SCAN_MAX, ListSpec, Page, PageQuery, page_query, paginate
 from app.auth.dependencies import Principal, require_scopes
 from app.auth.visitor import Visitor, resolve_visitor
 from app.core.config import Settings
@@ -20,6 +21,13 @@ from app.exceptions import AppError, ErrorCode
 from app.leads.models import LeadForm, LeadIn
 from app.leads.service import DAY, LeadService
 from app.services.assistant import AssistantInfo, assistant_info
+from app.services.audit import AuditLog
+from app.services.owner_chat import (
+    ConversationDetail,
+    ConversationDirectory,
+    ConversationSummary,
+    TitleUpdate,
+)
 from app.services.public_chat import PublicChat, PublicChatRequest, PublicChatResponse
 from app.services.rate_limit import Limits, RateLimiter
 from app.services.resume import ResumeProvider, count_download
@@ -30,7 +38,9 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 router = APIRouter(prefix=PUBLIC_PREFIX, tags=["public"])
 
-AUTH_FAILURES = frozenset({ErrorCode.AUTH_REQUIRED, ErrorCode.AUTH_INVALID, ErrorCode.FORBIDDEN})
+AUTH_FAILURES = frozenset(
+    {ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_API_KEY, ErrorCode.FORBIDDEN}
+)
 # A burst of the same failure is recorded once per this many seconds.
 AUTH_EVENT_WINDOW = 60
 
@@ -44,6 +54,23 @@ public_key = require_scopes("public:read")
 lead_key = require_scopes("leads:write")
 PublicKey = Annotated[Principal, Depends(public_key)]
 LeadKey = Annotated[Principal, Depends(lead_key)]
+
+
+Role = Literal["owner", "public", "leads"]
+AnyKey = Annotated[Principal, Depends(require_scopes())]
+
+
+class Me(ApiModel):
+    name: str
+    scopes: list[str]
+    # What the console shows and unlocks: owner (admin), public (public:read), leads (leads:write).
+    role: Role
+
+
+def role_of(principal: Principal) -> Role:
+    if "admin" in principal.scopes:
+        return "owner"
+    return "public" if "public:read" in principal.scopes else "leads"
 
 
 def limits(settings: Settings) -> Limits:
@@ -89,14 +116,95 @@ async def rate_limited_visitor(
 def _chat(request: Request) -> PublicChat:
     service: PublicChat | None = getattr(request.app.state, "public_chat", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Public chat is not running")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Public chat is not running")
     return service
+
+
+def _directory(request: Request) -> ConversationDirectory:
+    directory: ConversationDirectory | None = getattr(
+        request.app.state, "conversation_directory", None
+    )
+    if directory is None:
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Conversations are not available")
+    return directory
+
+
+ConversationId = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
+MY_CONVERSATIONS = ListSpec(
+    sortable=("updatedAt", "createdAt", "name", "messageCount"),
+    default_sort="updatedAt",
+    filters={},
+    search=("name", "description"),
+)
+
+
+@router.get("/conversations", summary="This visitor's own conversations, newest first")
+async def my_conversations(
+    request: Request,
+    who: Annotated[Visitor, Depends(visitor)],
+    query: Annotated[PageQuery, Depends(page_query(MY_CONVERSATIONS))],
+) -> Envelope[Page[ConversationSummary]]:
+    """Only conversations started with this key (and visitor address, when the caller sends
+    one). Soft-deleted ones are never listed."""
+    found = await _directory(request).list_conversations(LIST_SCAN_MAX, "public", who.hash)
+    return ok(paginate(found, query, MY_CONVERSATIONS))
+
+
+@router.get("/conversations/{conversation_id}", summary="One of this visitor's conversations")
+async def my_conversation(
+    conversation_id: ConversationId,
+    request: Request,
+    who: Annotated[Visitor, Depends(visitor)],
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+) -> Envelope[ConversationDetail]:
+    """404 for anything that is not this visitor's own."""
+    return ok(await _directory(request).conversation(conversation_id, limit, who.hash))
+
+
+@router.patch(
+    "/conversations/{conversation_id}", summary="Rename one of this visitor's conversations"
+)
+async def rename_my_conversation(
+    conversation_id: ConversationId,
+    body: TitleUpdate,
+    request: Request,
+    who: Annotated[Visitor, Depends(visitor)],
+) -> Envelope[ConversationSummary]:
+    summary = await _directory(request).update_title(conversation_id, body, who.hash)
+    return ok(summary, "Conversation updated")
+
+
+@router.delete(
+    "/conversations/{conversation_id}", summary="Soft delete one of this visitor's conversations"
+)
+async def delete_my_conversation(
+    conversation_id: ConversationId,
+    request: Request,
+    principal: PublicKey,
+    who: Annotated[Visitor, Depends(visitor)],
+) -> Envelope[Deleted]:
+    await _directory(request).delete(conversation_id, who.hash)
+    audit: AuditLog = request.app.state.resources.audit
+    await audit.record(
+        actor=f"key:{principal.name}",
+        action="conversation.delete",
+        target=conversation_id,
+        details={"channel": "public"},
+    )
+    return ok(Deleted(id=conversation_id), "Conversation deleted")
+
+
+@router.get("/me", summary="Who this key is: name, scopes and console role")
+async def me(principal: AnyKey) -> Envelope[Me]:
+    """Any valid key. `role` is `owner` for an admin key, `public` for `public:read`, `leads` for
+    `leads:write` only. Works on both profiles, so the console can log in anywhere."""
+    return ok(Me(name=principal.name, scopes=list(principal.scopes), role=role_of(principal)))
 
 
 @router.post(
     "/chat",
     summary="Ask the AI twin (SSE by default)",
-    response_model=PublicChatResponse,
+    response_model=Envelope[PublicChatResponse],
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def chat(
@@ -116,7 +224,7 @@ async def chat(
             service.sse(prepared), media_type="text/event-stream", headers=SSE_HEADERS
         )
     response = await service.answer(prepared)
-    return JSONResponse(response.model_dump(mode="json"))
+    return JSONResponse(ok(response).model_dump(mode="json", by_alias=True))
 
 
 def _resume(request: Request) -> ResumeProvider:
@@ -146,14 +254,15 @@ async def resume(request: Request, who: Annotated[Visitor, Depends(visitor)]) ->
 
 
 @router.get("/assistant", summary="Greeting, AI-twin disclosure, privacy note, availability")
-async def assistant(request: Request, _principal: PublicKey) -> AssistantInfo:
-    return await assistant_info(request.app.state.settings, request.app.state.resources.profile)
+async def assistant(request: Request, _principal: PublicKey) -> Envelope[AssistantInfo]:
+    info = await assistant_info(request.app.state.settings, request.app.state.resources.profile)
+    return ok(info)
 
 
 # --- opportunities --------------------------------------------------------------------------
 
 
-class OpportunityReceived(BaseModel):
+class OpportunityReceived(ApiModel):
     status: Literal["received"] = "received"
     message: str
 
@@ -165,7 +274,7 @@ async def lead_visitor(request: Request, principal: LeadKey) -> Visitor:
 def _leads(request: Request) -> LeadService:
     service: LeadService | None = getattr(request.app.state, "leads", None)
     if service is None:
-        raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "Opportunities are not available")
+        raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Opportunities are not available")
     return service
 
 
@@ -180,7 +289,7 @@ def _leads(request: Request) -> LeadService:
 )
 async def opportunity(
     body: LeadForm, request: Request, who: Annotated[Visitor, Depends(lead_visitor)]
-) -> OpportunityReceived:
+) -> Envelope[OpportunityReceived]:
     """The same pipeline as the assistant: Turnstile (when configured), duplicate check, caps,
     triage, store, then the owner's email from the outbox. A duplicate gets the same answer
     and sends nothing. No mail ever goes to the address in the body."""
@@ -198,4 +307,5 @@ async def opportunity(
         )
     settings: Settings = request.app.state.settings
     owner = settings.public_owner_name.strip() or "the owner"
-    return OpportunityReceived(message=f"Thanks, your message was passed to {owner}.")
+    message = f"Thanks, your message was passed to {owner}."
+    return ok(OpportunityReceived(message=message), message)

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
+from app.api.envelope import ApiModel
 from app.kb.retrieval.retriever import Hit
 from llm_orchestrator import Tier
 
@@ -22,7 +23,7 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
 
 
-class Source(BaseModel):
+class Source(ApiModel):
     """One cited document, as listed in the `sources` event."""
 
     index: int
@@ -61,8 +62,15 @@ class BuiltContext(BaseModel):
         return not self.chunks
 
     def render(self) -> str:
-        """`[n] title` headers followed by chunk text, in rank order."""
-        return "\n\n".join(f"[{c.citation}] {c.hit.title}\n{c.hit.text}" for c in self.chunks)
+        """`[n] title (category)` headers followed by chunk text, in rank order; cards say so.
+
+        The category tells the generator an employer project (`company-projects`) from a
+        personal repository (`project`)."""
+        return "\n\n".join(
+            f"[{c.citation}] {c.hit.title} ({c.hit.category or 'uncategorised'}"
+            f"{', document summary' if c.hit.card else ''})\n{c.hit.text}"
+            for c in self.chunks
+        )
 
 
 def build_context(hits: Sequence[Hit], *, budget_tokens: int, ceiling: Tier) -> BuiltContext:

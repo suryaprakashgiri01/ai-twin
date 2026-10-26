@@ -12,16 +12,17 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 import structlog
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 from pymongo.errors import DuplicateKeyError
 from redis.asyncio import Redis
 
+from app.api.envelope import ApiModel
 from app.cache.redis import conversation_key, conversation_seq_key
 from app.db.documents import Channel, Conversation, Message, Role, Tier, new_id, utcnow
 from app.exceptions import AppError, ErrorCode
@@ -37,13 +38,91 @@ CACHE_TTL: dict[Channel, timedelta] = {
 # Shutdown waits this long for background writes.
 DRAIN_SECONDS = 5.0
 
+# The most of a turn's reasoning kept in its trace (the rest is cut, marked as cut).
+TRACE_THINKING_MAX = 20_000
+_CUT = "\n[… reasoning cut]"
+
 
 def _to_millis(value: datetime) -> datetime:
     """MongoDB keeps milliseconds; truncating up front keeps cache and database copies equal."""
     return value.replace(microsecond=value.microsecond // 1000 * 1000)
 
 
-class Turn(BaseModel):
+def cap_thinking(text: str, budget: int = TRACE_THINKING_MAX) -> str:
+    text = text.strip()
+    return text if len(text) <= budget else text[: max(0, budget - len(_CUT))] + _CUT
+
+
+class TraceStep(ApiModel):
+    """One agent step of a super-agent turn, with that step's own reasoning."""
+
+    agent: str
+    status: str = "done"
+    model: str | None = None
+    tier: str | None = None
+    action: str | None = None
+    thinking: str = ""
+
+
+class TraceSource(ApiModel):
+    index: int
+    document_id: str
+    title: str
+    # Kept so the console can group and tell apart sources (titles may be redacted).
+    category: str | None = None
+    tier: str | None = None
+
+
+class Cited(Protocol):
+    index: int
+    document_id: str
+    title: str
+
+
+def trace_sources(sources: Sequence[Cited]) -> list[TraceSource]:
+    return [
+        TraceSource(
+            index=s.index,
+            document_id=s.document_id,
+            title=s.title,
+            category=getattr(s, "category", None),
+            tier=getattr(getattr(s, "tier", None), "label", None),
+        )
+        for s in sources
+    ]
+
+
+class TurnTrace(ApiModel):
+    """How an owner answer was made, for the console to replay: the agents and steps, the
+    models, the tier, the sources and the model's reasoning. Owner channels only, never public.
+
+    Stored with the message in MongoDB and returned with the conversation; kept out of the
+    Redis history and out of every prompt. Reasoning is capped at `TRACE_THINKING_MAX` per turn,
+    shared across steps in order.
+    """
+
+    agents: list[str] = Field(default_factory=list)
+    steps: list[TraceStep] = Field(default_factory=list)
+    models: list[str] = Field(default_factory=list)
+    tier: str | None = None
+    sources: list[TraceSource] = Field(default_factory=list)
+    thinking: str = ""
+    # Tokens the model wrote for this answer, when known (owner chat and prep).
+    output_tokens: int | None = None
+
+    def capped(self) -> TurnTrace:
+        budget = TRACE_THINKING_MAX
+        thinking = cap_thinking(self.thinking, budget)
+        budget -= len(thinking)
+        steps = []
+        for step in self.steps:
+            kept = cap_thinking(step.thinking, budget) if budget > len(_CUT) else ""
+            budget -= len(kept)
+            steps.append(step.model_copy(update={"thinking": kept}))
+        return self.model_copy(update={"thinking": thinking, "steps": steps})
+
+
+class Turn(ApiModel):
     """One message in a conversation. `seq` is assigned by `append_turn`."""
 
     seq: int = 0
@@ -64,12 +143,18 @@ class Turn(BaseModel):
     withheld: int = 0
     # Public answers served from the answer cache.
     cache_hit: bool = False
+    # Owner answers only: how the answer was made (see `TurnTrace`).
+    trace: TurnTrace | None = None
     created_at: datetime = Field(default_factory=lambda: _to_millis(utcnow()))
 
     @field_validator("created_at")
     @classmethod
     def _millis(cls, value: datetime) -> datetime:
         return _to_millis(value)
+
+
+# What history (Redis and the reload from MongoDB) carries: everything but the trace.
+HISTORY_FIELDS = set(Turn.model_fields) - {"trace"}
 
 
 @dataclass(frozen=True)
@@ -94,6 +179,10 @@ class ConversationStore(Protocol):
 
     async def load(self, conversation_id: str, limit: int) -> StoredConversation | None: ...
 
+    async def soft_delete(self, conversation_id: str, at: datetime) -> bool:
+        """Mark it deleted; False when there is no such (undeleted) conversation."""
+        ...
+
 
 def hash_visitor(address: str, salt: str) -> str:
     """Keyed hash of a visitor address: stable per salt, not reversible without it."""
@@ -101,6 +190,12 @@ def hash_visitor(address: str, salt: str) -> str:
 
 
 class MongoConversationStore:
+    async def soft_delete(self, conversation_id: str, at: datetime) -> bool:
+        result = await Conversation.get_pymongo_collection().update_one(
+            {"_id": conversation_id, "deleted_at": None}, {"$set": {"deleted_at": at}}
+        )
+        return bool(result.modified_count)
+
     async def save_turn(
         self, conversation: ConversationRef, turn: Turn, expires_at: datetime | None
     ) -> None:
@@ -129,7 +224,7 @@ class MongoConversationStore:
 
     async def load(self, conversation_id: str, limit: int) -> StoredConversation | None:
         conversation = await Conversation.get(conversation_id)
-        if conversation is None:
+        if conversation is None or conversation.deleted_at is not None:
             return None
         messages = (
             await Message.find(Message.conversation_id == conversation_id)
@@ -137,8 +232,9 @@ class MongoConversationStore:
             .limit(limit)
             .to_list()
         )
-        fields = set(Turn.model_fields)
-        turns = [Turn.model_validate(m.model_dump(include=fields)) for m in reversed(messages)]
+        turns = [
+            Turn.model_validate(m.model_dump(include=HISTORY_FIELDS)) for m in reversed(messages)
+        ]
         return StoredConversation(channel=conversation.channel, turns=turns)
 
 
@@ -198,7 +294,8 @@ class ConversationService:
         stamped = turn.model_copy(update={"seq": seq})
         ttl = CACHE_TTL[conversation.channel]
         async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.rpush(list_key, stamped.model_dump_json())
+            # The trace is for the console, not for prompts: only MongoDB keeps it.
+            pipe.rpush(list_key, stamped.model_dump_json(exclude={"trace"}))
             pipe.ltrim(list_key, -self._cache_turns, -1)
             pipe.expire(list_key, ttl)
             pipe.expire(seq_key, ttl)
@@ -213,6 +310,15 @@ class ConversationService:
         stored = await self._warm(conversation_id)
         return stored.turns if stored else []
 
+    async def soft_delete(self, conversation_id: str) -> bool:
+        """Hide a conversation for good: it is marked in MongoDB and dropped from the cache, so
+        no later message can continue it."""
+        deleted = await self._store.soft_delete(conversation_id, self._clock())
+        await self._redis.delete(
+            conversation_key(conversation_id), conversation_seq_key(conversation_id)
+        )
+        return deleted
+
     async def drain(self) -> None:
         """Wait for in-flight writes (shutdown); whatever is left stays in Redis."""
         if self._pending:
@@ -226,9 +332,7 @@ class ConversationService:
             stored = await self._store.load(conversation_id, self._cache_turns)
         except Exception as exc:
             logger.warning("conversation reload failed", error_type=type(exc).__name__)
-            raise AppError(
-                ErrorCode.DEPENDENCY_UNAVAILABLE, "Conversation store unavailable"
-            ) from exc
+            raise AppError(ErrorCode.SERVICE_UNAVAILABLE, "Conversation store unavailable") from exc
         if stored is None:
             if channel is not None:
                 await self._redis.set(
