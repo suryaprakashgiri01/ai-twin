@@ -32,6 +32,9 @@ PAYLOAD_INDEXES: dict[str, models.PayloadSchemaType] = {
     "document_id": models.PayloadSchemaType.KEYWORD,
     "category": models.PayloadSchemaType.KEYWORD,
     "published": models.PayloadSchemaType.BOOL,
+    # The retriever's Qdrant filter excludes canary chunks (`must_not canary=True`);
+    # Qdrant refuses any filtered field without an index ("Index required but not found").
+    "canary": models.PayloadSchemaType.BOOL,
 }
 
 
@@ -54,7 +57,7 @@ def _dense_size(info: models.CollectionInfo) -> int | None:
 
 
 async def _ensure_collection(client: AsyncQdrantClient, name: str, dim: int) -> bool:
-    """Create the collection if missing, else check its shape. Returns True when created."""
+    """Create the collection if missing, else bring its shape up to date."""
     if not await client.collection_exists(name):
         await client.create_collection(
             collection_name=name,
@@ -62,10 +65,21 @@ async def _ensure_collection(client: AsyncQdrantClient, name: str, dim: int) -> 
             sparse_vectors_config={SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)},
         )
         return True
-    size = _dense_size(await client.get_collection(name))
+    info = await client.get_collection(name)
+    size = _dense_size(info)
     if size != dim:
         logger.error("qdrant collection has the wrong shape", collection=name, dim=size, want=dim)
         raise StorageStartupError(f"Qdrant collection {name} has dense size {size}, want {dim}")
+    # Collections created before sparse search existed (e.g. an older deploy) lack the named
+    # sparse vector; retrieval prefetches `using=SPARSE`, so a missing config breaks chat.
+    # The mirrored points still carry their sparse vectors, so adding the config is enough.
+    sparse = info.config.params.sparse_vectors or {}
+    if SPARSE not in sparse:
+        await client.update_collection(
+            collection_name=name,
+            sparse_vectors_config={SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)},
+        )
+        logger.info("qdrant collection gained a sparse vector", collection=name)
     return False
 
 

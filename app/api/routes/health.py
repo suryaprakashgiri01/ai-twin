@@ -10,10 +10,14 @@ from app.services.health import DependencyCheck, run_checks
 router = APIRouter(tags=["health"])
 
 
-@router.get("/healthz", summary="Liveness")
+@router.get("/livez", summary="Liveness")
+@router.get("/healthz", summary="Liveness (alias; Cloud Run's ingest claims /healthz itself)")
 async def liveness(request: Request) -> dict[str, str]:
     """The process is up and serving. Checks nothing else, by design: a liveness probe that
-    checks dependencies restarts healthy instances during a database outage."""
+    checks dependencies restarts healthy instances during a database outage.
+
+    `/livez` is the path to use on Cloud Run: its ingest layer answers `/healthz` with a 404
+    of its own before the request ever reaches the container (see dev-notes/deploy-public.md)."""
     settings: Settings = request.app.state.settings
     return {"status": "ok", "version": settings.service_version}
 

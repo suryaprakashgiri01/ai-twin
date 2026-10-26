@@ -8,6 +8,8 @@
 !/uv.lock
 !/app/
 !/config/
+!/.dockerignore
+!/docker_warmup.py
 !/packages/
 __pycache__/
 *.pyc

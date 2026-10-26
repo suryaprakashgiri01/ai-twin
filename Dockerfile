@@ -28,16 +28,11 @@ COPY config config
 RUN uv sync --frozen --no-dev --group public
 
 # The embedding, sparse and reranking models, fetched at build time so start-up is offline.
+# (`docker_warmup.py` instead of a shell heredoc: Cloud Build's classic dockerfile
+# parser rejects heredocs and would fail on the embedded Python code.)
 ENV MODELS_DIR=/app/models
-RUN python - <<'PY'
-import asyncio
-from pathlib import Path
-from app.kb.embedding import FastEmbedder
-from app.kb.retrieval.rerank import CrossEncoderReranker
-base = Path("/app/models/fastembed")
-asyncio.run(FastEmbedder(base).embed(["warm up"]))
-CrossEncoderReranker(base)._score_sync("warm up", ["warm up"])
-PY
+COPY docker_warmup.py ./
+RUN python docker_warmup.py && rm docker_warmup.py
 RUN chown -R app:app /app/models
 
 USER app

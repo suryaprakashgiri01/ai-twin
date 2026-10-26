@@ -90,7 +90,13 @@ async def test_public_profile_has_only_public_and_health_routes() -> None:
     paths = set(app.openapi()["paths"])
     assert not any(p.startswith("/admin") for p in paths)
     # /metrics is 404 there until METRICS_TOKEN is set (observability-alerts).
-    assert {p for p in paths if not p.startswith("/v1/")} == {"/healthz", "/readyz", "/metrics"}
+    # /livez is the Cloud Run-safe liveness twin of /healthz (its ingest claims /healthz).
+    assert {p for p in paths if not p.startswith("/v1/")} == {
+        "/healthz",
+        "/livez",
+        "/readyz",
+        "/metrics",
+    }
     async for client in client_for(app):
         whoami = await client.get("/admin/v1/whoami", headers={"X-API-Key": admin})
         assert whoami.status_code == 404
