@@ -1,5 +1,10 @@
 # AI-twin — agent memory & house rules
 
+> **Docs router.** For the daily *update → sync → publish → verify → deploy* loop, read exactly
+> one file end-to-end: **`dev-notes/deploy-public.md`** (local-only, kept fresh there; includes
+> the logs guide and the pitfalls table mirrored below). `docs/deploy-public.md` is the standing
+> one-time setup reference. Don't hunt anywhere else unless asked.
+
 Working notes for AI assistants (Claude Code, OpenCode, …). Keep this file small and factual;
 update the pitfalls table whenever a new one costs time. Never add secrets, account identifiers,
 keys, or anything personal — this file ships in the repo.
