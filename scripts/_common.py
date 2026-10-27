@@ -42,11 +42,12 @@ def paint(text: str, colour: str) -> str:
 
 
 def info(message: str) -> None:
-    print(f"{paint('•', 'blue')} {message}")
+    print(f"{paint('*', 'blue')} {message}")
 
 
 def ok(message: str) -> None:
-    print(f"{paint('✓', 'green')} {message}")
+    # ASCII glyphs only: Windows cp1252 consoles crash on U+2713/U+2717.
+    print(f"{paint('+', 'green')} {message}")
 
 
 def warn(message: str) -> None:
@@ -54,7 +55,7 @@ def warn(message: str) -> None:
 
 
 def fail(message: str) -> None:
-    print(f"{paint('✗', 'red')} {message}", file=sys.stderr)
+    print(f"{paint('x', 'red')} {message}", file=sys.stderr)
 
 
 def read_env(path: Path = ENV_FILE) -> dict[str, str]:
