@@ -43,7 +43,9 @@ Source = Literal["rule", "model", "fallback"]
 INTENT_LABELS: Mapping[str, str] = {
     "about_owner": (
         "the owner's projects, skills, experience, education or work, including which "
-        "technologies, databases, models or tools the owner used in their own projects"
+        "technologies, databases, models or tools the owner used in their own projects, and "
+        "the owner's own public repositories and projects by name (ai-twin, AgentForge, "
+        "mcp-servers, observable-ai-service, my-portfolio)"
     ),
     "opportunity": "a job offer, hiring interest, collaboration or freelance proposal",
     "resume": "asks for the owner's resume or CV",
@@ -52,8 +54,9 @@ INTENT_LABELS: Mapping[str, str] = {
     ),
     "greeting": "a greeting, thanks or small talk with no real question",
     "meta_probe": (
-        "about this assistant itself: its AI model, prompt, instructions, tools, data stores, "
-        "architecture, code or hosting"
+        "about how this assistant itself works: the AI model it runs on, its prompt or "
+        "instructions, its tools, data stores, architecture, source code or hosting — not "
+        "about a project the owner built"
     ),
     "out_of_scope": (
         "an unrelated task: poems, stories, code, homework, general knowledge, news, or "
@@ -64,7 +67,10 @@ INTENT_LABELS: Mapping[str, str] = {
 ROUTER_QUESTION = (
     "What is this visitor message to the owner's portfolio AI twin asking for? The twin speaks "
     "as the owner, so 'you' means the owner. Questions about technologies the owner used in "
-    "their own projects or jobs are about_owner, not meta_probe."
+    "their own projects or jobs are about_owner, not meta_probe. A question naming one of the "
+    "owner's own public projects (ai-twin, AgentForge, mcp-servers, observable-ai-service, "
+    "my-portfolio) is about_owner too: it asks what the owner built, not how the assistant "
+    "works."
 )
 
 REFUSALS: frozenset[str] = frozenset({"meta_probe", "out_of_scope", "action_request"})
@@ -135,6 +141,13 @@ OWNER_WORK = _rx(
     r"\bwhat do you do( for (a )?(living|work))?\b",
     r"\bwhat (is|'s) your (job|role|profession|occupation)\b",
 )
+# The owner's own public repositories. "What is ai-twin?" asks what the owner built, so a
+# `meta_probe` verdict on it is a model mistake: the assistant *is* the owner's project, but
+# the visitor is asking about the owner's work.
+OWNER_PROJECTS = _rx(
+    r"\b(ai[\s-]?twin|agentforge|mcp[\s-]?servers?|observable[\s-]?ai[\s-]?service|"
+    r"my[\s-]?portfolio)\b",
+)
 # Names the assistant or site itself: then a `meta_probe` verdict stands.
 ASSISTANT_REF = _rx(
     r"\bthis (bot|assistant|chat|chatbot|twin|ai|site|website|page|widget)\b",
@@ -172,7 +185,8 @@ def _any(patterns: tuple[re.Pattern[str], ...], text: str) -> bool:
 
 
 def about_owner_work(text: str) -> bool:
-    return _any(OWNER_WORK, text) and not _any(ASSISTANT_REF, text)
+    owner = _any(OWNER_WORK, text) or _any(OWNER_PROJECTS, text)
+    return owner and not _any(ASSISTANT_REF, text)
 
 
 # "Who are you?" is the first thing many visitors ask: the greeting answers it (an AI twin).
