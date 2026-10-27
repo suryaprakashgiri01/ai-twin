@@ -5,6 +5,7 @@ import asyncio
 import httpx
 import pytest
 
+from app.core.config import DEFAULT_VERSION
 from app.services.health import QdrantCheck, run_checks
 from tests.conftest import FakeCheck, make_app
 
@@ -18,7 +19,7 @@ async def _get(path: str, checks: list[FakeCheck]) -> httpx.Response:
 async def test_liveness_returns_version(client: httpx.AsyncClient) -> None:
     response = await client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "0.1.0"}
+    assert response.json() == {"status": "ok", "version": DEFAULT_VERSION}
 
 
 async def test_readiness_ok_when_all_checks_pass() -> None:
