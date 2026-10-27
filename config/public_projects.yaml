@@ -1,0 +1,40 @@
+# The owner's public work: the guaranteed answer when the knowledge base has nothing.
+#
+# The published knowledge base (vault/kb, mirrored to Qdrant) is the primary source. This
+# file is the fallback: when retrieval finds no usable passage, or the model decides it
+# cannot answer, the visitor still gets the owner's public project list and links instead
+# of "I don't have that". Every fallback is logged (event `kb fallback`) so the gap in the
+# knowledge base can be found and closed.
+#
+# Public URLs and one-line summaries only. No personal data, no contacts, no employer work.
+
+portfolio_url: https://surya-prakash-giri.vercel.app/
+github_url: https://github.com/suryaprakashgiri01
+
+projects:
+  - name: ai-twin
+    repo: suryaprakashgiri01/ai-twin
+    summary: >-
+      my portfolio knowledge base and chat service, built with Python, FastAPI and
+      LangGraph, with retrieval over Qdrant Cloud, guardrails, rate limiting and
+      observability, deployed on Google Cloud Run.
+  - name: AgentForge
+    repo: suryaprakashgiri01/AgentForge
+    summary: >-
+      a framework for building and running multi-agent systems, with agent graphs, tool
+      use, shared memory and evaluation harnesses.
+  - name: mcp-servers
+    repo: suryaprakashgiri01/mcp-servers
+    summary: >-
+      a collection of Model Context Protocol servers that expose useful developer services
+      as tools for any MCP-capable client.
+  - name: observable-ai-service
+    repo: suryaprakashgiri01/observable-ai-service
+    summary: >-
+      a FastAPI backend with a multi-provider LLM orchestrator, adding structured logs,
+      request correlation, metrics and tracing across model calls.
+  - name: my-portfolio
+    repo: suryaprakashgiri01/my-portfolio
+    summary: >-
+      the source of my portfolio site, built with Next.js and TypeScript, including the
+      assistant widget that talks to the ai-twin service.

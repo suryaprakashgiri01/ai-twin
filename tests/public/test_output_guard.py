@@ -136,6 +136,18 @@ async def test_prompt_echo_is_a_leak() -> None:
     assert not verdict.passed and verdict.rule == "prompt_leak"
 
 
+async def test_a_prompt_quoted_fallback_reply_is_not_a_leak() -> None:
+    """The prompt quotes the "no context" reply verbatim; using it is not a leak."""
+    fallback = "I don't have that in my public profile — you can reach me through the contact form."
+    g = OutputGuard(
+        canaries=StaticCanaryHashes([marker_hash(MARKER)]),
+        system_prompts=[f"Answer only from the context. If not, reply exactly: {fallback}"],
+        allowed_outputs=[fallback],
+    )
+    verdict = await g.check(fallback, question="q", context=CONTEXT)
+    assert verdict.passed and verdict.check != "prompt_leak"
+
+
 async def test_leak_checks_fail_closed() -> None:
     broken = guard(canaries=BrokenHashes())
     verdict = await broken.check("Hello [1].", question="q", context=CONTEXT)
