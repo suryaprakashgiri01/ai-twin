@@ -13,9 +13,11 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SERVICE_NAME = "ai-twin"
-DEFAULT_VERSION = "0.1.1"
+DEFAULT_VERSION = "0.1.2"
 DEFAULT_MODEL_INVENTORY = Path(__file__).resolve().parents[2] / "config" / "models.yaml"
 DEFAULT_AGENT_MODELS = Path(__file__).resolve().parents[2] / "config" / "agents.yaml"
+# The owner's public projects: the guaranteed answer when the knowledge base has nothing.
+DEFAULT_PUBLIC_PROJECTS = Path(__file__).resolve().parents[2] / "config" / "public_projects.yaml"
 
 # Environment-source toggle (`make deploy-env` / `make deploy-check` pull the GCP secret
 # values into `.env.prod` so local testing can run against the deployed configuration).
@@ -122,6 +124,10 @@ class Settings(BaseSettings):
     # Comma-separated `owner/name` list: the only repositories GitHub sync may read.
     github_sync_repos: str = ""
     github_token: SecretStr | None = None
+    # The owner's public projects: the answer used when the knowledge base has nothing.
+    # Public URLs only; shipped with the app (config/ is in the image).
+    public_projects_path: Path = DEFAULT_PUBLIC_PROJECTS
+    public_fallback_enabled: bool = True
 
     # --- retrieval and owner agent ----------------------------------------------
     retrieval_prefetch: int = Field(default=30, ge=1, le=200)

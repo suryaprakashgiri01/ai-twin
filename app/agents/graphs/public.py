@@ -19,6 +19,7 @@ text, context or answer text is logged.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -50,6 +51,7 @@ from app.kb.retrieval.retriever import DocumentFilter, Hit, Retriever
 from app.leads.capture import OPPORTUNITY, CaptureDeps, CaptureNodes
 from app.observability.metrics import GUARD_DECISIONS, SCOPE_INTENTS
 from app.services.conversations import Turn
+from app.services.public_fallback import PublicFallback
 from app.services.security_events import Detail, SecurityEventWriter
 from llm_orchestrator import Orchestrator, OrchestratorError, Role, Tier
 
@@ -101,6 +103,8 @@ class PublicDeps:
     settings: PublicSettings = field(default_factory=PublicSettings)
     # Lead capture; None keeps the fixed contact-form reply for opportunities.
     capture: CaptureDeps | None = None
+    # The owner's public projects, used when the knowledge base has nothing to say.
+    fallback: PublicFallback | None = None
 
 
 class PublicState(TypedDict, total=False):
@@ -140,6 +144,12 @@ def _ms(started: float) -> float:
 
 def _step(step: str, started: float, **fields: Any) -> None:
     logger.info("public step", step=step, latency_ms=_ms(started), **fields)
+
+
+def _fingerprint(text: str) -> str:
+    """A short, stable id for a question: enough to match a log line with a stored
+    conversation, without logging what the visitor wrote."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def history_messages(history: Sequence[Turn], limit: int) -> list[BaseMessage]:
@@ -224,6 +234,9 @@ class PublicNodes:
             state.get("hits", []), budget_tokens=self.settings.context_tokens, ceiling=PUBLIC_TIER
         )
         if context.empty:
+            fallback = self._fallback(state, "empty_context")
+            if fallback is not None:
+                return fallback
             _step("generate", started, sources=0, fixed=True)
             return {"answer": prompts.NO_CONTEXT, "sources": [], "context": "", "generated": False}
         rendered = context.render()
@@ -247,14 +260,44 @@ class PublicNodes:
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
         )
+        answer = result.text.strip()
+        if answer == prompts.NO_CONTEXT:
+            # The model found nothing usable in the context. The visitor still gets the
+            # owner's public projects, and the gap is logged for the owner to close.
+            fallback = self._fallback(state, "model_no_context")
+            if fallback is not None:
+                return fallback
         return {
-            "answer": result.text.strip(),
+            "answer": answer,
             "sources": context.sources,
             "context": rendered,
             "generated": True,
             "model_id": result.model_id,
             "input_tokens": result.usage.input_tokens,
             "output_tokens": result.usage.output_tokens,
+        }
+
+    def _fallback(self, state: PublicState, reason: str) -> dict[str, Any] | None:
+        """The owner's public projects, when the knowledge base has nothing to answer with.
+
+        Logged as a `kb fallback` event (intent, reason and a fingerprint of the question, no
+        visitor text) so the knowledge-base gap behind it can be found and closed.
+        """
+        fallback = self.deps.fallback
+        if fallback is None or not fallback.available:
+            return None
+        logger.info(
+            "kb fallback",
+            reason=reason,
+            intent=state.get("intent"),
+            fingerprint=_fingerprint(state.get("text", "")),
+            source="public_projects",
+        )
+        return {
+            "answer": fallback.answer(),
+            "sources": [],
+            "context": fallback.context(),
+            "generated": False,
         }
 
     async def output_guard(self, state: PublicState) -> dict[str, Any]:

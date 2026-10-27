@@ -26,6 +26,7 @@ from app.services.answer_cache import AnswerCache
 from app.services.conversations import ConversationService, Turn
 from app.services.owner_chat import ConversationMeta, ConversationSummary
 from app.services.public_chat import PublicChatRequest, PublicChatService
+from app.services.public_fallback import PublicFallback
 from llm_orchestrator import Orchestrator, Tier
 from llm_orchestrator.classify import Classification
 from tests.fakes import MemoryConversationStore
@@ -258,6 +259,7 @@ def make_public(
     checkpointer: Any = None,
     max_turns: int = 6,
     reply_time: str | None = None,
+    fallback: PublicFallback | None = None,
 ) -> Public:
     factory = Factory({"gen": generator or [ANSWER]})
     orch = orchestrator(
@@ -306,6 +308,7 @@ def make_public(
         events=events,
         settings=PublicSettings(),
         capture=capture,
+        fallback=fallback,
     )
     service = PublicChatService(
         build_public_graph(deps, checkpointer if capture is not None else None),

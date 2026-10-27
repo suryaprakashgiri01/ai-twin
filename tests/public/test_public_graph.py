@@ -290,8 +290,22 @@ async def test_chat_route_streams_and_answers_json() -> None:
 def test_persona_prompt_names_the_owner_or_falls_back_to_v1() -> None:
     from app.agents.prompts import public as prompts
 
-    assert prompts.PROMPT_VERSION == "public-v2"
+    assert prompts.PROMPT_VERSION == "public-v3"
     voiced = prompts.generate_prompt("Kavya")
     assert voiced.startswith("You are Kavya's AI twin") and "first person" in voiced
     assert prompts.NO_CONTEXT in voiced and "[1]" in voiced and "{owner}" not in voiced
     assert prompts.generate_prompt("  ") == prompts.GENERATE_V1
+
+
+def test_the_prompt_answers_from_a_partial_context() -> None:
+    """A slice of the profile is not "no context".
+
+    The model used to read a context that did not answer the question completely as no
+    context at all, and the visitor got the "I don't have that" reply for a fair question.
+    """
+    from app.agents.prompts import public as prompts
+
+    for prompt in (prompts.GENERATE_V1, prompts.generate_prompt("Kavya")):
+        assert "slice of a larger profile" in prompt
+        assert "nothing at all" in prompt
+        assert "{owner}" not in prompt and "{partial}" not in prompt

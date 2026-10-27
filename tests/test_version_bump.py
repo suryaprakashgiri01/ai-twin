@@ -7,7 +7,7 @@ import scripts.version_bump as vb
 from scripts.version_bump import bump
 
 _TOKEN = r'DEFAULT_VERSION = "'
-_CURRENT = re.compile(r'DEFAULT_VERSION = "(\d+\.\d+\.\d+)"')
+_VERSION = re.compile(r'DEFAULT_VERSION = "(\d+\.\d+\.\d+)"')
 _ORIG = (
     Path(vb.__file__)
     .resolve()
@@ -19,11 +19,12 @@ _ORIG = (
 @pytest.fixture
 def fake_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the module at a temp copy of config.py with a known version."""
+    found = _VERSION.search(_ORIG)
+    assert found is not None, "DEFAULT_VERSION missing from app/core/config.py"
     target = tmp_path / "config.py"
-    found = _CURRENT.search(_ORIG)
-    assert found is not None, "DEFAULT_VERSION missing in config.py"
-    current = found.group(1)
-    target.write_text(_ORIG.replace(f'{_TOKEN}{current}"', f'{_TOKEN}1.2.3"'), encoding="utf-8")
+    target.write_text(
+        _ORIG.replace(f'{_TOKEN}{found.group(1)}"', f'{_TOKEN}1.2.3"'), encoding="utf-8"
+    )
     monkeypatch.setattr(vb, "CONFIG_PATH", target)
     return target
 

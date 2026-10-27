@@ -55,6 +55,28 @@ def test_owner_work_questions_are_not_ruled_meta(text: str) -> None:
     assert rule_intent(text) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What is ai-twin and what does it do?",
+        "Tell me about the AgentForge repository",
+        "How do the mcp-servers work?",
+        "What is observable-ai-service for?",
+        "Is your portfolio site on GitHub?",
+    ],
+)
+def test_a_question_naming_an_owner_project_is_not_ruled_meta(text: str) -> None:
+    """The owner's own projects are the owner's work, not the assistant's internals."""
+    assert rule_intent(text) is None
+
+
+async def test_a_project_question_overrules_a_meta_probe_verdict() -> None:
+    """A question naming the owner's project asks what they built: about_owner."""
+    router = ScopeRouter(ScriptedClassifier("meta_probe"))
+    decision = await router.route("What is ai-twin and what does it do?")
+    assert decision.intent == "about_owner" and decision.corrected
+
+
 async def test_observability_database_question_is_about_owner() -> None:
     # Even a classifier that mislabels it as a meta probe is overruled.
     router = ScopeRouter(ScriptedClassifier("meta_probe"))
