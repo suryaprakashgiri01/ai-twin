@@ -103,6 +103,18 @@ envval GROQ_API_KEY           | gcloud secrets create ai-twin-groq-api-key --dat
 openssl rand -hex 32 | tr -d '\n' | gcloud secrets create ai-twin-visitor-salt --data-file=-
 ```
 
+Windows:
+
+```powershell
+function envval($n) { ((Get-Content .env | Select-String "^$n=" | Select-Object -First 1).Line -replace "^$n=", '').Trim('"') }
+envval ATLAS_MONGODB_URI      | gcloud secrets create ai-twin-mongodb-uri --data-file=-
+envval UPSTASH_REDIS_URL      | gcloud secrets create ai-twin-redis-url --data-file=-
+envval PUBLISH_QDRANT_API_KEY | gcloud secrets create ai-twin-qdrant-api-key --data-file=-
+envval GEMINI_API_KEY         | gcloud secrets create ai-twin-gemini-api-key --data-file=-
+envval GROQ_API_KEY           | gcloud secrets create ai-twin-groq-api-key --data-file=-
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create ai-twin-visitor-salt --data-file=-
+```
+
 Use both model keys. Groq answers first (and runs the prompt-injection guard model); Gemini is the backup. With
 Gemini alone, answers fall back to "not in my public profile" whenever Gemini is overloaded (503/504), which the
 first live eval saw on most calls.
@@ -188,10 +200,10 @@ Rules to stay free:
 
 1. **Rotate keys by destroying the old version, not just disabling it**:
    ```powershell
-   gcloud secrets versions add ai-twin-gemini-api-key --data-file=<file>
-   # after verifying the new version works and is deployed:
-   gcloud secrets versions list ai-twin-gemini-api-key  # find old version number
-   gcloud secrets versions destroy <OLD-N> --secret=ai-twin-gemini-api-key
+    gcloud secrets versions add ai-twin-gemini-api-key --data-file=<file>
+    # after verifying the new version works and is deployed:
+    gcloud secrets versions list ai-twin-gemini-api-key  # find old version number
+    gcloud secrets versions destroy <OLD-N> --secret=ai-twin-gemini-api-key
    ```
 2. **Avoid needless version bumps.** Changing only env vars / code doesn't touch secrets — redeploys with unchanged `--set-secrets` re-read the same `:latest` for free.
 3. Right now, don't add any more versions until something is actually wrong.
