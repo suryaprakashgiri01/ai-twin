@@ -62,6 +62,7 @@ from app.services.answer_cache import AnswerCache, CachedAnswer
 from app.services.conversations import ConversationRef, ConversationService, Turn
 from app.services.owner_chat import ConversationIndex, MongoConversationIndex
 from app.services.profile import ProfileStore
+from app.services.public_fallback import PublicFallback, load_index
 from app.services.resume import ResumeProvider
 from llm_orchestrator import Tier
 from llm_orchestrator.classify import Classifier, FlaggedClassifier
@@ -508,6 +509,11 @@ def build_public_chat(
         input_guard=input_guard,
         router=ScopeRouter(classifier),
         templates=ProfileTemplates(resources.profile, resume.available),
+        fallback=(
+            PublicFallback(load_index(settings.public_projects_path))
+            if settings.public_fallback_enabled
+            else None
+        ),
         retriever=public_retriever(
             resources.qdrant,
             embedder,
