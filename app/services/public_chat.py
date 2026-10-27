@@ -495,6 +495,8 @@ def build_public_chat(
         canaries=canary_source(settings),
         # The prompt in use is the one a leak would echo.
         system_prompts=[system_prompt],
+        # The prompt quotes these replies verbatim; using them is not a leak.
+        allowed_outputs=[prompts.NO_CONTEXT, prompts.UNAVAILABLE],
         allowlist=split_list(settings.public_contact_allowlist),
         judge=SwitchedJudge(
             default=OrchestratorJudge(orchestrator),

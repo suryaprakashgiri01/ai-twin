@@ -222,10 +222,16 @@ class OutputGuard:
     system_prompts: Sequence[str]
     allowlist: Sequence[str] = ()
     judge: GroundingJudge | None = None
+    # Replies the prompt tells the model to use verbatim (the "no context" fallback, an
+    # unavailable note). They are quoted in the prompt by design, so their phrases are not
+    # a leak and must not trip the detector.
+    allowed_outputs: Sequence[str] = ()
     _prompt_ngrams: set[tuple[str, ...]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._prompt_ngrams = set().union(*(ngrams(p) for p in self.system_prompts))
+        for reply in self.allowed_outputs:
+            self._prompt_ngrams -= ngrams(reply)
 
     async def check(self, answer: str, *, question: str, context: str) -> OutputVerdict:
         started = time.perf_counter()
